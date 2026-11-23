@@ -285,6 +285,12 @@ html.dyslexic-font button {
 /* ─── Dark mode (default) ─── */
 html {
   color-scheme: dark;
+  /* Phone browsers inflate text in blocks they judge "too small" (Chrome's
+     font boosting, iOS landscape scaling). It is uneven: one label grows, its
+     neighbour does not, and the bottom tab bar's labels ran into each other.
+     The mobile layout sizes its own type, so keep the sizes as written. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 select,
@@ -792,6 +798,23 @@ html.light .lightbox-backdrop {
   animation-delay: var(--card-delay, 0ms);
 }
 
+/* ─── Preview tips carousel progress (transform only, no per-frame layout) ─── */
+@keyframes tip-progress {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* ─── Idle: freeze animations while nobody is using the app ───
+   App.svelte sets .app-resting from stores/idle.svelte.ts when there has been
+   no input for a while (or the window is hidden) and nothing is generating. A
+   paused animation draws no frames, so an untouched window stops costing GPU
+   and CPU; the first pointer move or key press resumes everything. */
+.app-resting *,
+.app-resting *::before,
+.app-resting *::after {
+  animation-play-state: paused !important;
+}
+
 /* ─── Session gallery action bar bounce-in ─── */
 @keyframes actionBarBounce {
   0%   { transform: translateX(-50%) translateY(-6px) scaleY(0.3); opacity: 0; }
@@ -822,6 +845,27 @@ html.light .lightbox-backdrop {
 }
 .no-scroll-chain {
   overscroll-behavior: contain;
+}
+/* Phone "More" sheet: slides up over a fading backdrop. */
+@keyframes mobile-sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes mobile-sheet-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.mobile-sheet {
+  animation: mobile-sheet-up 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.mobile-sheet-backdrop {
+  animation: mobile-sheet-fade 180ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-sheet,
+  .mobile-sheet-backdrop {
+    animation: none;
+  }
 }
 .tap-highlight-none {
   -webkit-tap-highlight-color: transparent;

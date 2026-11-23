@@ -181,6 +181,16 @@ pub struct GenerationParams {
     pub input_image: Option<String>,
     pub mask_image: Option<String>,
     pub grow_mask_by: Option<u32>,
+    #[serde(default)]
+    pub outpaint_top: u32,
+    #[serde(default)]
+    pub outpaint_bottom: u32,
+    #[serde(default)]
+    pub outpaint_left: u32,
+    #[serde(default)]
+    pub outpaint_right: u32,
+    #[serde(default = "default_outpaint_feather")]
+    pub outpaint_feather: u32,
     pub upscale_enabled: bool,
     pub upscale_method: String,
     pub upscale_model: Option<String>,
@@ -218,6 +228,23 @@ pub struct GenerationParams {
     /// Quality-only negative prompt for tiled upscale KSampler (reduces tile artifacts)
     #[serde(default)]
     pub upscale_negative_prompt: Option<String>,
+    /// Moody Moss 4K HD: sample txt2img in two passes the way the Moody Moss
+    /// Mix author's ComfyUI workflow does (a short first pass that stops with
+    /// noise left, a 1.5x latent upscale, then a detail pass on the full
+    /// schedule). Only honoured for MOSS-Image txt2img; see
+    /// `templates::txt2img::moody_moss_hd_active`.
+    #[serde(default)]
+    pub moody_moss_hd: bool,
+    /// Ask for a transparent background. Ming-Image puts its fixed RGBA phrase
+    /// in front of the prompt (`architectures::ming_image`); other models
+    /// ignore it.
+    #[serde(default)]
+    pub transparent_background: bool,
+    /// The rest of the Moody Moss 4K HD workflow: its face and area
+    /// detailers, skin contrast pass and SeedVR2 final. Sent only for a Moody
+    /// Moss Mix model; see `templates::moody_moss`.
+    #[serde(default)]
+    pub moody_moss: Option<MoodyMossFinish>,
     /// When true, use separate UNETLoader + CLIPLoader + VAELoader instead of CheckpointLoaderSimple
     #[serde(default)]
     pub use_split_model: bool,
@@ -298,6 +325,12 @@ pub struct GenerationParams {
     /// checkpoint when the client omits it.
     #[serde(default)]
     pub video_turbo_lora: Option<String>,
+    /// The user's own MiniMax H3 LoRAs (style, character, camera, ...), chained
+    /// model-only right after the DiT loader and before any acceleration
+    /// adapter. Separate from `loras`, which belongs to the image model.
+    /// Only `strength_model` is read: H3 LoRAs never touch the text encoder.
+    #[serde(default)]
+    pub video_loras: Vec<LoraParam>,
     /// TeaCache — reuses the previous step's model output while the
     /// accumulated input delta stays under threshold, skipping the real
     /// forward pass. Requires the `ComfyUI-MiniMaxH3-TeaCache` custom node
@@ -499,6 +532,40 @@ pub struct GenerationParams {
     pub style_ref_redux_model: Option<String>,
     /// Redux/IPAdapter: clip_vision model filename in models/clip_vision/
     pub style_ref_clip_vision: Option<String>,
+    /// Anima character reference: optional second character, stitched to the
+    /// right of `style_ref_image` (the prompt says who is on which side).
+    #[serde(default)]
+    pub style_ref_image_2: Option<String>,
+    /// Anima character reference: `AnimaRefAdapter.ref_guidance`. 1 is the
+    /// cheapest (no extra model call per step), higher pushes harder.
+    #[serde(default = "default_anima_ref_guidance")]
+    pub anima_ref_guidance: f32,
+    /// Anima Style Reference method: `anima_ref_adapter` (default, also when
+    /// empty), `snapref`, or `art_style` (MooshieAnimaArtStyle).
+    #[serde(default)]
+    pub anima_ref_method: String,
+    /// Anima art style: `MooshieAnimaArtStyle.stats_match`, how far each block's
+    /// channel statistics move towards the picture's (0 off, 0.6 default).
+    #[serde(default = "default_anima_art_style_match")]
+    pub anima_art_style_match: f32,
+    /// Anima art style: leave the first quarter of the steps alone so the
+    /// prompt keeps its own composition.
+    #[serde(default = "default_anima_art_style_restyle")]
+    pub anima_art_style_restyle: bool,
+    /// Anima art style: area the picture is shrunk to first, in megapixels.
+    #[serde(default = "default_anima_art_style_megapixels")]
+    pub anima_art_style_megapixels: f32,
+    #[serde(default)]
+    pub snapref_adapter: Option<String>,
+    #[serde(default = "default_snapref_mode")]
+    pub snapref_mode: String,
+    #[serde(default = "default_style_ref_end")]
+    pub snapref_fidelity: f32,
+    #[serde(default)]
+    pub snapref_references: Vec<SnapRefReference>,
+    /// Anima character reference: `AnimaRefAdapter.correction` (apg, rescale, none).
+    #[serde(default = "default_anima_ref_correction")]
+    pub anima_ref_correction: String,
     /// Anima TeaCache — reuses the previous step's DiT output while the
     /// accumulated input delta stays under threshold, skipping the forward
     /// pass. MooshieUI-authored node, always deployed (no lazy install).
@@ -508,6 +575,11 @@ pub struct GenerationParams {
     /// the primary edit source; slots 1-2 are Qwen Image Edit Plus extras.
     #[serde(default)]
     pub edit_reference_images: Vec<String>,
+    /// Extra model files a registered architecture loads, keyed by its
+    /// `ModelSlot::key` (a second text encoder, a second expert, a stage B...).
+    /// See `crate::architectures`.
+    #[serde(default)]
+    pub architecture_files: std::collections::BTreeMap<String, String>,
     /// Anima ReStyler: how strongly the output follows the reference image.
     /// Scales the reference latent before the Cosmos temporal concat; 1.0 is
     /// full adherence, lower values let the prompt/style diverge more.
@@ -519,6 +591,24 @@ pub struct GenerationParams {
     /// prompt hack, then crop the right half and scale it to the target size.
     #[serde(default)]
     pub edit_split_screen: bool,
+    /// Krea 2 Image Edit recipe: `identity` (Identity Edit V2), `general`
+    /// (General Edit V2) or `style` (Style Reference). Anything else builds
+    /// General Edit. See `templates/krea2_edit.rs`.
+    #[serde(default)]
+    pub krea2_edit_method: String,
+    /// Krea 2 Image Edit: the method's edit LoRA (a `models/loras` name),
+    /// picked by the frontend from whichever size is installed.
+    #[serde(default)]
+    pub krea2_edit_lora: String,
+    /// Krea 2 Identity/General Edit: `Krea2EditModelPatch.ref_boost` for the
+    /// last (or only) reference. `None` uses the recipe default (2 / 4).
+    #[serde(default)]
+    pub krea2_edit_ref_boost: Option<f64>,
+    /// Krea 2 Identity/General Edit: place the last reference beside the
+    /// canvas instead of pinned to its layout, so a person can be restaged
+    /// freely.
+    #[serde(default)]
+    pub krea2_edit_beside: bool,
     /// INT8-Fast (ComfyUI-INT8-Fast) loader. When true and the model is not
     /// .gguf, emits `OTUNetLoaderW8A8` instead of `UNETLoader` for pre-quantized
     /// INT8/ConvRot diffusion models. NVIDIA only; requires the
@@ -562,6 +652,57 @@ pub struct GenerationParams {
 }
 
 /// One completed stage of a paused txt2img run.
+/// Finishing steps of the Moody Moss 4K HD workflow, rebuilt from core and
+/// MooshieUI nodes. Defaults are the workflow's own values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MoodyMossFinish {
+    /// Re-detail the most confident face (txt2img).
+    pub face_detail: bool,
+    /// Detailer prompt; empty reuses the main prompt.
+    pub face_prompt: String,
+    /// LoRAs for the face detailer only, on top of the bare model.
+    pub face_loras: Vec<LoraParam>,
+    pub face_denoise: f64,
+    /// "Detail Anything": re-detail the painted mask (inpainting).
+    pub area_detail: bool,
+    pub area_prompt: String,
+    pub area_loras: Vec<LoraParam>,
+    pub area_denoise: f64,
+    /// 1x skin contrast model blended over the image (txt2img).
+    pub skin_contrast: bool,
+    pub skin_contrast_strength: f64,
+    /// SeedVR2 restoration upscale blended with a 4x model upscale (txt2img).
+    pub seedvr2: bool,
+    /// Use the 7B SeedVR2 model instead of the 3B one.
+    pub seedvr2_7b: bool,
+    /// Share of the 4x model upscale in the final blend.
+    pub seedvr2_mix: f64,
+    /// Long edge of the final image in pixels.
+    pub long_edge: u32,
+}
+
+impl Default for MoodyMossFinish {
+    fn default() -> Self {
+        Self {
+            face_detail: false,
+            face_prompt: String::new(),
+            face_loras: Vec::new(),
+            face_denoise: 0.35,
+            area_detail: false,
+            area_prompt: String::new(),
+            area_loras: Vec::new(),
+            area_denoise: 0.45,
+            skin_contrast: false,
+            skin_contrast_strength: 0.2,
+            seedvr2: false,
+            seedvr2_7b: false,
+            seedvr2_mix: 0.4,
+            long_edge: 4096,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResumeStage {
     /// The exact parameters that stage was generated with (its own
@@ -679,6 +820,31 @@ fn default_guide_strength() -> f64 {
 }
 fn default_guide_end_percent() -> f64 {
     0.35
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapRefReference {
+    pub image: Option<String>,
+    pub strength: f32,
+}
+
+fn default_snapref_mode() -> String {
+    "Character & Style".into()
+}
+
+fn default_anima_art_style_match() -> f32 {
+    0.6
+}
+fn default_anima_art_style_megapixels() -> f32 {
+    1.0
+}
+fn default_anima_art_style_restyle() -> bool {
+    true
+}
+fn default_anima_ref_guidance() -> f32 {
+    4.5
+}
+fn default_anima_ref_correction() -> String {
+    "apg".to_string()
 }
 
 fn default_region_strength() -> f64 {
@@ -808,6 +974,10 @@ fn default_facefix_bbox_padding() -> f64 {
 
 fn default_facefix_feather() -> u32 {
     20
+}
+
+fn default_outpaint_feather() -> u32 {
+    40
 }
 
 #[cfg(test)]

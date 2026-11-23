@@ -1,0 +1,8 @@
+skin_contrast_1x.safetensors is 1xSkinContrast-High-SuperUltraCompact by
+brigadeiro (OpenModelDB: 1x-SkinContrast-High-SuperUltraCompact), released
+under CC0-1.0 (public domain dedication):
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Converted from the original .pth to safetensors without changing any weights
+(sha256 of the original .pth:
+7bbea62563203f099ea1cf60ce483ac60d22eb93d30f11be4cb1a229e3585e9e).

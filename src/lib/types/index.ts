@@ -88,7 +88,7 @@ export interface ExtraPromptBox {
  * filename parsing, progress tracking, the save-to-gallery wrappers) shares one
  * definition — hand-copied unions silently drift when a mode is added.
  */
-export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit" | "video";
+export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "outpainting" | "image_edit" | "video";
 
 /**
  * MiniMax H3 workflow variants. `fl2va` drives the first/last-frame graph (which
@@ -288,6 +288,8 @@ export interface NovelAiParams {
   local_clip_type: string | null;
   /** VAE for the split load. */
   local_vae: string | null;
+  /** Extra files a registered architecture's split load needs (Flux.1's CLIP-L), by model slot. */
+  local_architecture_files?: Record<string, string>;
   /**
    * Sampler for the local pass, filled from the picked model's recommendation.
    * Steps and denoise are deliberately absent: those come from the upscale and
@@ -372,6 +374,11 @@ export interface GenerationParams {
   input_image: string | null;
   mask_image: string | null;
   grow_mask_by: number | null;
+  outpaint_top?: number;
+  outpaint_bottom?: number;
+  outpaint_left?: number;
+  outpaint_right?: number;
+  outpaint_feather?: number;
   upscale_enabled: boolean;
   upscale_method: string;
   upscale_model: string | null;
@@ -424,6 +431,11 @@ export interface GenerationParams {
   /** RescaleCFG for v-pred models: rescale the guidance vector each step to
    *  stop oversaturation/burn. Applied only when is_vpred_model is true. */
   vpred_rescale_cfg?: boolean;
+  /** Moody Moss 4K HD two-pass txt2img (MOSS-Image only). */
+  moody_moss_hd?: boolean;
+  /** Ask for a transparent background (Ming-Image Design only). */
+  transparent_background?: boolean;
+  moody_moss?: import("../utils/moodyMoss.js").MoodyMossFinishPayload;
   /** RescaleCFG blend (0 = plain CFG, 0.7 = recommended, 1 = full rescale). */
   vpred_rescale_cfg_multiplier?: number;
   /** NAG (Normalized Attention Guidance): attention-level negative guidance.
@@ -465,14 +477,43 @@ export interface GenerationParams {
   guide_image?: string | null;
   guide_strength?: number;
   guide_end_percent?: number;
+  /** Anima character reference: second character, stitched right of style_ref_image. */
+  style_ref_image_2?: string | null;
+  /** Anima Style Reference method (Reference Adapter, SnapRef or art style). */
+  anima_ref_method?: "anima_ref_adapter" | "snapref" | "art_style";
+  /** Anima art style: MooshieAnimaArtStyle stats_match (0 off, 0.6 default). */
+  anima_art_style_match?: number;
+  /** Anima art style: keep the prompt's composition (first quarter of steps untouched). */
+  anima_art_style_restyle?: boolean;
+  /** Anima art style: area the picture is shrunk to first, in megapixels. */
+  anima_art_style_megapixels?: number;
+  /** SnapRef: adapter weights file in models/loras. */
+  snapref_adapter?: string | null;
+  snapref_mode?: "Character & Style" | "Character";
+  snapref_fidelity?: number;
+  snapref_references?: { image: string | null; strength: number }[];
+  /** Anima character reference: AnimaRefAdapter ref_guidance (1 = no extra model call). */
+  anima_ref_guidance?: number;
+  /** Anima character reference: AnimaRefAdapter correction (apg, rescale, none). */
+  anima_ref_correction?: string;
   /** Anima TeaCache: reuses the previous step's DiT output when little changed. */
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
   edit_reference_images?: string[];
+  /** Extra files of a registered architecture, keyed by model slot (src-tauri/src/architectures). */
+  architecture_files?: Record<string, string>;
   /** Anima ReStyler reference adherence: 1.0 full, lower restyles harder. */
   edit_reference_strength?: number;
   /** Anima ReStyler drastic restyle: split-screen inpaint of a 2x-wide composite, right half cropped as output. */
   edit_split_screen?: boolean;
+  /** Krea 2 Image Edit recipe: identity, general or style (templates/krea2_edit.rs). */
+  krea2_edit_method?: string;
+  /** Krea 2 Image Edit: the installed edit LoRA for the method (models/loras name). */
+  krea2_edit_lora?: string;
+  /** Krea 2 Identity/General Edit ref_boost for the last reference; omitted uses the method default. */
+  krea2_edit_ref_boost?: number;
+  /** Krea 2 Identity/General Edit: last reference beside the canvas (free restaging). */
+  krea2_edit_beside?: boolean;
   // --- Video generation (MiniMax H3) ---
   video_variant?: VideoVariant;
   /** 1-15 s; the backend snaps this to the nearest 17n+5 frame count at 24 fps. */
@@ -506,6 +547,8 @@ export interface GenerationParams {
   video_turbo_steps?: number;
   /** Turbo adapter filename inside `models/loras/`. */
   video_turbo_lora?: string | null;
+  /** The user's own H3 LoRAs, chained model-only before any acceleration adapter. */
+  video_loras?: LoraPayloadEntry[];
   /** MiniMax-H3 TeaCache: reuses the previous step's model output when little changed. */
   video_teacache_enabled?: boolean;
   /** Animated taeh3 live previews during H3 sampling. */
@@ -653,6 +696,10 @@ export interface AppConfig {
   vram_mode: string;
   keep_alive: boolean;
   auto_start: boolean;
+  /** Unload ComfyUI's models after a stretch with no generations (off by default). */
+  comfyui_idle_unload: boolean;
+  /** Minutes without generations before that unload. */
+  comfyui_idle_unload_minutes: number;
   theme: string;
   theme_palette: string;
   font_scale: number;
@@ -677,6 +724,9 @@ export interface AppConfig {
    * `civitai_api_key` is always null; true when a server-side key is stored.
    */
   civitai_api_key_configured?: boolean;
+  /** Optional HTTP/HTTPS/SOCKS5 proxy URL used for CivitAI API and downloads. */
+  civitai_proxy: string | null;
+  civitai_proxy_configured?: boolean;
   /** Never populated for clients: the key is redacted to null on the way out. */
   novelai_api_key: string | null;
   /** True when a key is stored, so the UI can show "key set" without the value. */
@@ -719,6 +769,12 @@ export interface AppConfig {
   webhook_events: string[];
   webhook_include_sensitive: boolean;
   webhook_allow_private_targets: boolean;
+  /** Eagle export through its local API: "Send to Eagle" in the gallery. */
+  eagle_enabled?: boolean;
+  /** With Eagle export on, also send each image as it is saved. */
+  eagle_auto_send?: boolean;
+  /** Eagle folder id for sent images; empty means Eagle's inbox. */
+  eagle_folder_id?: string | null;
   theme_profile_id: string | null;
   theme_profiles: ThemeProfile[];
   /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */
@@ -736,6 +792,16 @@ export interface AppConfig {
   llm_external_api_key_configured?: boolean;
   /** External LLM model name (e.g. gpt-4o-mini). */
   llm_external_model: string;
+  /**
+   * More models on the same provider, tried in order when the one above cannot
+   * answer. Part of the provider row: a full-config save cannot change it (use
+   * `setLlmFallbackModels`).
+   */
+  llm_fallback_models?: string[];
+  /** Answer with an installed local model when the external provider cannot. */
+  llm_fallback_local?: boolean;
+  /** "low" (default), "medium", "high", or "default" for each model's own. */
+  llm_reasoning_effort?: string;
   /** OAuth client id presented to xAI; empty until an operator supplies one. */
   llm_xai_client_id: string;
   /** Scope override for the xAI sign-in; empty means the backend default. */
@@ -771,6 +837,37 @@ export interface ThemeProfile {
   background_fade: number;
   logo_image: string | null;
   hide_branding: boolean;
+}
+
+/** The local MCP server for AI assistants (`get_mcp_status`). */
+export interface McpStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  /** Endpoint to give the assistant, e.g. `http://127.0.0.1:3210/mcp`. */
+  url: string;
+  /** Bearer token every request must send. */
+  token: string;
+  /** Why an enabled server is not running (port taken, ...). */
+  error: string | null;
+  /** Models with a saved txt2img setup the server can reuse. */
+  setups: number;
+  /** `url` with the token in the path, for apps that take only a URL. */
+  local_connector_url: string;
+  /** Whether the built-in Cloudflare quick tunnel is switched on. */
+  tunnel: boolean;
+  tunnel_status: McpTunnelStatus;
+  /** The tunnel's public address with the token in the path, while it runs. */
+  tunnel_connector_url: string | null;
+  /** The owner's own public https address, or "". */
+  public_url: string;
+  public_connector_url: string | null;
+}
+
+export interface McpTunnelStatus {
+  state: "off" | "downloading" | "starting" | "running" | "error";
+  url: string | null;
+  error: string | null;
 }
 
 export interface QueueInfo {
@@ -824,6 +921,15 @@ export interface InterrogationResult {
   general_tags: TagResult[];
   copyright_tags: TagResult[];
   rating_tags: TagResult[];
+  /** Reaches the interrogated image server-side, for `describeImage`. */
+  image_token?: string;
+  /** Set when Kaloscope ran; absent when artist detection is off. */
+  artist_detection?: {
+    /** The threshold the run used (0-1). */
+    threshold: number;
+    /** Best guesses under the threshold, highest first. */
+    below_threshold: TagResult[];
+  };
 }
 
 /** One selectable tagger, plus whether its files are already on disk. */
@@ -878,17 +984,27 @@ export interface LlmVariant {
   vram_mb: number;
   repo: string;
   file: string;
+  /** Vision projector loaded beside `file`; null for text-only models. */
+  mmproj: string | null;
+  /**
+   * Mixture-of-experts models only: VRAM needed with the experts kept in
+   * system RAM, for cards too small for `vram_mb`. Null for dense models.
+   */
+  cpu_moe_vram_mb: number | null;
 }
 
 export interface LlmCatalogEntry {
   id: string;
   name: string;
-  purpose: "tag_upsampler" | "natural_language";
+  /** A captioner only describes images and is never the assistant model. */
+  purpose: "tag_upsampler" | "natural_language" | "captioner";
   families: string[];
   variants: LlmVariant[];
   pros: string;
   cons: string;
   best_for: string;
+  /** A large download offered to those who can run it, never recommended by default. */
+  opt_in: boolean;
 }
 
 export interface LlmStatus {
@@ -896,6 +1012,8 @@ export interface LlmStatus {
   active_model: string | null;
   server_running: boolean;
   external_enabled: boolean;
+  external_vision?: boolean | null;
+  describe_model?: string | null;
 }
 
 export interface PromptAssistantOpts {
@@ -905,6 +1023,13 @@ export interface PromptAssistantOpts {
   instruction?: string;
   /** One optional label per attached reference image, in the same order. */
   reference_labels?: string[];
+  /**
+   * Saved characters the request refers to, with their look and memory notes
+   * (`characterNotesBlock`). Only an external provider is sent it.
+   */
+  character_notes?: string;
+  /** From the Enhance chat: the answer may start with a `<reply>` block for the user. */
+  chat?: boolean;
 }
 
 /** Ids of the external LLM providers the backend registry knows about. */
@@ -928,6 +1053,10 @@ export interface LlmProviderState {
   provider: LlmProviderId | string;
   base_url: string;
   model: string;
+  /** Tried in order when `model` times out, is rate limited or the server fails. */
+  fallback_models: string[];
+  /** An installed local model answers when the provider cannot. */
+  fallback_local: boolean;
   api_key_configured: boolean;
   /** The provider has a sign-in flow this build implements. */
   oauth: boolean;

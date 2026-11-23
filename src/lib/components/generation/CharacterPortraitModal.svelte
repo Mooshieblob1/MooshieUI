@@ -1,0 +1,490 @@
+<script lang="ts">
+  /**
+   * Generate a front-on, neck-up portrait of a saved character as its card's
+   * picture. The prompt starts from the card, without what a neck-up picture
+   * cannot show (listed under it to put back), and can be edited. The
+   * expression has its own box: the card's own expression tags, the one used
+   * last time, or one the prompt assistant picks from memory or canon. Chunks,
+   * Artist Styles and artist tags go on top and are remembered for the next
+   * portrait. The UC of picked chunks and styles shows as red pills under the
+   * negative prompt, which is where it goes. On NovelAI models with character
+   * prompts, the card's look, the expression and the card's UC go in a
+   * character prompt and character UC of their own, and the main prompt keeps
+   * the count, framing and style, the way Use lays a card out.
+   */
+  import { untrack } from "svelte";
+  import { portal } from "../../utils/portal.js";
+  import { generation } from "../../stores/generation.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
+  import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { promptPresets } from "../../stores/promptPresets.svelte.js";
+  import { styles } from "../../stores/styles.svelte.js";
+  import { savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
+  import {
+    currentPortraitSize,
+    generateCharacterPortrait,
+    loadPortraitExtras,
+    portraitPrompts,
+    portraitStyle,
+    portraitUsesCharacterBox,
+    savePortraitExtras,
+  } from "../../utils/characterPortrait.js";
+  import { memoryContext, usualExpression } from "../../utils/characterMemory.js";
+  import { defaultExpression, negativeForExpression, withExpression } from "../../utils/portraitExpression.js";
+  import { mapLlmError } from "../../utils/llmError.js";
+  import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
+  import { naiV5Variant } from "../../utils/novelaiModels.js";
+
+  interface Props {
+    character: SavedCharacter;
+    onclose: () => void;
+  }
+
+  let { character, onclose }: Props = $props();
+
+  // Mounted once per portrait, so the card is read once on purpose.
+  // Whether the selected model takes character prompts, read once like the card.
+  const characterBox = untrack(() => portraitUsesCharacterBox());
+  const initial = untrack(() => portraitPrompts(character, characterBox));
+  const style = untrack(() => portraitStyle(character));
+  const remembered = loadPortraitExtras();
+
+  let positive = $state(initial.positive);
+  let negative = $state(initial.negative);
+  let characterPositive = $state(initial.character?.positive ?? "");
+  let characterNegative = $state(initial.character?.negative ?? "");
+  let leftOut = $state<string[]>(initial.dropped);
+  // The last portrait's, the card's own expression tags, or the usual one in memory.
+  let expression = $state(
+    untrack(() => character.expression ?? "") ||
+      initial.expression ||
+      untrack(() => usualExpression(savedCharacters.memoryOf(character))),
+  );
+  /** Typed by the user, so a late suggestion must not overwrite it. */
+  let expressionTyped = $state(false);
+  let suggesting = $state(false);
+  let artists = $state(remembered.artists);
+  let chunkIds = $state<string[]>(remembered.chunkIds);
+  let styleIds = $state<string[]>(remembered.styleIds);
+  let submitting = $state(false);
+
+  const size = $derived(currentPortraitSize());
+  const showNegative = $derived(!generation.disablesNegativePrompt);
+  const canGenerate = $derived(
+    !submitting && (positive.trim().length > 0 || characterPositive.trim().length > 0) && generation.mode !== "video" && (!suggesting || expressionTyped),
+  );
+
+  /**
+   * Ask the prompt assistant for an expression that fits the character. On
+   * opening, a failure quietly falls back to a smile; asked for, it says why.
+   */
+  async function suggestExpression(asked: boolean) {
+    if (suggesting) return;
+    expressionTyped = false;
+    suggesting = true;
+    try {
+      const notes = memoryContext(savedCharacters.memoryOf(character));
+      const face = await promptAssistant.portraitExpression(
+        { name: character.name, prompt: character.prompt },
+        notes,
+        style,
+      );
+      if (!expressionTyped) {
+        expression = face;
+        // Kept straight away, so opening the dialog again doesn't ask again.
+        savedCharacters.setExpression(character.id, face);
+      }
+    } catch (e) {
+      console.warn("Portrait expression failed:", e);
+      if (asked) gallery.showToast(mapLlmError(String(e)), "error");
+      if (!expressionTyped && !expression.trim()) expression = defaultExpression(style);
+    } finally {
+      suggesting = false;
+    }
+  }
+
+  // No expression from the card or the last portrait: pick one now.
+  untrack(() => {
+    if (expression.trim()) return;
+    if (promptAssistant.canUseMemory && !promptAssistant.isGenerating) void suggestExpression(false);
+    else expression = defaultExpression(style);
+  });
+
+  /** Put a left-out part of the card's prompt back at the end of the prompt it came from. */
+  function addBack(index: number) {
+    const item = leftOut[index];
+    if (item === undefined) return;
+    const put = (text: string) =>
+      style === "tags"
+        ? [text.trim().replace(/[,\s]+$/, ""), item].filter(Boolean).join(", ")
+        : `${text.trim().replace(/[.\s]*$/, "")}, ${item}.`;
+    if (characterBox) characterPositive = put(characterPositive);
+    else positive = put(positive);
+    leftOut = leftOut.filter((_, i) => i !== index);
+  }
+
+  /** Anlas for the portrait on NovelAI, or null elsewhere. */
+  const anlas = $derived.by(() => {
+    if (!generation.isNovelAi) return null;
+    return estimateNovelAiCost({
+      width: size.width,
+      height: size.height,
+      steps: generation.novelAiSteps,
+      mediumEffort: generation.novelAiMediumEffort,
+      nSamples: 1,
+      strength: 1,
+      isOpus: novelai.isOpus,
+      opusExhausted: naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
+      vibeEncodes: 0,
+      preciseReferences: 0,
+    });
+  });
+
+  /** UC the picked chunks and styles add to the negative prompt, by name. */
+  const pickedUc = $derived([
+    ...promptPresets.presets
+      .filter((p) => chunkIds.includes(p.id) && p.negative.trim())
+      .map((p) => ({ id: p.id, name: p.name, tags: p.negative.trim() })),
+    ...styles.styles
+      .filter((s) => styleIds.includes(s.id) && s.negative.trim())
+      .map((s) => ({ id: s.id, name: s.name, tags: s.negative.trim() })),
+  ]);
+
+  function toggle(list: string[], id: string): string[] {
+    return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+  }
+
+  const edited = $derived(
+    positive !== initial.positive ||
+      negative !== initial.negative ||
+      characterPositive !== (initial.character?.positive ?? "") ||
+      characterNegative !== (initial.character?.negative ?? ""),
+  );
+
+  function resetPrompts() {
+    positive = initial.positive;
+    negative = initial.negative;
+    characterPositive = initial.character?.positive ?? "";
+    characterNegative = initial.character?.negative ?? "";
+    leftOut = initial.dropped;
+  }
+
+  async function generate() {
+    if (!canGenerate) return;
+    submitting = true;
+    const extras = { artists: artists.trim(), chunkIds, styleIds };
+    try {
+      const mainNegative = showNegative ? negativeForExpression(negative, expression, style) : "";
+      await generateCharacterPortrait(
+        character,
+        characterBox
+          ? {
+              // The expression is the character's, so it goes in its box.
+              positive,
+              negative: mainNegative,
+              character: {
+                positive: withExpression(characterPositive, expression, style),
+                negative: showNegative ? characterNegative : "",
+              },
+            }
+          : { positive: withExpression(positive, expression, style), negative: mainNegative },
+        extras,
+      );
+      savePortraitExtras(extras);
+      savedCharacters.setExpression(character.id, expression);
+      if (promptAssistant.canUseMemory && expression.trim()) savedCharacters.rememberExpression(character, expression);
+      gallery.showToast(locale.t("characters.portrait.queued", { name: character.name }), "info");
+      onclose();
+    } catch (e) {
+      console.error("Character portrait failed:", e);
+      gallery.showToast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      submitting = false;
+    }
+  }
+
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onclose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  const chipBase = "inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full border transition-colors max-w-[12rem]";
+  const chipOn = "border-neutral-400 bg-neutral-700 text-neutral-50";
+  const chipOff = "border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200";
+</script>
+
+<div
+  use:portal
+  class="fixed inset-0 z-210 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+  role="dialog"
+  aria-modal="true"
+  aria-label={locale.t("characters.portrait.title", { name: character.name })}
+>
+  {#snippet leftOutChips()}
+    {#if leftOut.length > 0}
+      <div class="flex flex-wrap items-center gap-1" title={locale.t("characters.portrait.left_out_tip")}>
+        <span class="text-[10px] text-neutral-500">{locale.t("characters.portrait.left_out")}</span>
+        {#each leftOut as item, i (`${i}:${item}`)}
+          <button
+            type="button"
+            class="max-w-[14rem] truncate rounded-full border border-dashed border-neutral-700 px-2 py-px text-[10px] text-neutral-500 line-through hover:border-neutral-500 hover:text-neutral-200 hover:no-underline"
+            title={locale.t("characters.portrait.add_back", { tag: item })}
+            aria-label={locale.t("characters.portrait.add_back", { tag: item })}
+            onclick={() => addBack(i)}
+          >{item}</button>
+        {/each}
+      </div>
+    {/if}
+  {/snippet}
+  <button
+    type="button"
+    class="absolute inset-0 h-full w-full cursor-default"
+    aria-label={locale.t("common.cancel")}
+    onclick={onclose}
+  ></button>
+  <div class="relative z-10 flex max-h-[90vh] w-full max-w-xl flex-col gap-3 rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+    <div class="flex items-center gap-3">
+      {#if character.thumbnail}
+        <img src={character.thumbnail} alt={character.name} class="w-10 h-10 rounded-md object-cover border border-neutral-700" />
+      {/if}
+      <h3 class="flex-1 min-w-0 truncate text-sm font-semibold text-neutral-100">
+        {locale.t("characters.portrait.title", { name: character.name })}
+      </h3>
+      <button
+        type="button"
+        class="text-neutral-500 hover:text-neutral-200 text-lg leading-none"
+        onclick={onclose}
+        aria-label={locale.t("common.cancel")}
+      >✕</button>
+    </div>
+
+    <div class="min-h-0 flex-1 overflow-y-auto flex flex-col gap-3">
+      <div class="flex flex-col gap-1">
+        <div class="flex items-center justify-between gap-2">
+          <label
+            for="character-portrait-prompt"
+            class="text-xs font-medium text-neutral-300"
+            title={characterBox ? locale.t("characters.portrait.main_prompt_tip") : undefined}
+          >
+            {locale.t(characterBox ? "characters.portrait.main_prompt" : "characters.portrait.prompt")}
+          </label>
+          <button
+            type="button"
+            class="w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+            title={locale.t("characters.portrait.reset")}
+            aria-label={locale.t("characters.portrait.reset")}
+            disabled={!edited}
+            onclick={resetPrompts}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          </button>
+        </div>
+        <textarea
+          id="character-portrait-prompt"
+          bind:value={positive}
+          rows="4"
+          spellcheck="false"
+          class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-indigo-500"
+        ></textarea>
+        {#if !characterBox}
+          {@render leftOutChips()}
+        {/if}
+      </div>
+
+      {#if characterBox}
+        <div class="flex flex-col gap-1">
+          <label
+            for="character-portrait-character"
+            class="text-xs font-medium text-neutral-300"
+            title={locale.t("characters.portrait.character_prompt_tip")}
+          >
+            {locale.t("characters.portrait.character_prompt")}
+          </label>
+          <textarea
+            id="character-portrait-character"
+            bind:value={characterPositive}
+            rows="3"
+            spellcheck="false"
+            placeholder={locale.t("generation.novelai.characters.prompt_placeholder")}
+            class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+          ></textarea>
+          {@render leftOutChips()}
+        </div>
+      {/if}
+
+      <div class="flex flex-col gap-1">
+        <div class="flex items-center justify-between gap-2">
+          <label for="character-portrait-expression" class="text-xs font-medium text-neutral-300">
+            {locale.t("characters.portrait.expression")}
+          </label>
+          {#if promptAssistant.canUseMemory}
+            <button
+              type="button"
+              class="w-5 h-5 flex items-center justify-center rounded text-[11px] hover:bg-neutral-800 disabled:opacity-40"
+              title={locale.t("characters.portrait.expression_suggest", { name: character.name })}
+              aria-label={locale.t("characters.portrait.expression_suggest", { name: character.name })}
+              disabled={suggesting || promptAssistant.isGenerating}
+              onclick={() => suggestExpression(true)}
+            >
+              {#if suggesting}
+                <span class="inline-block animate-spin text-neutral-400">⟳</span>
+              {:else}
+                ✨
+              {/if}
+            </button>
+          {/if}
+        </div>
+        <input
+          id="character-portrait-expression"
+          type="text"
+          bind:value={expression}
+          oninput={() => { expressionTyped = true; }}
+          spellcheck="false"
+          placeholder={suggesting
+            ? locale.t("characters.portrait.expression_picking", { name: character.name })
+            : locale.t("characters.portrait.expression_placeholder")}
+          class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+        />
+      </div>
+
+      {#if showNegative}
+        <div class="flex flex-col gap-1">
+          <label for="character-portrait-negative" class="text-xs font-medium text-neutral-300">
+            {locale.t(characterBox ? "characters.portrait.main_negative" : "characters.portrait.negative")}
+          </label>
+          <textarea
+            id="character-portrait-negative"
+            bind:value={negative}
+            rows="2"
+            spellcheck="false"
+            class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-red-500/70"
+          ></textarea>
+          {#if pickedUc.length > 0}
+            <div class="flex flex-wrap items-center gap-1">
+              {#each pickedUc as uc (uc.id)}
+                <span
+                  class="max-w-[16rem] truncate rounded-full border border-red-500/50 bg-red-500/10 px-2 py-px text-[10px] text-red-300"
+                  title={locale.t("prompt_uc.from_title", { name: uc.name, tags: uc.tags })}
+                >{uc.tags.replace(/\s*\n\s*/g, ", ")}</span>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        {#if characterBox}
+          <div class="flex flex-col gap-1">
+            <label for="character-portrait-character-negative" class="text-xs font-medium text-neutral-300">
+              {locale.t("characters.portrait.character_negative")}
+            </label>
+            <textarea
+              id="character-portrait-character-negative"
+              bind:value={characterNegative}
+              rows="2"
+              spellcheck="false"
+              placeholder={locale.t("generation.novelai.characters.negative_placeholder")}
+              class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-red-500/70"
+            ></textarea>
+          </div>
+        {/if}
+      {/if}
+
+      <div class="flex flex-col gap-1">
+        <label
+          for="character-portrait-artists"
+          class="text-xs font-medium text-neutral-300"
+          title={locale.t("characters.portrait.artists_tip")}
+        >
+          {locale.t("characters.portrait.artists")}
+        </label>
+        <input
+          id="character-portrait-artists"
+          type="text"
+          bind:value={artists}
+          spellcheck="false"
+          title={locale.t("characters.portrait.artists_tip")}
+          class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-indigo-500"
+        />
+      </div>
+
+      {#if promptPresets.presets.length > 0}
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-neutral-300">{locale.t("characters.portrait.chunks")}</span>
+          <div class="flex flex-wrap gap-1">
+            {#each promptPresets.presets as preset (preset.id)}
+              <button
+                type="button"
+                class="{chipBase} {chunkIds.includes(preset.id) ? chipOn : chipOff}"
+                aria-pressed={chunkIds.includes(preset.id)}
+                title={preset.negative.trim()
+                  ? `${preset.content}\n${locale.t("prompt_uc.pill_title", { tags: preset.negative.trim() })}`.trim()
+                  : preset.content}
+                onclick={() => { chunkIds = toggle(chunkIds, preset.id); }}
+              >
+                <span class="truncate">{preset.name}</span>
+                {#if preset.negative.trim()}
+                  <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300">{locale.t("prompt_uc.label")}</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      {#if styles.styles.length > 0}
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-neutral-300">{locale.t("characters.portrait.styles")}</span>
+          <div class="flex flex-wrap gap-1">
+            {#each styles.styles as style (style.id)}
+              <button
+                type="button"
+                class="{chipBase} {styleIds.includes(style.id) ? chipOn : chipOff}"
+                aria-pressed={styleIds.includes(style.id)}
+                title={style.negative.trim()
+                  ? `${style.artists.map((a) => a.tag).join(", ")}\n${locale.t("prompt_uc.pill_title", { tags: style.negative.trim() })}`.trim()
+                  : style.artists.map((a) => a.tag).join(", ")}
+                onclick={() => { styleIds = toggle(styleIds, style.id); }}
+              >
+                <span class="truncate">{style.name}</span>
+                {#if style.negative.trim()}
+                  <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300">{locale.t("prompt_uc.label")}</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <span class="mr-auto text-[11px] text-neutral-500" title={locale.t("characters.portrait.size_tip")}>
+        {size.width} × {size.height}
+      </span>
+      <button
+        type="button"
+        class="px-3 py-1.5 text-xs rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
+        onclick={onclose}
+      >{locale.t("common.cancel")}</button>
+      <button
+        type="button"
+        class="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+        disabled={!canGenerate}
+        title={generation.mode === "video" ? locale.t("characters.portrait.no_video") : undefined}
+        onclick={generate}
+      >
+        {#if submitting}
+          <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+        {/if}
+        {locale.t("characters.portrait.generate")}
+        {#if anlas !== null}
+          <span class="rounded bg-black/25 px-1.5 py-px text-[10px] font-normal">
+            {anlas === 0 ? locale.t("novelai.enhance.free") : locale.t("novelai.enhance.cost", { anlas: String(anlas) })}
+          </span>
+        {/if}
+      </button>
+    </div>
+  </div>
+</div>

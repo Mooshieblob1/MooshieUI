@@ -2,6 +2,7 @@ import type { LoraEntry } from "../types/index.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { userScopedKey } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
+import { loraTriggers } from "./loraTriggers.svelte.js";
 
 const STORAGE_KEY = "mooshieui.loraPresets.v1";
 const EXPORT_VERSION = 1;
@@ -175,11 +176,13 @@ class LoraPresetsStore {
   }
 
   collectPrefs(): unknown {
-    return { presets: this.presets };
+    // Custom LoRA triggers share this category rather than adding one.
+    return { presets: this.presets, triggers: loraTriggers.collectPrefs() };
   }
 
   applyServerPrefs(data: any): void {
     try {
+      if (data?.triggers !== undefined) loraTriggers.applyServerPrefs(data.triggers);
       if (!Array.isArray(data?.presets)) return;
       const sanitized = data.presets.map(sanitizePreset).filter(Boolean) as LoraPreset[];
       this.presets = sanitized;

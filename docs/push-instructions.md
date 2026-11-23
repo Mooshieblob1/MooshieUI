@@ -44,7 +44,7 @@ This enables `.githooks/pre-commit` (Unicode steganography, tampered git dates, 
 
 ## 3. Validate before you open a PR
 
-There is no frontend test suite (no Vitest/Jest). Rust has unit tests covering pure logic. Run the checks that match your changes:
+There is no Vitest/Jest suite; a few pure-logic `node:test` files in `scripts/tests/` run in CI. Rust has unit tests covering pure logic. `npm run check` runs the frontend gates in one go (build, i18n, portals, types). Run the checks that match your changes:
 
 | If you changed… | Run |
 |-----------------|-----|
@@ -93,7 +93,7 @@ Prefer running `bash scripts/setup-hooks.sh` from Git Bash or WSL so normal `git
 
 ## 5. CI and merge
 
-All PRs must pass **GlassWorm Infection Audit** before merge.
+All PRs must pass **GlassWorm Infection Audit**, the **Guardrails** checks (build, i18n, portals, types and script tests) and the **Rust checks** before merge. See the [CI table in CONTRIBUTING.md](../.github/CONTRIBUTING.md#what-ci-checks-and-how-to-fix-each).
 
 Maintainers (or you, on your fork) can watch checks:
 
@@ -126,7 +126,7 @@ Maintainers use the release skill/prompt (`.agents/skills/release`, plus `.githu
 - [ ] Local GlassWorm hook installed (`scripts/setup-hooks.sh`)
 - [ ] `npm run build` and/or `cargo check` as appropriate
 - [ ] IPC, gallery, and Svelte conventions respected
-- [ ] PR targets `main`; GlassWorm CI green
+- [ ] PR targets `main`; GlassWorm, Guardrails and Rust checks green
 - [ ] No version bump / changelog edits unless doing a release
 
 ---

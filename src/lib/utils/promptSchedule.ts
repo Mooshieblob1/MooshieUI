@@ -215,11 +215,71 @@ function highlightPill(colors: { bg: string; border: string; glow: string }): st
   );
 }
 
+/** Extra ranges painted over the prompt: `//` comments and find matches. */
+export interface PromptMarks {
+  comments?: ReadonlyArray<readonly [number, number]>;
+  finds?: ReadonlyArray<readonly [number, number]>;
+  /** Index into `finds` of the current match, drawn stronger. */
+  currentFind?: number;
+}
+
+const COMMENT_MARK_COLOR = {
+  bg: "rgba(115, 115, 115, 0.22)",
+  border: "rgba(115, 115, 115, 0.35)",
+  glow: "0 0 0 transparent",
+};
+const FIND_MARK_COLOR = {
+  bg: "rgba(245, 158, 11, 0.20)",
+  border: "rgba(245, 158, 11, 0.55)",
+  glow: "0 0 0 transparent",
+};
+const FIND_CURRENT_MARK_COLOR = {
+  bg: "rgba(245, 158, 11, 0.45)",
+  border: "rgba(251, 191, 36, 0.95)",
+  glow: "0 0 8px rgba(245, 158, 11, 0.45)",
+};
+
 /**
  * Render prompt text as HTML with styled highlights for scheduling blocks.
- * Used by the backdrop overlay behind the textarea.
+ * Used by the backdrop overlay behind the textarea. `marks` paints comments
+ * and find matches on top; text inside a mark skips the other highlights.
  */
 export function renderHighlightedPrompt(
+  raw: string,
+  knownPresetSlugs?: ReadonlySet<string>,
+  loraWords?: ReadonlySet<string>,
+  marks?: PromptMarks,
+): string {
+  type Span = { start: number; end: number; color: { bg: string; border: string; glow: string } };
+  const spans: Span[] = [];
+  for (const [start, end] of marks?.comments ?? []) spans.push({ start, end, color: COMMENT_MARK_COLOR });
+  (marks?.finds ?? []).forEach(([start, end], i) => {
+    // A match inside a comment still shows: finds win over comments.
+    spans.push({ start, end, color: i === marks?.currentFind ? FIND_CURRENT_MARK_COLOR : FIND_MARK_COLOR });
+  });
+  if (spans.length === 0) return renderHighlightedPromptBase(raw, knownPresetSlugs, loraWords);
+
+  // Finds were pushed last, so on overlap the later span wins.
+  const owner: Array<Span | null> = new Array(raw.length).fill(null);
+  for (const span of spans) {
+    for (let i = Math.max(0, span.start); i < Math.min(raw.length, span.end); i++) owner[i] = span;
+  }
+  let html = "";
+  let i = 0;
+  while (i < raw.length) {
+    const span = owner[i];
+    let j = i + 1;
+    while (j < raw.length && owner[j] === span) j++;
+    const text = raw.slice(i, j);
+    html += span
+      ? `${highlightPill(span.color)}${escapeHtml(text)}</span>`
+      : renderHighlightedPromptBase(text, knownPresetSlugs, loraWords);
+    i = j;
+  }
+  return html;
+}
+
+function renderHighlightedPromptBase(
   raw: string,
   knownPresetSlugs?: ReadonlySet<string>,
   loraWords?: ReadonlySet<string>,
@@ -331,7 +391,7 @@ const LORA_WORD_COLOR = {
 /**
  * Highlight comma-delimited segments of `text` that exactly match a known
  * LoRA-inserted trigger word (case-insensitive). Only whole segments match —
- * the same "own comma segment" rule `removeInsertedWordsFromPrompt` uses —
+ * the same "own comma segment" rule `utils/loraTriggerText.ts` uses —
  * so a word that merely appears inside a longer hand-written phrase is left
  * alone. Escapes and emits the plain (non-matching) HTML itself, so callers
  * can use this in place of a bare `escapeHtml()` on leaf text runs.

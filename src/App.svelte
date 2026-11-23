@@ -1,13 +1,24 @@
 <script lang="ts">
   import { portal } from "./lib/utils/portal.js";
   import { onMount, onDestroy, untrack } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
+  import {
+    CHECKERBOARD_CLASS,
+    detectImageAlpha,
+    isMingLayerImage,
+    isTransparentImage,
+    mingLayerBadgeInfo,
+  } from "./lib/utils/transparentBackdrop.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
   import { useMobileLayout } from "./lib/utils/device.js";
+  import { architectures } from "./lib/stores/architectures.svelte.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import MusicPage from "./lib/components/music/MusicPage.svelte";
+  import Model3DPage from "./lib/components/model3d/Model3DPage.svelte";
   import ScenePage from "./lib/components/scene/ScenePage.svelte";
+  import ComicPage from "./lib/components/comic/ComicPage.svelte";
   import MusicBottomPlayer from "./lib/components/music/MusicBottomPlayer.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import GalleryPage from "./lib/components/gallery/GalleryPage.svelte";
@@ -17,6 +28,7 @@
   import { connection } from "./lib/stores/connection.svelte.js";
   import { startup } from "./lib/stores/startup.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
+  import { idle } from "./lib/stores/idle.svelte.js";
   import { gallery, isVideoImage, GALLERY_MAX_RATING } from "./lib/stores/gallery.svelte.js";
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
@@ -25,29 +37,36 @@
   import { needsKrea2RefusalLora } from "./lib/utils/krea2Encoder.js";
   import { notifyKrea2RefusalLoraMissing } from "./lib/utils/krea2UncensoredSetup.js";
   import { BETA57_SCHEDULER } from "./lib/utils/samplingRecommendation.js";
-  import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, setUiResting } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
   import { UPSCALE_ACTION } from "./lib/utils/novelaiEnhance.js";
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
+  import { wildcards } from "./lib/stores/wildcards.svelte.js";
   import { generationTabs } from "./lib/stores/generationTabs.svelte.js";
+  import { enhanceChat } from "./lib/stores/enhanceChat.svelte.js";
+  import { enhancerSessions } from "./lib/stores/enhancerSessions.svelte.js";
   import GenerationTabStrip from "./lib/components/generation/GenerationTabStrip.svelte";
   import { music } from "./lib/stores/music.svelte.js";
+  import { model3d } from "./lib/stores/model3d.svelte.js";
   import { musicCover } from "./lib/stores/musicCover.svelte.js";
   import { stopScorePreview } from "./lib/utils/musicPreview.js";
   $effect(() => { const id = musicCover.nativeJob?.prompt_id; if (id) untrack(() => music.rememberPrompt(id)); });
   $effect(() => { if (music.playing) untrack(stopScorePreview); });
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
+  import { loraKeywords } from "./lib/stores/loraKeywords.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import { locale } from "./lib/stores/locale.svelte.js";
   import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationMode, GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
+  import WhatsNewModal from "./lib/components/updater/WhatsNewModal.svelte";
   import ComfyUiVersionBadge from "./lib/components/updater/ComfyUiVersionBadge.svelte";
   import { comfyuiUpdate } from "./lib/stores/comfyuiUpdate.svelte.js";
+  import { whatsNew } from "./lib/stores/whatsNew.svelte.js";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
@@ -59,6 +78,9 @@
   import { promptAssistant } from "./lib/stores/promptAssistant.svelte.js";
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
+  import ShortcutCheatSheetModal from "./lib/components/ui/ShortcutCheatSheetModal.svelte";
+  import { shortcuts } from "./lib/stores/shortcuts.svelte.js";
+  import { formatCombo, isTypingTarget } from "./lib/utils/shortcuts.js";
   import logoUrl from "./lib/assets/logo.png";
   import { applyTheme, getActiveThemeLogoUrl, onThemeApplied } from "./lib/utils/theme.js";
   import { serializeSegmentTags } from "./lib/utils/promptSegmentDetail.js";
@@ -70,8 +92,10 @@
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
+  import ImageEditor from "./lib/components/editor/ImageEditor.svelte";
+  import { imageEditor } from "./lib/stores/imageEditor.svelte.js";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
-  import NaiEnhanceModal from "./lib/components/generation/NaiEnhanceModal.svelte";
+  import EnhanceChatModal from "./lib/components/generation/EnhanceChatModal.svelte";
   import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
   import NaiImageEnhanceModal from "./lib/components/generation/NaiImageEnhanceModal.svelte";
   import StyleCreatorLightbox from "./lib/components/generation/StyleCreatorLightbox.svelte";
@@ -103,6 +127,8 @@
     ArtistPreviewVariant,
   } from "./lib/artist-gallery/previewRecipe.js";
   import { artistLocalPreviews } from "./lib/stores/artistLocalPreviews.svelte.js";
+  import { savedCharacters } from "./lib/stores/savedCharacters.svelte.js";
+  import { applyCharacterPortrait } from "./lib/utils/characterPortrait.js";
   import { styleCreator } from "./lib/stores/styleCreator.svelte.js";
   import { animeScene } from "./lib/stores/animeScene.svelte.js";
   import { submitGeneration } from "./lib/utils/generationSubmit.js";
@@ -118,6 +144,21 @@
   import { classifyGenerationError } from "./lib/utils/generationErrors.js";
   import { formatGenerationTime } from "./lib/utils/localeFormat.js";
   import { notifyOs, isWindowUnfocused } from "./lib/utils/osNotify.js";
+  import { playFinishChime } from "./lib/utils/finishChime.js";
+  import {
+    BLOCK_FIELDS,
+    DEFAULT_FIELD_ORDER,
+    EMPTY_PREFS,
+    formatLoraWeight,
+    loraDisplayName,
+    moveField,
+    orderFields,
+    parseLoraField,
+    sanitizePrefs,
+    toggleField,
+    visibleFields,
+    type ImageInfoPrefs,
+  } from "./lib/utils/imageInfoFields.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -184,12 +225,37 @@
     document.documentElement.classList.toggle("dyslexic-font", accessibility.dyslexicFont);
   });
 
+  // The 3D page is experimental and can be turned off in Settings while it is open.
+  $effect(() => {
+    if (!model3d.enabled && currentPage === "model3d") currentPage = "generate";
+  });
+
+  // Rest the UI while nobody is using it and nothing is generating: CSS
+  // animations pause (app.css .app-resting) and the desktop WebView trims its
+  // memory. The first input wakes everything again.
+  $effect(() => {
+    const resting = idle.resting && !progress.isGenerating;
+    document.documentElement.classList.toggle("app-resting", resting);
+    void setUiResting(resting);
+  });
+
   // Each generation tab keeps its own last output: switching tabs swaps the
   // preview to that tab's image, and closed tabs drop theirs.
   $effect(() => {
     const activeId = generationTabs.activeId;
     const openIds = generationTabs.tabs.map((tab) => tab.id);
     untrack(() => progress.syncTabs(activeId, openIds, generation.mode));
+  });
+
+  // Each generation tab keeps its own Enhance chat conversation and draft.
+  $effect(() => {
+    if (!generationTabs.loaded) return;
+    const activeId = generationTabs.activeId;
+    const openIds = generationTabs.tabs.map((tab) => tab.id);
+    untrack(() => {
+      enhancerSessions.syncTabs(activeId, openIds);
+      enhanceChat.syncTabs(activeId, openIds);
+    });
   });
 
   // Re-check what the picked VAE and text encoder files really are whenever a
@@ -216,6 +282,7 @@
   );
 
   let lastProgressEventAt = 0;
+  let latestPreviewSeq = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
   let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string; width?: number; height?: number }>>();
@@ -227,7 +294,7 @@
   const FETCH_TIMEOUT_MS = 45_000;
   const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
   const GENERATION_DONE_TOAST_EXIT_MS = 220;
-  type PrimaryPage = "generate" | "music" | "scene" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
+  type PrimaryPage = "generate" | "music" | "model3d" | "scene" | "comic" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
   type GenerationDoneToast = {
     id: number;
     imageUrl: string;
@@ -386,21 +453,23 @@
     );
   });
 
+  // Feed the enabled LoRAs to the keyword store so prompt autocomplete can
+  // suggest their trigger words first. setActive ignores unchanged lists, so
+  // strength edits (which also reassign generation.loras) cost nothing.
+  $effect(() => {
+    const names =
+      autocomplete.enabled && autocomplete.loraKeywordsEnabled
+        ? generation.loras.filter((l) => l.enabled && l.name).map((l) => l.name)
+        : [];
+    untrack(() => loraKeywords.setActive(names));
+  });
+
   // beta57 comes from the RES4LYF node pack. A saved beta57 scheduler on an
   // install without it (pack removed, or settings synced from another machine)
   // would fail ComfyUI's validation, so fall back once the scheduler list loads.
   $effect(() => {
     if (models.schedulers.length === 0 || generation.scheduler !== BETA57_SCHEDULER) return;
     if (!generation.beta57Available) untrack(() => generation.setBeta57Scheduler(false));
-  });
-
-  // NovelAI has no image-edit or video endpoint, so those navigation entries are hidden.
-  // Switching to a NovelAI model while one of them
-  // is selected would otherwise strand the user on a tab with no way back.
-  $effect(() => {
-    if (!generation.isNovelAi) return;
-    const mode = generation.mode;
-    if (mode === "image_edit" || mode === "video") generation.setMode("txt2img");
   });
 
   // Model family/spec detection lives here rather than in ModelSelector, which
@@ -446,14 +515,52 @@
     )
       return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") gallery.closeLightbox();
-      if (e.key === "ArrowLeft") navigateLightbox("prev");
-      if (e.key === "ArrowRight") navigateLightbox("next");
+      if (e.defaultPrevented || document.querySelector("[data-modal-open]")) return;
+      if (shortcuts.matches("lightbox.close", e)) {
+        e.preventDefault();
+        gallery.closeLightbox();
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      if (isTypingTarget(target) || target?.closest("[data-video-player]")) return;
+      if (shortcuts.matches("lightbox.prev", e)) {
+        e.preventDefault();
+        navigateLightbox("prev");
+        return;
+      }
+      if (shortcuts.matches("lightbox.next", e)) {
+        e.preventDefault();
+        navigateLightbox("next");
+        return;
+      }
       rateFromKeyboard(e);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   });
+
+  let requestedSettingsTab = $state<{ key: string; seq: number } | null>(null);
+
+  function openShortcutsSettings() {
+    shortcuts.closeCheatSheet();
+    try {
+      localStorage.setItem("mooshieui.settings.activeCategory.v1", "shortcuts");
+    } catch {
+      /* ignore */
+    }
+    requestedSettingsTab = { key: "shortcuts", seq: (requestedSettingsTab?.seq ?? 0) + 1 };
+    currentPage = "settings";
+  }
+
+  function handleGlobalShortcutKeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented) return;
+    if (document.querySelector("[data-modal-open]")) return;
+    if (isTypingTarget(e.target)) return;
+    if (shortcuts.matches("global.cheat_sheet", e)) {
+      e.preventDefault();
+      shortcuts.openCheatSheet();
+    }
+  }
 
   /**
    * Lightbox shortcuts for culling: 1 to 5 set the star rating (0 clears it),
@@ -462,16 +569,22 @@
    */
   function rateFromKeyboard(e: KeyboardEvent) {
     const image = gallery.selectedImage;
-    if (!image || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!image) return;
     const target = e.target as HTMLElement | null;
     // The video player has its own keys (F is fullscreen there).
-    if (target?.closest("input, textarea, select, [contenteditable='true'], [data-video-player]")) return;
-    const key = e.key.toLowerCase();
-    if (/^[0-9]$/.test(key) && Number(key) <= GALLERY_MAX_RATING) {
-      gallery.setRating(image, Number(key));
-    } else if (key === "f") {
+    if (isTypingTarget(target) || target?.closest("[data-video-player]")) return;
+    for (let rating = 1; rating <= GALLERY_MAX_RATING; rating++) {
+      if (shortcuts.matches(`lightbox.rate_${rating}`, e)) {
+        gallery.setRating(image, rating);
+        e.preventDefault();
+        return;
+      }
+    }
+    if (shortcuts.matches("lightbox.rate_clear", e)) {
+      gallery.setRating(image, 0);
+    } else if (shortcuts.matches("lightbox.favourite", e)) {
       gallery.toggleFavourite(image);
-    } else if (key === "n") {
+    } else if (shortcuts.matches("lightbox.nsfw", e)) {
       gallery.toggleNsfw(image);
     } else {
       return;
@@ -483,6 +596,15 @@
   let lightboxRevealed = $state<OutputImage | null>(null);
   const lightboxHidden = $derived(
     !!gallery.selectedImage && gallery.shouldBlur(gallery.selectedImage) && lightboxRevealed !== gallery.selectedImage,
+  );
+  let lightboxHasAlpha = $state(false);
+  const batchAlphaKeys = new SvelteSet<string>();
+  $effect(() => {
+    void gallery.lightboxUrl;
+    lightboxHasAlpha = false;
+  });
+  const lightboxIsTransparent = $derived(
+    lightboxHasAlpha || isTransparentImage(gallery.selectedImage),
   );
 
   function startMetadataResize(e: MouseEvent) {
@@ -524,6 +646,7 @@
       upscale_denoise: "gallery.meta.upscale_denoise",
       date: "gallery.meta.date",
       generation_time: "gallery.meta.generation_time",
+      source: "gallery.meta.source",
     };
     const tKey = keyMap[key];
     return tKey ? locale.t(tKey) : key;
@@ -797,16 +920,35 @@
   }
 
   let setupComplete = $state<boolean | null>(null); // null = loading
+  // The open page, shared by both layouts: the phone shell binds to it too, so
+  // every "go to Generate" below works there as well.
   let currentPage = $state<PrimaryPage>("generate");
-  let mobileCurrentTab = $state<PrimaryPage>("generate");
-  let mobileGenerateNavigationVersion = $state(0);
   let generationDoneToast = $state<GenerationDoneToast | null>(null);
 
   function openGenerationWorkspace(workspace: "image" | "video") {
+    // Bring the Generate tab's settings back first, so the mode lands on them
+    // and not on the Comic page's own.
+    generationTabs.leavePage();
     generation.setMode(workspace === "video" ? "video" : generation.lastImageMode);
     if (workspace === "video") canvas.isCanvasMode = false;
     currentPage = "generate";
   }
+
+  // The Comic page has its own model and settings: a hidden generation tab that
+  // is swapped in while the page is open and parked again when it closes. It
+  // only ever makes still images, so it never stays in another mode.
+  $effect(() => {
+    const onComic = currentPage === "comic";
+    const livePage = generationTabs.activeTab?.page;
+    untrack(() => {
+      if (onComic && livePage !== "comic") {
+        generationTabs.enterPage("comic");
+        if (generation.mode !== "txt2img") generation.setMode("txt2img");
+      } else if (!onComic && livePage === "comic") {
+        generationTabs.leavePage();
+      }
+    });
+  });
 
   // Auth gate state (browser mode LAN access)
   let authRequired = $state(false);
@@ -1060,6 +1202,28 @@
   let metadataPanelCollapsed = $state(false);
   const METADATA_MIN_WIDTH = 260;
   const METADATA_MAX_WIDTH = 600;
+
+  // Image Info fields: which ones show and in what order. A per-device view
+  // preference, so localStorage rather than the synced prefs.
+  const IMAGE_INFO_FIELDS_KEY = "mooshieui.gallery.imageInfoFields.v1";
+  let imageInfoPrefs = $state<ImageInfoPrefs>(readImageInfoPrefs());
+  let imageInfoEditing = $state(false);
+  function readImageInfoPrefs(): ImageInfoPrefs {
+    try {
+      const raw = localStorage.getItem(IMAGE_INFO_FIELDS_KEY);
+      return raw ? sanitizePrefs(JSON.parse(raw)) : EMPTY_PREFS;
+    } catch {
+      return EMPTY_PREFS;
+    }
+  }
+  function setImageInfoPrefs(next: ImageInfoPrefs) {
+    imageInfoPrefs = next;
+    try { localStorage.setItem(IMAGE_INFO_FIELDS_KEY, JSON.stringify(next)); } catch {}
+  }
+  /** Every field the editor lists: the known ones plus whatever this image has. */
+  const imageInfoEditorFields = $derived(
+    orderFields([...DEFAULT_FIELD_ORDER, ...Object.keys(lightboxMetadata ?? {})], imageInfoPrefs),
+  );
   /** Dir picker shown when manualSaveMode is on and 2+ dirs are configured. */
   let dirPickerImage = $state<OutputImage | null>(null);
 
@@ -1206,6 +1370,15 @@
   let interrogateStage = $state<string | null>(null);
   let interrogateDownloadProgress = $state<{ downloaded: number; total: number; filename: string } | null>(null);
   let interrogateImageUrl = $state<string | null>(null);
+  /** Object URL made here for the interrogate preview. Only this one is
+   *  revoked: gallery thumbnails and lightbox previews belong to their owners. */
+  let ownedInterrogateUrl: string | null = null;
+
+  function setInterrogatePreview(url: string | null, owned = false) {
+    if (ownedInterrogateUrl && ownedInterrogateUrl !== url) URL.revokeObjectURL(ownedInterrogateUrl);
+    ownedInterrogateUrl = owned ? url : null;
+    interrogateImageUrl = url;
+  }
   let interrogateError = $state<string | null>(null);
 
   function openContextMenu(e: MouseEvent, image: OutputImage) {
@@ -1281,6 +1454,7 @@
         { label: locale.t("gallery.get_tags"), action: () => void interrogateFromPreviewUrl(url) },
         { label: "", action: () => {}, separator: true },
         { label: locale.t("gallery.inpaint"), action: () => void inpaintLightboxPreview() },
+        { label: locale.t("gallery.edit"), action: () => imageEditor.openUrl(url, `preview_${Date.now()}.png`) },
         { label: "", action: () => {}, separator: true },
         { label: locale.t("gallery.save_as"), action: () => void gallery.saveBlobAs(url, `preview_${Date.now()}.png`) },
         { label: locale.t("gallery.copy"), action: () => void gallery.copyBlobToClipboard(url) },
@@ -1306,6 +1480,9 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
+      ...(!isVideoImage(image)
+        ? [{ label: locale.t("gallery.edit"), action: () => imageEditor.open(image, image.url ?? null) }]
+        : []),
       ...(!image.is_upscaled ? [{ label: locale.t("gallery.upscale"), action: () => upscaleImage(image) }] : []),
       ...(directorToolsAvailable() && !isVideoImage(image)
         ? [
@@ -1364,7 +1541,7 @@
     interrogateStage = null;
     interrogateDownloadProgress = null;
     interrogateError = null;
-    interrogateImageUrl = url.startsWith("data:") ? url : null;
+    setInterrogatePreview(url.startsWith("data:") || url.startsWith("blob:") ? url : null);
 
     const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
@@ -1384,14 +1561,12 @@
     try {
       const { bytes } = await fetchModelPreviewImageBytes(url, "model_preview.png");
       const uint8 = new Uint8Array(bytes);
+      if (!interrogateImageUrl) setInterrogatePreview(URL.createObjectURL(new Blob([uint8])), true);
       let binary = "";
       for (let i = 0; i < uint8.length; i++) {
         binary += String.fromCharCode(uint8[i]);
       }
       interrogateResult = await interrogateImage(btoa(binary));
-      if (!interrogateImageUrl && url.startsWith("http")) {
-        interrogateImageUrl = url;
-      }
     } catch (e) {
       console.error("Interrogation failed:", e);
       interrogateError = e instanceof Error ? e.message : String(e);
@@ -1486,7 +1661,7 @@
     interrogateStage = null;
     interrogateDownloadProgress = null;
     interrogateError = null;
-    interrogateImageUrl = image.thumbnailUrl || image.url || null;
+    setInterrogatePreview(image.thumbnailUrl || image.url || null);
 
     const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
@@ -1556,8 +1731,7 @@
     interrogateStage = null;
     interrogateDownloadProgress = null;
     interrogateError = null;
-    if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
-    interrogateImageUrl = previewUrl;
+    setInterrogatePreview(previewUrl, previewUrl !== null);
 
     const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
@@ -1637,7 +1811,16 @@
       }
       return;
     }
-    await runQuickInterrogation(null, () => interrogateClipboard());
+    // Read the pixels once more just for the preview; interrogation still
+    // reads the clipboard natively. No preview is fine if this read fails.
+    let previewUrl: string | null = null;
+    try {
+      const bytes = await readClipboardImageSafe();
+      if (bytes.length > 0) previewUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+    } catch {
+      previewUrl = null;
+    }
+    await runQuickInterrogation(previewUrl, () => interrogateClipboard());
   }
 
   /** Tauri-only: pick an image via the native dialog, then interrogate it. */
@@ -1809,6 +1992,9 @@
 
     // MooshieUI-exclusive parameters
     metadata.mooshie_model_architecture = params.model_architecture;
+    if (params.transparent_background) {
+      metadata.mooshie_transparent_background = "true";
+    }
 
     if (params.smart_guidance) {
       metadata.mooshie_smart_guidance = "true";
@@ -2077,6 +2263,24 @@
     }
   }
 
+  /**
+   * A prompt this page only adopted from a queue update was queued by another
+   * client (a second admin tab, a phone over LAN) that saves it itself, with
+   * its params. Every admin client gets every completion, so give that save a
+   * moment to land and reuse it. A page that queued the prompt and was then
+   * reloaded finds no other save and still saves its own copy.
+   */
+  async function savedByAnotherClient(
+    item: { restored?: boolean },
+    promptId: string,
+    imageCount: number,
+  ): Promise<string[] | null> {
+    if (!item.restored || imageCount === 0) return null;
+    const files = await gallery.waitForSavedElsewhere(promptId, 8000);
+    if (files) console.log("[gallery] prompt saved by another client, not saving again:", promptId, files);
+    return files;
+  }
+
   function finalizeOutputImages(
     promptId: string,
     mode: GenerationMode,
@@ -2092,6 +2296,7 @@
     }>,
     generationTimeMs?: number,
     tabId?: string,
+    savedElsewhere?: string[] | null,
   ) {
     if (images.length === 0) return;
 
@@ -2130,8 +2335,18 @@
     const outputSize =
       first?.width && first?.height ? { width: first.width, height: first.height } : null;
     const metadata = params ? buildPngMetadata(params, outputSize) : undefined;
-    for (const image of newImages) {
-      image.metadata = metadata ?? null;
+    const isMingLayers = params?.model_architecture === "mingimagelayer" && newImages.length > 1;
+    const perImageMetadata = isMingLayers
+      ? newImages.map((_, i) => ({
+          ...(metadata ?? {}),
+          mooshie_model_architecture: "mingimagelayer",
+          mooshie_transparent_background: "true",
+          mooshie_layer_index: String(i + 1),
+          mooshie_layer_count: String(newImages.length),
+        }))
+      : undefined;
+    for (let i = 0; i < newImages.length; i++) {
+      newImages[i]!.metadata = perImageMetadata ? perImageMetadata[i]! : (metadata ?? null);
     }
 
     // In browser mode, embed metadata into the blob URLs immediately so that
@@ -2143,7 +2358,7 @@
         const img = images[i]!;
         const outputImage = newImages[i]!;
         if (img.tempFilename) {
-          embedTempMetadata(img.tempFilename, metadata, outputImage);
+          embedTempMetadata(img.tempFilename, perImageMetadata?.[i] ?? metadata, outputImage);
         }
       }
     }
@@ -2152,7 +2367,14 @@
     const blobs = images.map((img) => img.blob);
     const tempFilenames = images.map((img) => img.tempFilename);
     console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
-    gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+    if (savedElsewhere) {
+      // The client that queued this prompt already saved it, with its
+      // metadata. Show that copy rather than writing a second one.
+      void gallery.adoptSavedImages(newImages, savedElsewhere);
+    } else {
+      gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames, perImageMetadata);
+    }
+    if (generation.finishSound) playFinishChime();
     showGenerationDoneToast(newImages);
 
     // An enhance, a set of variations or an upscale replaces what the lightbox
@@ -2166,6 +2388,13 @@
       } else {
         console.log("[lightbox] follow skipped, lightbox closed before", promptId, "landed");
       }
+    }
+
+    // A saved character's portrait becomes that card's picture. Before the
+    // artist-preview block, which is followed by an early return.
+    const portraitCard = savedCharacters.resolvePortrait(promptId);
+    if (portraitCard !== null && newImages[0]) {
+      void applyCharacterPortrait(portraitCard, newImages[0]);
     }
 
     // Route a finished Style Creator card back to its round. Must run before
@@ -2263,7 +2492,7 @@
   }
 
   function viewingGeneratePage(): boolean {
-    return useMobileLayout ? mobileCurrentTab === "generate" : currentPage === "generate";
+    return currentPage === "generate";
   }
 
   function dismissGenerationDoneToast() {
@@ -2322,10 +2551,6 @@
 
   function openGenerateFromDoneToast() {
     currentPage = "generate";
-    if (useMobileLayout) {
-      mobileCurrentTab = "generate";
-      mobileGenerateNavigationVersion += 1;
-    }
     dismissGenerationDoneToast();
   }
 
@@ -2551,6 +2776,10 @@
   onMount(async () => {
     // Start heartbeat in browser mode to keep backend alive
     startHeartbeat();
+    idle.start();
+    // Registered model architectures (labels, presets, downloads). Static
+    // data from the backend; ModelSelector retries if this runs before login.
+    void architectures.load();
 
     // Native drag-drop wiring for the interrogate sidebar button (Tauri only).
     setupInterrogateTauriDragDrop();
@@ -2613,6 +2842,7 @@
 
     // Setup already done — initialize the main app
     await initApp();
+    whatsNew.checkOnStartup(appVersion);
   });
 
   async function onSetupDone(selectedMode: "app" | "browser") {
@@ -2682,6 +2912,8 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+    // Wildcard files are read once up front so `__name__` resolves on the first Generate.
+    void wildcards.load();
     // After the generation load, which restores the active tab's live settings.
     await generationTabs.load();
     void music.loadLibrary();
@@ -2752,6 +2984,7 @@
       ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
         if (music.handleEvent("progress", data)) return;
+        if (model3d.handleEvent("progress", data)) return;
         if (!progress.isGenerating) return;
         lastProgressEventAt = Date.now();
         // Filter by prompt_id — reject events for other users' prompts
@@ -2765,7 +2998,7 @@
         progress.updateProgress(data.value, data.max, node);
       }),
       ...["execution_start", "execution_cached", "progress_state", "execution_interrupted"].map((type) =>
-        ipcListen(`comfyui:${type}`, (event: any) => { music.handleEvent(type, event.payload); }),
+        ipcListen(`comfyui:${type}`, (event: any) => { music.handleEvent(type, event.payload); model3d.handleEvent(type, event.payload); }),
       ),
       ipcListen("novelai:face_pass", (event: any) => {
         const data = event.payload;
@@ -2789,6 +3022,11 @@
       }),
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
+        if (data.kind === "3d" || (data.prompt_id && model3d.isModel3DPrompt(data.prompt_id))) {
+          if (data.prompt_id) model3d.rememberPrompt(data.prompt_id);
+          model3d.handleEvent("queue", data);
+          return;
+        }
         if (data.kind === "music" || (data.prompt_id && music.isMusicPrompt(data.prompt_id))) {
           if (data.prompt_id) music.rememberPrompt(data.prompt_id);
           music.handleEvent("queue", data);
@@ -2822,6 +3060,7 @@
         artistLocalPreviews.failAll();
         styleCreator.failAll();
         stylesStore.failThumbnail();
+        savedCharacters.dropPortraitClaims();
         compare.clearGridBatch();
       }),
       ipcListen("novelai:vibes_encoded", (event: any) => {
@@ -2832,12 +3071,28 @@
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
         if (Array.isArray(data.vibes)) generation.applyNovelAiVibeEncodings(data.vibes);
       }),
+      // An AI assistant generated this through the MCP server; the backend
+      // already saved it, so only surface it at the top of the gallery.
+      // Saves from any client; lets a page that only watched a prompt reuse
+      // the submitter's save (see savedByAnotherClient).
+      ipcListen("mooshie:image_saved", (event: any) => {
+        const promptId = event.payload?.prompt_id;
+        const filename = event.payload?.filename;
+        if (typeof promptId === "string" && typeof filename === "string") gallery.noteSaved(promptId, filename);
+      }),
+      ipcListen("mcp:image_saved", (event: any) => {
+        const filename = event.payload?.filename;
+        if (typeof filename === "string" && filename) void gallery.addPersistedImage(filename);
+      }),
       ipcListen("comfyui:preview", async (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
         // Filter by prompt_id — reject events for other users' prompts
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
         if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
+
+        const seq = ++latestPreviewSeq;
+        const targetPromptId = data.prompt_id ?? progress.activePromptId;
 
         if (data.temp_filename) {
           // The worker WebSocket delivers preview frames as temp-file
@@ -2868,9 +3123,10 @@
             // between one queued prompt completing and the next starting,
             // when activePromptId is briefly null.
             if (
+              seq !== latestPreviewSeq ||
               !progress.isGenerating ||
-              (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) ||
-              (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId)
+              (targetPromptId && !progress.pendingPrompts.some((p: any) => p.promptId === targetPromptId)) ||
+              (targetPromptId && progress.activePromptId && targetPromptId !== progress.activePromptId)
             ) {
               return;
             }
@@ -3128,6 +3384,7 @@
       ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;
         if (music.handleEvent("executing", data)) return;
+        if (model3d.handleEvent("executing", data)) return;
         console.log("Executing event:", data);
         // Ignore prompts not in our queue
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) {
@@ -3182,7 +3439,8 @@
               clearRegionalChainGallerySuppress(promptId);
               console.log("[regional] Skipping gallery save for chain intermediate:", promptId);
             } else {
-              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId);
+              const savedElsewhere = await savedByAnotherClient(item, promptId, images.length);
+              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId, savedElsewhere);
             }
 
             // Track grid batch completion — stitch when all cells are done
@@ -3203,6 +3461,7 @@
       ipcListen("comfyui:execution_error", (event: any) => {
         const data = event.payload;
         if (music.handleEvent("execution_error", data)) return;
+        if (model3d.handleEvent("execution_error", data)) return;
         console.error("Execution error:", event.payload);
         // Classify the failure into an actionable message. The raw ComfyUI
         // desktop payload exposes exception_message/exception_type/node_type/
@@ -3224,6 +3483,7 @@
           locale.t("notifications.os.generation_error.body"),
         );
         if (data.prompt_id) {
+          progress.markFailed(data.prompt_id);
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
           promptLastActivity.delete(data.prompt_id);
@@ -3233,9 +3493,11 @@
           // `toastMsg` is the classified message the toast above already showed.
           styleCreator.fail(data.prompt_id, toastMsg);
           stylesStore.failThumbnail(data.prompt_id);
+          savedCharacters.resolvePortrait(data.prompt_id);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
+          for (const pending of progress.pendingPrompts) progress.markFailed(pending.promptId);
           pendingOutputImages.clear();
           pendingOutputFetches.clear();
           promptLastActivity.clear();
@@ -3243,11 +3505,13 @@
           artistLocalPreviews.failAll();
           styleCreator.failAll();
           stylesStore.failThumbnail();
+          savedCharacters.dropPortraitClaims();
           compare.clearGridBatch();
         }
       }),
       ipcListen("comfyui:execution_success", (event: any) => {
         music.handleEvent("execution_success", event.payload);
+        model3d.handleEvent("execution_success", event.payload);
         // Image success is handled via executing node=null.
       }),
     ]);
@@ -3323,7 +3587,8 @@
                   clearRegionalChainGallerySuppress(p.promptId);
                   console.log("[regional] Skipping gallery save for chain intermediate:", p.promptId);
                 } else {
-                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId);
+                  const savedElsewhere = await savedByAnotherClient(item, p.promptId, images.length);
+                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId, savedElsewhere);
                 }
               } else {
                 const failedStyleTransfer = item.params?.style_transfer_enabled;
@@ -3346,6 +3611,7 @@
                 // card's spinner would run forever.
                 styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
                 stylesStore.failThumbnail(p.promptId);
+                savedCharacters.resolvePortrait(p.promptId);
               }
             } else {
               // `completePrompt` did not recognise this prompt at all. Same
@@ -3353,6 +3619,7 @@
               // must be released the same way.
               styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
               stylesStore.failThumbnail(p.promptId);
+              savedCharacters.resolvePortrait(p.promptId);
             }
           }
         }
@@ -3611,11 +3878,20 @@
   <SetupWizard onSetupComplete={onSetupDone} />
 {:else if useMobileLayout}
   <MobileApp
-    canUseModelhub={canUseModelhub}
+    bind:page={currentPage}
+    {canUseModelhub}
     {userRole}
-    navigationTarget="generate"
-    navigationVersion={mobileGenerateNavigationVersion}
-    onTabChange={(tab) => (mobileCurrentTab = tab)}
+    logoUrl={themeLogoUrl}
+    {appVersion}
+    banner={startupBanner}
+    onOpenWorkspace={openGenerationWorkspace}
+    onInterrogate={() => { dismissInterrogateHint(); showInterrogateQuickModal = true; }}
+    onReportBug={() => (showBugReport = true)}
+    onInsertArtistTag={handleArtistTagInsert}
+    onInsertCharacter={handleCharacterInsert}
+    onGenerateArtistPreview={handleArtistGeneratePreview}
+    {artistPreviewStatus}
+    onMake3D={model3d.enabled ? (image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; } : undefined}
   />
 {:else}
 <div class="relative flex h-full flex-col bg-neutral-950">
@@ -3698,24 +3974,22 @@
         </div>
       {/if}
     </div>
-    {#if !generation.isNovelAi}
-      <div class="relative mx-auto">
-        <button
-          class="touch-target flex items-center justify-center rounded-lg transition-colors {currentPage === 'generate' && generation.mode === 'video' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
-          onclick={() => openGenerationWorkspace("video")}
-          title={locale.t("generation.mode.video")}
-          aria-label={locale.t("generation.mode.video")}
-          aria-current={currentPage === "generate" && generation.mode === "video" ? "page" : undefined}
-        >
-          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg>
-        </button>
-        {#if progress.isGenerating && progress.currentMode === "video"}
-          <span class="absolute -top-1 -right-1 min-w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 pointer-events-none {progress.queuePosition !== null && progress.queuePosition > 0 ? 'bg-amber-500 text-black' : 'bg-indigo-400 text-white animate-pulse'}" title={progress.phaseLabel}>
-            {progress.queuePosition !== null && progress.queuePosition > 0 ? `#${progress.queuePosition + 1}` : "●"}
-          </span>
-        {/if}
-      </div>
-    {/if}
+    <div class="relative mx-auto">
+      <button
+        class="touch-target flex items-center justify-center rounded-lg transition-colors {currentPage === 'generate' && generation.mode === 'video' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+        onclick={() => openGenerationWorkspace("video")}
+        title={locale.t("generation.mode.video")}
+        aria-label={locale.t("generation.mode.video")}
+        aria-current={currentPage === "generate" && generation.mode === "video" ? "page" : undefined}
+      >
+        <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg>
+      </button>
+      {#if progress.isGenerating && progress.currentMode === "video"}
+        <span class="absolute -top-1 -right-1 min-w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 pointer-events-none {progress.queuePosition !== null && progress.queuePosition > 0 ? 'bg-amber-500 text-black' : 'bg-indigo-400 text-white animate-pulse'}" title={progress.phaseLabel}>
+          {progress.queuePosition !== null && progress.queuePosition > 0 ? `#${progress.queuePosition + 1}` : "●"}
+        </span>
+      {/if}
+    </div>
     <button
       class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'music' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
       onclick={() => (currentPage = "music")}
@@ -3723,6 +3997,31 @@
       aria-label={locale.t("nav.music")}
     >
       <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/></svg>
+    </button>
+    {#if model3d.enabled}
+      <div class="relative mx-auto">
+        <button
+          class="touch-target flex items-center justify-center rounded-lg transition-colors {currentPage === 'model3d' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+          onclick={() => (currentPage = "model3d")}
+          title={locale.t("nav.model3d_experimental")}
+          aria-label={locale.t("nav.model3d_experimental")}
+          aria-current={currentPage === "model3d" ? "page" : undefined}
+        >
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
+        </button>
+        {#if model3d.busy}
+          <span class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-indigo-400 motion-safe:animate-pulse pointer-events-none" aria-hidden="true"></span>
+        {/if}
+      </div>
+    {/if}
+    <button
+      class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'comic' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+      onclick={() => (currentPage = "comic")}
+      title={locale.t("nav.comic")}
+      aria-label={locale.t("nav.comic")}
+      aria-current={currentPage === "comic" ? "page" : undefined}
+    >
+      <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="1.5"/><path d="M3 10h18"/><path d="M12 10v11"/><path d="M9 3v7"/></svg>
     </button>
     <button
       class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'scene' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
@@ -3890,6 +4189,38 @@
 
     <NotificationBell onOpenSettings={() => (currentPage = "settings")} />
 
+    <!-- Keyboard shortcuts cheat sheet -->
+    <button
+      type="button"
+      class="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors mx-auto mb-1"
+      onclick={() => shortcuts.openCheatSheet()}
+      title="{locale.t('nav.shortcuts')} ({formatCombo(shortcuts.effectiveCombo('global.cheat_sheet'))})"
+      aria-label={locale.t('nav.shortcuts')}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4.5 h-4.5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <path d="M6 8h.01" />
+        <path d="M10 8h.01" />
+        <path d="M14 8h.01" />
+        <path d="M18 8h.01" />
+        <path d="M6 12h.01" />
+        <path d="M10 12h.01" />
+        <path d="M14 12h.01" />
+        <path d="M18 12h.01" />
+        <path d="M7 16h10" />
+      </svg>
+    </button>
+
     <!-- Connection status dot -->
     <div
       class="w-3 h-3 rounded-full mb-2 mx-auto transition-colors {connection.connected
@@ -3949,93 +4280,26 @@
   {#if currentPage === "generate"}
     <GenerationTabStrip />
   {/if}
-  <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">
+  <!-- The Generate page draws its own cards (side panels, preview, drawer), so it skips the frame. -->
+  <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden {currentPage === 'generate'
+    ? ''
+    : 'md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30'}">
     <UpdateNotification {userRole} />
     <DownloadBanner />
-    <ExternalComfyModal
-      open={externalComfyOpen}
-      payload={externalComfyPayload}
-      serverUrl={comfyServerUrl}
-      onclose={() => {
-        externalComfyOpen = false;
-      }}
-      onrestarted={() => {
-        externalComfyOpen = false;
-        startupStatus = locale.t("app.status.starting_comfyui");
-        startupStatusKind = "starting";
-      }}
-    />
-    <PhotopeaEditor
-      open={photopeaOpen}
-      image={photopeaImage}
-      onclose={() => {
-        photopeaOpen = false;
-        photopeaImage = null;
-      }}
-      onsaved={(filename) => {
-        void gallery.addPersistedImage(filename);
-        gallery.showToast(locale.t("photopea.saved"), "success");
-      }}
-    />
-    {#if startupStatus && !connection.connected && !startup.locked}
-      <div class="mb-1 flex shrink-0 items-center gap-2 rounded-[var(--app-panel-radius)] border border-amber-800/60 bg-amber-950/85 px-4 py-2.5 text-sm text-amber-100 shadow-lg shadow-black/20 backdrop-blur-sm">
-        {#if startupStatusKind === "manual" || startupStatusKind === "error"}
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          {startupStatus}
-          <button
-            class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
-            onclick={async () => {
-              try {
-                startupStatus = locale.t("app.status.starting_comfyui");
-                startupStatusKind = "starting";
-                const result = await ipcInvoke<string>("start_comfyui");
-                if (result === "spawned") {
-                  startupStatus = locale.t("app.status.starting_comfyui");
-                  startupStatusKind = "starting";
-                } else if (result === "already_running" || result === "skipped") {
-                  startupStatus = locale.t("app.status.connecting");
-                  startupStatusKind = "connecting";
-                  try {
-                    await models.refresh();
-                    if (models.checkpoints.length > 0) {
-                      connection.connected = true;
-                      generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
-                    }
-                    startupStatus = "";
-                    startupStatusKind = "idle";
-                  } catch (refreshError) {
-                    console.error("Model refresh failed (already running):", refreshError);
-                  }
-                }
-              } catch (e) {
-                startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
-                startupStatusKind = "error";
-              }
-            }}
-          >
-            {locale.t("app.start_comfyui")}
-          </button>
-        {:else}
-          <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-          {startupStatus}
-        {/if}
-      </div>
-    {/if}
-    {#if startup.locked}
-      <div class="mb-1 flex shrink-0 items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300" role="status">
-        <div class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent"></div>
-        <span>{startupStatus || locale.t("app.startup.initializing")}</span>
-      </div>
-    {/if}
-    <div class="relative flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950" inert={startup.locked}>
+    {@render startupBanner(false)}
+    <div class="relative flex-1 overflow-hidden md:min-h-0 {currentPage === 'generate' ? '' : 'md:rounded-xl md:bg-neutral-950'}" inert={startup.locked}>
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "music"}
       <MusicPage {userRole} />
+    {:else if currentPage === "model3d" && model3d.enabled}
+      <Model3DPage {userRole} />
     {:else if currentPage === "scene"}
       <ScenePage onOpenSettings={() => (currentPage = "settings")} />
+    {:else if currentPage === "comic"}
+      <ComicPage />
     {:else if currentPage === "gallery"}
-      <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} />
+      <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} onMake3D={model3d.enabled ? (image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; } : undefined} />
     {:else if currentPage === "modelhub"}
       <ModelHubPage />
     {:else if currentPage === "artists"}
@@ -4047,7 +4311,7 @@
         previewStatus={artistPreviewStatus}
       />
     {:else if currentPage === "settings"}
-      <SettingsPage {userRole} />
+      <SettingsPage {userRole} requestedCategory={requestedSettingsTab} />
     {/if}
     </div>
   </main>
@@ -4056,6 +4320,88 @@
 <MusicBottomPlayer onOpen={() => { music.view = "generate"; currentPage = "music"; }} />
 </div>
 {/if}
+
+<!-- Startup / ComfyUI status line; both layouts render it. -->
+{#snippet startupBanner(phone: boolean)}
+  {#if startupStatus && !connection.connected && !startup.locked}
+    <div class="{phone ? 'mx-2 mt-2' : 'mb-1'} flex shrink-0 items-center gap-2 rounded-[var(--app-panel-radius)] border border-amber-800/60 bg-amber-950/85 px-4 py-2.5 text-sm text-amber-100 shadow-lg shadow-black/20 backdrop-blur-sm">
+      {#if startupStatusKind === "manual" || startupStatusKind === "error"}
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        {startupStatus}
+        <button
+          class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
+          onclick={async () => {
+            try {
+              startupStatus = locale.t("app.status.starting_comfyui");
+              startupStatusKind = "starting";
+              const result = await ipcInvoke<string>("start_comfyui");
+              if (result === "spawned") {
+                startupStatus = locale.t("app.status.starting_comfyui");
+                startupStatusKind = "starting";
+              } else if (result === "already_running" || result === "skipped") {
+                startupStatus = locale.t("app.status.connecting");
+                startupStatusKind = "connecting";
+                try {
+                  await models.refresh();
+                  if (models.checkpoints.length > 0) {
+                    connection.connected = true;
+                    generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+                  }
+                  startupStatus = "";
+                  startupStatusKind = "idle";
+                } catch (refreshError) {
+                  console.error("Model refresh failed (already running):", refreshError);
+                }
+              }
+            } catch (e) {
+              startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
+              startupStatusKind = "error";
+            }
+          }}
+        >
+          {locale.t("app.start_comfyui")}
+        </button>
+      {:else}
+        <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+        {startupStatus}
+      {/if}
+    </div>
+  {/if}
+  {#if startup.locked}
+    <div class="{phone ? 'mx-2 mt-2' : 'mb-1'} flex shrink-0 items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300" role="status">
+      <div class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent"></div>
+      <span>{startupStatus || locale.t("app.startup.initializing")}</span>
+    </div>
+  {/if}
+{/snippet}
+
+<!-- App-wide modals (both portaled), opened from either layout. -->
+<ExternalComfyModal
+  open={externalComfyOpen}
+  payload={externalComfyPayload}
+  serverUrl={comfyServerUrl}
+  onclose={() => {
+    externalComfyOpen = false;
+  }}
+  onrestarted={() => {
+    externalComfyOpen = false;
+    startupStatus = locale.t("app.status.starting_comfyui");
+    startupStatusKind = "starting";
+  }}
+/>
+<ImageEditor />
+<PhotopeaEditor
+  open={photopeaOpen}
+  image={photopeaImage}
+  onclose={() => {
+    photopeaOpen = false;
+    photopeaImage = null;
+  }}
+  onsaved={(filename) => {
+    void gallery.addPersistedImage(filename);
+    gallery.showToast(locale.t("photopea.saved"), "success");
+  }}
+/>
 
 <!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}
@@ -4077,6 +4423,15 @@
                 {#if loadingLightboxMetadata}
                   <span class="text-[10px] text-neutral-400">{locale.t("common.loading")}</span>
                 {/if}
+                <button
+                  class="p-1 rounded transition-colors {imageInfoEditing ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200'}"
+                  onclick={() => (imageInfoEditing = !imageInfoEditing)}
+                  aria-pressed={imageInfoEditing}
+                  title={locale.t("gallery.info_fields.edit")}
+                  aria-label={locale.t("gallery.info_fields.edit")}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                </button>
                 <button
                   class="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors"
                   onclick={() => (metadataPanelCollapsed = true)}
@@ -4144,31 +4499,88 @@
               </div>
             {/if}
 
+            {#if imageInfoEditing}
+              <!-- Field picker: show/hide and reorder. Applies to every image. -->
+              <div class="mb-3 rounded-lg border border-neutral-700 bg-neutral-800/60 p-2">
+                <div class="mb-1.5 flex items-center justify-between gap-2">
+                  <span class="text-[10px] text-neutral-500 uppercase tracking-wider">{locale.t("gallery.info_fields.title")}</span>
+                  <button
+                    class="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:text-neutral-600"
+                    disabled={imageInfoPrefs.order.length === 0 && imageInfoPrefs.hidden.length === 0}
+                    onclick={() => setImageInfoPrefs(EMPTY_PREFS)}
+                  >{locale.t("common.reset")}</button>
+                </div>
+                <ul class="space-y-0.5">
+                  {#each imageInfoEditorFields as key, i (key)}
+                    {@const shown = !imageInfoPrefs.hidden.includes(key)}
+                    <li class="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-neutral-700/50">
+                      <label class="flex min-w-0 flex-1 items-center gap-1.5 cursor-pointer {shown ? 'text-neutral-200' : 'text-neutral-500'}">
+                        <input
+                          type="checkbox"
+                          class="accent-indigo-500"
+                          checked={shown}
+                          onchange={() => setImageInfoPrefs(toggleField(key, imageInfoPrefs))}
+                        />
+                        <span class="truncate">{metadataLabel(key)}</span>
+                      </label>
+                      <button
+                        class="p-0.5 rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent"
+                        disabled={i === 0}
+                        onclick={() => setImageInfoPrefs(moveField(imageInfoEditorFields, key, -1, imageInfoPrefs))}
+                        title={locale.t("gallery.info_fields.move_up")}
+                        aria-label={locale.t("gallery.info_fields.move_up")}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                      </button>
+                      <button
+                        class="p-0.5 rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent"
+                        disabled={i === imageInfoEditorFields.length - 1}
+                        onclick={() => setImageInfoPrefs(moveField(imageInfoEditorFields, key, 1, imageInfoPrefs))}
+                        title={locale.t("gallery.info_fields.move_down")}
+                        aria-label={locale.t("gallery.info_fields.move_down")}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+
             {#if lightboxMetadata}
-              {@const promptKeys = ["positive_prompt", "negative_prompt"]}
-              {@const settingKeys = Object.keys(lightboxMetadata).filter((k) => !promptKeys.includes(k))}
-
-              <!-- Prompts -->
-              {#each promptKeys as key}
-                {#if lightboxMetadata[key]}
-                  <div class="mb-3">
-                    <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">{metadataLabel(key)}</label>
-                    <p class="text-neutral-200 whitespace-pre-wrap wrap-break-word leading-relaxed">{lightboxMetadata[key]}</p>
-                  </div>
-                {/if}
-              {/each}
-
-              <!-- Settings grid -->
-              {#if settingKeys.length > 0}
-                <div class="border-t border-neutral-700/50 pt-2 mt-2 space-y-1.5">
-                  {#each settingKeys as key}
+              {@const fields = visibleFields(lightboxMetadata, imageInfoPrefs)}
+              <div class="space-y-1.5">
+                {#each fields as key, i (key)}
+                  {@const value = lightboxMetadata[key]}
+                  {#if BLOCK_FIELDS.has(key)}
+                    <div class="{i > 0 ? 'pt-1.5' : ''} pb-1.5">
+                      <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">{metadataLabel(key)}</label>
+                      <p class="text-neutral-200 whitespace-pre-wrap wrap-break-word leading-relaxed">{value}</p>
+                    </div>
+                  {:else if key === "loras"}
+                    {@const loras = parseLoraField(value)}
                     <div class="flex justify-between gap-2">
                       <span class="text-neutral-500 shrink-0">{metadataLabel(key)}</span>
-                      <span class="text-neutral-200 text-right break-all">{lightboxMetadata[key]}</span>
+                      <ul class="min-w-0 space-y-1 text-right">
+                        {#each loras as lora, j (j)}
+                          {@const weight = formatLoraWeight(lora)}
+                          <li class="flex items-center justify-end gap-1.5">
+                            <span class="min-w-0 truncate text-neutral-200" title={lora.name}>{loraDisplayName(lora.name)}</span>
+                            {#if weight}
+                              <span class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tabular-nums {lora.model !== null && lora.model < 0 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}">{weight}</span>
+                            {/if}
+                          </li>
+                        {/each}
+                      </ul>
                     </div>
-                  {/each}
-                </div>
-              {/if}
+                  {:else}
+                    <div class="flex justify-between gap-2">
+                      <span class="text-neutral-500 shrink-0">{metadataLabel(key)}</span>
+                      <span class="text-neutral-200 text-right break-all">{value}</span>
+                    </div>
+                  {/if}
+                {/each}
+              </div>
             {:else if !loadingLightboxMetadata}
               <span class="text-neutral-500">{locale.t("gallery.no_metadata")}</span>
             {/if}
@@ -4341,6 +4753,14 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.13-3.36L23 10M1 14l5.37 4.36A9 9 0 0020.49 15"/></svg>
         </button>
         <button
+          title={locale.t("gallery.edit")}
+          aria-label={locale.t("gallery.edit")}
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && imageEditor.open(gallery.selectedImage, gallery.lightboxUrl ?? null)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+        </button>
+        <button
           title={locale.t("gallery.edit_photopea")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && editInPhotopea(gallery.selectedImage)}
@@ -4455,13 +4875,15 @@
             {#each gallery.lightboxBatch as tile (tile.filename)}
               {@const tileSrc = batchTileSrc(tile)}
               {@const isActive = tile === gallery.selectedImage}
+              {@const tileTransparent = isTransparentImage(tile) || batchAlphaKeys.has(tile.filename)}
+              {@const layerInfo = mingLayerBadgeInfo(tile, gallery.lightboxBatch)}
               <div
                 class="group relative rounded-lg overflow-hidden bg-neutral-900/60 {isActive
                   ? 'ring-2 ring-indigo-400'
                   : 'ring-1 ring-neutral-800'}"
               >
                 <button
-                  class="block w-full cursor-zoom-in"
+                  class="flex w-full items-center justify-center cursor-zoom-in"
                   onclick={() => selectBatchTile(tile)}
                   title={locale.t("gallery.lightbox.open_tile")}
                 >
@@ -4469,7 +4891,12 @@
                     <img
                       src={tileSrc}
                       alt={tile.filename}
-                      class="w-full max-h-[38vh] object-contain select-none"
+                      onload={(e) => {
+                        if (detectImageAlpha(e.currentTarget as HTMLImageElement)) {
+                          batchAlphaKeys.add(tile.filename);
+                        }
+                      }}
+                      class="max-w-full max-h-[38vh] object-contain select-none {tileTransparent ? CHECKERBOARD_CLASS : ''}"
                       draggable="false"
                     />
                   {:else}
@@ -4478,6 +4905,13 @@
                     </div>
                   {/if}
                 </button>
+                {#if layerInfo || isMingLayerImage(tile)}
+                  <div class="absolute top-2 right-2 px-2 py-0.5 rounded-lg bg-indigo-950/90 border border-indigo-600/50 text-[11px] font-medium text-indigo-200 backdrop-blur-sm pointer-events-none">
+                    {layerInfo
+                      ? locale.t("gallery.layer_badge", { index: String(layerInfo.index), total: String(layerInfo.total) })
+                      : locale.t("gallery.layer_item")}
+                  </div>
+                {/if}
 
                 <!-- Per-tile timing. NovelAI returns the whole run from one
                      request, so every tile carries the run's duration: it is
@@ -4591,7 +5025,8 @@
           bind:this={lbImgEl}
           src={gallery.lightboxUrl}
           alt={gallery.selectedImage?.filename ?? locale.t("gallery.no_preview")}
-          class="max-w-full max-h-[85vh] object-contain select-none {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
+          onload={(e) => { lightboxHasAlpha = detectImageAlpha(e.currentTarget as HTMLImageElement); }}
+          class="max-w-full max-h-[85vh] object-contain select-none {lightboxIsTransparent ? CHECKERBOARD_CLASS : ''} {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
           draggable="false"
           style="transform-origin: center center; will-change: transform;"
           onwheel={zoomLightboxAtCursor}
@@ -4703,6 +5138,14 @@
       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
     {/if}
     {gallery.toast.message}
+    {#if gallery.toast.actionLabel && gallery.toast.onAction}
+      {@const action = gallery.toast.onAction}
+      <button
+        type="button"
+        class="ml-1 rounded border border-current/40 px-2 py-0.5 text-xs font-medium hover:bg-white/10"
+        onclick={() => { action(); gallery.toast = null; }}
+      >{gallery.toast.actionLabel}</button>
+    {/if}
   </div>
 {/if}
 
@@ -4719,10 +5162,10 @@
 
 <CharacterInsertModal onapplied={finishCharacterInsert} />
 
-<!-- NovelAI V5 rewrite, input and review both. Mounted at root because it is
-     app wide and outlives the prompt panel that opens it: switching to the
-     gallery mid-review must not discard a result not yet applied. -->
-<NaiEnhanceModal />
+<!-- The Enhance chat, every flow. Mounted at root because it is app wide and
+     outlives the prompt panel that opens it: switching to the gallery
+     mid-conversation must not discard an answer not yet applied. -->
+<EnhanceChatModal />
 <DirectorToolsModal />
 
 <!-- NovelAI image Enhance. Root-mounted for the same reason Director Tools is:
@@ -4738,7 +5181,11 @@
 <NovelAiPositionModal />
 
 <!-- Global human-readable error surface -->
+<svelte:window onkeydown={handleGlobalShortcutKeydown} />
+
 <GlobalErrorModal />
+<WhatsNewModal />
+<ShortcutCheatSheetModal onCustomize={openShortcutsSettings} />
 
 {#if showBugReport}
   <ReportErrorModal error={userInitiatedReport} generic onclose={() => (showBugReport = false)} />
@@ -4817,8 +5264,7 @@
     onclose={() => {
       showInterrogateModal = false;
       interrogateResult = null;
-      if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
-      interrogateImageUrl = null;
+      setInterrogatePreview(null);
       interrogateError = null;
     }}
   />

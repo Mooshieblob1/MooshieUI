@@ -7,7 +7,7 @@
    * entry) and none of those live next to the generation settings.
    *
    * The `novelaiAugment` call lives here and not in the store, the same way
-   * `NaiEnhanceModal` owns its rewrite: `directorTools` is a feature store and
+   * the Enhance chat (`enhanceChatRunner`) owns its rewrite: `directorTools` is a feature store and
    * keeps to being a state machine over this one form.
    *
    * Nothing here waits for the result. The backend reports through the same
@@ -16,6 +16,7 @@
    * session grid and the gallery on their own.
    */
   import { portal } from "../../utils/portal.js";
+  import InfoTip from "../ui/InfoTip.svelte";
   import {
     directorTools,
     DIRECTOR_TOOLS,
@@ -110,13 +111,11 @@
       aria-label={locale.t("novelai.director.title")}
     >
       <div class="mb-4 flex items-start justify-between gap-3">
-        <div>
+        <div class="flex items-center gap-1.5">
           <h2 class="text-lg font-semibold text-neutral-100">
             {locale.t("novelai.director.title")}
           </h2>
-          <p class="mt-1 text-sm text-neutral-400">
-            {locale.t("novelai.director.subtitle")}
-          </p>
+          <InfoTip text={locale.t("novelai.director.subtitle")} />
         </div>
         <!-- Sized to a comfortable pointer target rather than to the glyph: this
              is the only close affordance besides Escape and the backdrop. -->

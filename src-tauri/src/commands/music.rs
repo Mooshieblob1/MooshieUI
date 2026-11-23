@@ -15,8 +15,8 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct MusicCapabilities {
-    missing_nodes: Vec<String>,
-    checkpoints: Vec<String>,
+    pub(crate) missing_nodes: Vec<String>,
+    pub(crate) checkpoints: Vec<String>,
     extended: bool,
     cover_missing_nodes: Vec<String>,
     audio_encoders: Vec<String>,
@@ -33,7 +33,7 @@ pub struct MusicWorkerCapabilities {
     audio_encoders: Vec<String>,
 }
 
-fn model_names(info: &Value, node: &str, field: &str) -> Vec<String> {
+pub(crate) fn model_names(info: &Value, node: &str, field: &str) -> Vec<String> {
     let input = &info[node]["input"]["required"][field];
     // Legacy nodes put choices in slot 0. New schema nodes (including
     // AudioEncoderLoader) expose ["COMBO", {"options": [...]}] instead.

@@ -121,14 +121,29 @@ export async function ipcInvoke<T = unknown>(
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(args ?? {}),
   });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(text || `HTTP ${resp.status}`);
-  }
+  if (!resp.ok) throw new Error(await responseErrorText(resp));
   // Some commands return no body (204 or empty)
   const text = await resp.text();
   if (!text) return undefined as unknown as T;
   return JSON.parse(text) as T;
+}
+
+/**
+ * The error text of a failed internal-api response, never a web page.
+ *
+ * A browser-mode server reached through a tunnel or reverse proxy can be
+ * answered by that proxy instead (a Cloudflare 403 or 502 page), and its HTML
+ * does not belong in an error message.
+ */
+export async function responseErrorText(resp: Response): Promise<string> {
+  const text = (await resp.text().catch(() => "")).trim();
+  if (!text) return `HTTP ${resp.status}`;
+  if (text.replace(/^\uFEFF/, "").startsWith("<")) {
+    return resp.status === 403
+      ? `HTTP 403: Cloudflare or a firewall turned the request away. Try again in a minute.`
+      : `HTTP ${resp.status}: the server sent an error page instead of an answer. Try again shortly.`;
+  }
+  return text;
 }
 
 // ---------------------------------------------------------------------------

@@ -40,8 +40,12 @@ SOURCES=(
     "$SCRIPT_DIR/h3_drafts.py"
     "$SCRIPT_DIR/h3_upscaler.py"
     "$SCRIPT_DIR/h3_upscaler.LICENSE"
+    "$SCRIPT_DIR/anima_art_style.py"
+    "$SCRIPT_DIR/anima_art_style.LICENSE"
     "$SCRIPT_DIR/h3_preview.py"
     "$SCRIPT_DIR/gguf_compat.py"
+    "$SCRIPT_DIR/skin_contrast_1x.safetensors"
+    "$SCRIPT_DIR/skin_contrast_1x.LICENSE"
     "$SCRIPT_DIR/nodes_tiled_diffusion.py"
     "$SCRIPT_DIR/nodes_guidance.py"
     "$SCRIPT_DIR/nodes_anima_teacache.py"
@@ -51,6 +55,10 @@ SOURCES=(
     "$SCRIPT_DIR/nanosaur_support/model.py"
     "$SCRIPT_DIR/nanosaur_support/text_encoder.py"
     "$SCRIPT_DIR/nanosaur_support/vae.py"
+    "$SCRIPT_DIR/kolors_support/__init__.py"
+    "$SCRIPT_DIR/kolors_support/nodes.py"
+    "$SCRIPT_DIR/kolors_support/model.py"
+    "$SCRIPT_DIR/kolors_support/text_encoder.py"
     "$SCRIPT_DIR/minimax_director/__init__.py"
     "$SCRIPT_DIR/minimax_director/minimax_core.py"
     "$SCRIPT_DIR/minimax_director/minimax_plan.py"
@@ -79,7 +87,9 @@ mkdir -p "$CUSTOM_NODES"
 echo "  - mooshie-nodes/"
 mkdir -p "$CUSTOM_NODES/mooshie-nodes"
 cp "$MOOSHIE_NODES_INIT" "$CUSTOM_NODES/mooshie-nodes/__init__.py"
-for name in h3_drafts.py h3_upscaler.py h3_upscaler.LICENSE h3_preview.py gguf_compat.py; do
+for name in h3_drafts.py h3_upscaler.py h3_upscaler.LICENSE anima_art_style.py \
+    anima_art_style.LICENSE h3_preview.py gguf_compat.py \
+    skin_contrast_1x.safetensors skin_contrast_1x.LICENSE; do
     cp "$SCRIPT_DIR/$name" "$CUSTOM_NODES/mooshie-nodes/$name"
 done
 printf '%s\n' "$MOOSHIE_NODES_REQUIREMENTS" > "$CUSTOM_NODES/mooshie-nodes/requirements.txt"
@@ -96,12 +106,15 @@ rm -rf "$CUSTOM_NODES/sdxl-flux2vae-comfyui-node"
 cp "$SCRIPT_DIR/nodes_sdxl_flux2vae_combined.py" "$CUSTOM_NODES/nodes_sdxl_flux2vae.py"
 
 # 3. Packages
-for pkg in nanosaur_support minimax_director; do
+for pkg in nanosaur_support kolors_support minimax_director; do
     echo "  - $pkg/"
     mkdir -p "$CUSTOM_NODES/$pkg"
 done
 for name in __init__.py nodes.py model.py text_encoder.py vae.py; do
     cp "$SCRIPT_DIR/nanosaur_support/$name" "$CUSTOM_NODES/nanosaur_support/$name"
+done
+for name in __init__.py nodes.py model.py text_encoder.py; do
+    cp "$SCRIPT_DIR/kolors_support/$name" "$CUSTOM_NODES/kolors_support/$name"
 done
 for name in __init__.py minimax_core.py minimax_plan.py minimax_media.py \
     minimax_director.py minimax_retake.py LICENSE; do

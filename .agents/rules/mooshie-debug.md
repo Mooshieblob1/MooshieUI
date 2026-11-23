@@ -18,7 +18,7 @@ description: MooshieUI debugging — log buffers, browser /internal-api, silent 
 
 ## Rust / platform
 
-- CSP is `null` in `tauri.conf.json`.
+- A CSP is set in `tauri.conf.json` and enforced in production builds only (no `devCsp`); a blocked image or fetch that works in `tauri dev` is usually a missing CSP origin.
 - Linux: `WEBKIT_DISABLE_DMABUF_RENDERER=1`; AppImage Wayland may re-exec with `LD_PRELOAD`.
 
 ## Silent failures
@@ -29,5 +29,5 @@ description: MooshieUI debugging — log buffers, browser /internal-api, silent 
 
 ## Gallery bugs
 
-- On-disk JXL is not displayable directly — use transcoding helpers.
+- Gallery files may be PNG, JXL, or WebP; JXL is not displayable directly — always use `loadGalleryImageDisplay()` / `loadGalleryImagePng()`.
 - `thumbnail://` / `gallery://` URLs differ by OS.

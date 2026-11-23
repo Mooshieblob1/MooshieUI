@@ -139,6 +139,9 @@ pub const QUALITY_HINT_NONE: u8 = HINT_NONE;
 
 const V5_QUALITY: &str = "very aesthetic, masterpiece, no text";
 const V5_QUALITY_LIGHT: &str = "very aesthetic, amazing quality, no text";
+/// V4.5 Full's own stack per docs.novelai.net/en/image/qualitytags: V5's plus
+/// a leading `location`.
+const V45_QUALITY: &str = "location, very aesthetic, masterpiece, no text";
 const V4_QUALITY: &str = "no text, best quality, very aesthetic, absurdres";
 
 const V5_HEAVY: &str = "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
@@ -165,11 +168,10 @@ pub fn quality_tags(
 ) -> Option<(QualityPreset, &'static str)> {
     match (model.id, preset) {
         (_, QualityPreset::Light) if is_v5(model) => Some((preset, V5_QUALITY_LIGHT)),
-        // V4.5 Full shares V5's standard stack in the client; the docs page
-        // still shows an older `location, ` variant for it.
-        ("nai-diffusion-5-full" | "nai-diffusion-5-curated" | "nai-diffusion-4-5-full", _) => {
+        ("nai-diffusion-5-full" | "nai-diffusion-5-curated", _) => {
             Some((QualityPreset::Standard, V5_QUALITY))
         }
+        ("nai-diffusion-4-5-full", _) => Some((QualityPreset::Standard, V45_QUALITY)),
         ("nai-diffusion-4-full", _) => Some((QualityPreset::Standard, V4_QUALITY)),
         _ => None,
     }
@@ -313,6 +315,26 @@ mod tests {
                 assert_eq!(effective, preset, "{id} {preset:?}");
                 assert!(text.unwrap().ends_with(ends), "{id} {preset:?}");
             }
+        }
+    }
+
+    #[test]
+    fn older_models_get_their_documented_quality_text() {
+        for (id, text) in [
+            (
+                "nai-diffusion-4-5-full",
+                "location, very aesthetic, masterpiece, no text",
+            ),
+            (
+                "nai-diffusion-4-full",
+                "no text, best quality, very aesthetic, absurdres",
+            ),
+        ] {
+            assert_eq!(
+                quality_tags(model(id), QualityPreset::Standard),
+                Some((QualityPreset::Standard, text)),
+                "{id}"
+            );
         }
     }
 

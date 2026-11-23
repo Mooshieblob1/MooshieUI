@@ -128,8 +128,18 @@ fn venv_python(base: &Path) -> PathBuf {
 
 /// uv release the setup bootstraps. Pinned instead of `releases/latest` so the
 /// archive can be checksum-verified before it is extracted and run; bump it
-/// deliberately together with [`UV_ASSETS`].
-const UV_VERSION: &str = "0.12.19";
+/// deliberately together with [`UV_ASSETS`]. Existing installs are moved up to
+/// it by [`refresh_python_tooling`] (uv verifies PyPI and GitHub against its own
+/// bundled root certificates, so an old uv keeps trusting a distrusted CA).
+/// 0.13.4 is the first release without the compromised eMudhra emSign ECC Root
+/// CA - G3.
+const UV_VERSION: &str = "0.13.4";
+
+/// Lowest certifi the ComfyUI venv may keep. `requests` and `huggingface_hub`
+/// trust certifi's bundle, not the OS store; 2026.10.19 drops the compromised
+/// emSign ECC Root CA - G3.
+const CERTIFI_REQUIREMENT: &str = "certifi>=2026.10.19";
+const CERTIFI_MIN: (u32, u32, u32) = (2026, 10, 19);
 
 /// (release asset, SHA-256) for every platform setup supports, copied from the
 /// `sha256.sum` published with the uv release above (each also matches the
@@ -137,23 +147,23 @@ const UV_VERSION: &str = "0.12.19";
 const UV_ASSETS: &[(&str, &str)] = &[
     (
         "uv-x86_64-unknown-linux-gnu.tar.gz",
-        "23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8",
+        "2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f",
     ),
     (
         "uv-aarch64-unknown-linux-gnu.tar.gz",
-        "0804e9b164c64b6914182d5920c08551958a095986f10a3731056df701126436",
+        "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab",
     ),
     (
         "uv-x86_64-apple-darwin.tar.gz",
-        "cb5fa57bafe68fc0fb94b17f06bee0b0b9a7feb94ccbd110445afa0696e39273",
+        "7be2dcd316122f4b3e5a0a7889f6248266c14425374e105ff7dc9779184603a6",
     ),
     (
         "uv-aarch64-apple-darwin.tar.gz",
-        "a9a8df1eedeb192f2e47e40e2faabfb387db4b850209118786d42f89dde3e0ba",
+        "e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1",
     ),
     (
         "uv-x86_64-pc-windows-msvc.zip",
-        "6dbb02d79e419522f1c500f0adb1cddcff0cda7d59b0d66ea7f5e3b4a1b2f5f0",
+        "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225",
     ),
 ];
 
@@ -237,14 +247,53 @@ fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Comman
     cmd // no-op on macOS
 }
 
-/// Run a command with hidden window, capturing stdout/stderr and streaming
-/// each line to the frontend via `setup:log`.
-async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, stream: R) {
+/// Called with every line a setup child prints, after it is logged.
+type LineObserver = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Failures recognised in a setup child's output, each with a hint on what to
+/// do about it shown under the child's own error.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct OutputFlags {
+    lock_timeout: bool,
+    network_error: bool,
+    disk_full: bool,
+}
+
+impl OutputFlags {
+    fn note(&mut self, line: &str) {
+        self.lock_timeout |= is_uv_lock_timeout(line);
+        self.network_error |= is_network_failure(line);
+        self.disk_full |= is_disk_full(line);
+    }
+
+    fn merge(self, other: Self) -> Self {
+        Self {
+            lock_timeout: self.lock_timeout | other.lock_timeout,
+            network_error: self.network_error | other.network_error,
+            disk_full: self.disk_full | other.disk_full,
+        }
+    }
+}
+
+/// Stream each line of a child's output to the frontend via `setup:log`, and
+/// report the failures recognised in it.
+async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(
+    app: AppHandle,
+    stream: R,
+    observer: Option<LineObserver>,
+) -> OutputFlags {
     use tokio::io::AsyncReadExt;
     let mut reader = stream;
     let mut buf = [0u8; 1024];
     let mut line_buf = Vec::new();
     let mut last_was_cr = false;
+    let mut flags = OutputFlags::default();
+    let mut seen = |line: &str| {
+        flags.note(line);
+        if let Some(observer) = &observer {
+            observer(line);
+        }
+    };
 
     loop {
         match reader.read(&mut buf).await {
@@ -252,6 +301,7 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
                 if !line_buf.is_empty() {
                     let s = String::from_utf8_lossy(&line_buf);
                     let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                    seen(trimmed);
                     if !trimmed.is_empty() {
                         if last_was_cr {
                             emit_log_update(&app, trimmed);
@@ -269,6 +319,7 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
                         if !(last_was_cr && line_buf.is_empty()) {
                             let s = String::from_utf8_lossy(&line_buf);
                             let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                            seen(trimmed);
                             if last_was_cr {
                                 emit_log_update(&app, trimmed);
                             } else {
@@ -280,6 +331,7 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
                     } else if b == b'\r' {
                         let s = String::from_utf8_lossy(&line_buf);
                         let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                        seen(trimmed);
                         if !trimmed.is_empty() {
                             if last_was_cr {
                                 emit_log_update(&app, trimmed);
@@ -300,41 +352,136 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
             }
         }
     }
+    flags
 }
 
-/// Run a command with hidden window, capturing stdout/stderr and streaming
-/// each line to the frontend via `setup:log`.
-async fn run_logged(
+/// How long setup's uv waits for a cache lock, in seconds. uv's own default
+/// is 300, which is shorter than the multi-GB CUDA torch wheel takes to
+/// download on a slow link. Whoever holds the lock meanwhile (another task in
+/// the same uv run, a setup left running by a window closed mid-install, or
+/// another app installing torch) is making progress, and uv's own HTTP timeouts
+/// catch a stalled transfer, so a long wait costs nothing and lets this run
+/// reuse the wheel once it is cached. A `UV_LOCK_TIMEOUT` the user set
+/// themselves wins.
+const UV_LOCK_TIMEOUT_SECS: &str = "14400";
+
+/// Shown under uv's own error when it gave up waiting for a cache lock.
+const UV_LOCK_TIMEOUT_HINT: &str = "uv timed out waiting for a lock on its package cache. Another \
+     process was still using it: an earlier MooshieUI setup still running in the background, or another app \
+     (ComfyUI Desktop, Stability Matrix, Pinokio, ...) installing packages at the same time. Close those, or \
+     end any leftover uv process (uv.exe in Task Manager on Windows) or restart the computer, then run setup \
+     again. If it keeps happening, set the UV_LOCK_TIMEOUT environment variable to a larger number of seconds.";
+
+/// True when `line` is uv reporting that it gave up waiting for a cache lock.
+fn is_uv_lock_timeout(line: &str) -> bool {
+    line.contains("Failed to acquire lock")
+        || (line.contains("Timeout") && line.contains("when waiting for lock"))
+}
+
+/// uv's HTTP read timeout for setup, in seconds. uv's default of 30 gives up
+/// on a stall that a slow or congested link to download.pytorch.org recovers
+/// from, and each give-up restarts the 2 GB CUDA torch wheel from zero (uv does
+/// not resume a partial download). A `UV_HTTP_TIMEOUT` (or `HTTP_TIMEOUT`) the
+/// user set themselves wins.
+const UV_HTTP_TIMEOUT_SECS: &str = "120";
+
+/// How many times setup's uv retries a failed download. uv's default is 3.
+const UV_HTTP_RETRIES: &str = "6";
+
+/// Shown under uv's own error when downloads kept failing.
+const NETWORK_FAILURE_HINT: &str = "The download from the package server kept failing or timing out. \
+     This is usually a slow or unstable connection, or a VPN, proxy, firewall or antivirus getting in the \
+     way of download.pytorch.org or pypi.org. Click Retry: packages that already finished downloading are \
+     reused. Behind a proxy, enter it in the connection options on the setup screen.";
+
+/// Shown under a child's own error when the disk filled up.
+const DISK_FULL_HINT: &str = "The disk ran out of space. PyTorch for a GPU takes several GB on the drive \
+     MooshieUI installs to, and uv keeps a copy in its package cache too (on Windows that is \
+     %LOCALAPPDATA%\\uv\\cache on the C: drive, wherever MooshieUI is installed). Free up space on both, \
+     then click Retry.";
+
+/// True when `line` is uv (or reqwest underneath it) reporting a download that
+/// failed or stalled on the network.
+fn is_network_failure(line: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "network timeout",
+        "operation timed out",
+        "error sending request",
+        "error decoding response body",
+        "request or response body error",
+        "connection closed before message completed",
+        "forcibly closed by the remote host",
+        "Connection reset by peer",
+        "dns error",
+    ];
+    MARKERS.iter().any(|marker| line.contains(marker))
+}
+
+/// True when `line` reports a full disk (Linux/macOS os error 28, Windows 112).
+fn is_disk_full(line: &str) -> bool {
+    line.contains("No space left on device")
+        || line.contains("not enough space on the disk")
+        || line.contains("(os error 112)")
+}
+
+/// True when `program` is a uv executable (`uv`, `uv.exe`, or a path to one).
+fn is_uv_program(program: &std::ffi::OsStr) -> bool {
+    Path::new(program)
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("uv"))
+}
+
+/// Run a setup child with a hidden window, streaming stdout/stderr line by line
+/// to the frontend via `setup:log`.
+///
+/// The child dies with MooshieUI: `kill_on_drop` covers a normal exit, and on
+/// Windows the kill-on-exit job covers a crash or "End task". An orphaned uv
+/// keeps downloading torch invisibly and holds the cache lock on its wheel, so
+/// the next setup attempt would time out waiting for it.
+async fn run_command_logged(app: &AppHandle, cmd: tokio::process::Command) -> Result<(), String> {
+    run_command_observed(app, cmd, None).await
+}
+
+/// [`run_command_logged`] that also hands every output line to `observer`.
+async fn run_command_observed(
     app: &AppHandle,
-    program: &str,
-    args: &[&str],
-    envs: &[(&str, &str)],
+    mut cmd: tokio::process::Command,
+    observer: Option<LineObserver>,
 ) -> Result<(), String> {
-    let mut cmd = tokio::process::Command::new(program);
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    for (k, v) in envs {
-        cmd.env(k, v);
+    let program = cmd.as_std().get_program().to_string_lossy().to_string();
+    if is_uv_program(cmd.as_std().get_program()) {
+        apply_uv_setup_env(&mut cmd);
     }
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     hide_window(&mut cmd);
 
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", program, e))?;
+    #[cfg(windows)]
+    if let Some(handle) = child.raw_handle() {
+        crate::comfyui::kill_on_exit::assign(handle);
+    }
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let app_out = app.clone();
     let app_err = app.clone();
+    let observer_out = observer.clone();
 
     let out_task = tokio::spawn(async move {
-        if let Some(out) = stdout {
-            read_stream_logged(app_out, out).await;
+        match stdout {
+            Some(out) => read_stream_logged(app_out, out, observer_out).await,
+            None => OutputFlags::default(),
         }
     });
 
     let err_task = tokio::spawn(async move {
-        if let Some(err) = stderr {
-            read_stream_logged(app_err, err).await;
+        match stderr {
+            Some(err) => read_stream_logged(app_err, err, observer).await,
+            None => OutputFlags::default(),
         }
     });
 
@@ -343,55 +490,64 @@ async fn run_logged(
         .await
         .map_err(|e| format!("{} wait failed: {}", program, e))?;
 
-    out_task.await.ok();
-    err_task.await.ok();
+    let flags = out_task
+        .await
+        .unwrap_or_default()
+        .merge(err_task.await.unwrap_or_default());
 
     if !status.success() {
+        if flags.lock_timeout {
+            emit_log(app, UV_LOCK_TIMEOUT_HINT);
+        } else if flags.network_error {
+            emit_log(app, NETWORK_FAILURE_HINT);
+        }
+        if flags.disk_full {
+            emit_log(app, DISK_FULL_HINT);
+        }
         return Err(format!("{} exited with status {}", program, status));
     }
     Ok(())
 }
 
-async fn run_command_logged(
-    app: &AppHandle,
-    mut cmd: tokio::process::Command,
-) -> Result<(), String> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    hide_window(&mut cmd);
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn command: {}", e))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let app_out = app.clone();
-    let app_err = app.clone();
-
-    let out_task = tokio::spawn(async move {
-        if let Some(out) = stdout {
-            read_stream_logged(app_out, out).await;
+/// The env every setup uv call runs with: longer lock and HTTP timeouts and
+/// more retries than uv's defaults, each unless the user set it themselves.
+fn apply_uv_setup_env(cmd: &mut tokio::process::Command) {
+    for (key, value, also_set_by) in uv_setup_env_defaults() {
+        let user_set = std::iter::once(key)
+            .chain(also_set_by.iter().copied())
+            .any(|name| std::env::var_os(name).is_some());
+        if !user_set {
+            cmd.env(key, value);
         }
-    });
-
-    let err_task = tokio::spawn(async move {
-        if let Some(err) = stderr {
-            read_stream_logged(app_err, err).await;
-        }
-    });
-
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("Command wait failed: {}", e))?;
-
-    out_task.await.ok();
-    err_task.await.ok();
-
-    if !status.success() {
-        return Err(format!("Command exited with status {}", status));
     }
-    Ok(())
+}
+
+/// `(variable, value, other variables uv reads for the same setting)`.
+fn uv_setup_env_defaults() -> [(&'static str, &'static str, &'static [&'static str]); 3] {
+    [
+        ("UV_LOCK_TIMEOUT", UV_LOCK_TIMEOUT_SECS, &[]),
+        (
+            "UV_HTTP_TIMEOUT",
+            UV_HTTP_TIMEOUT_SECS,
+            &["UV_REQUEST_TIMEOUT", "HTTP_TIMEOUT"],
+        ),
+        ("UV_HTTP_RETRIES", UV_HTTP_RETRIES, &[]),
+    ]
+}
+
+/// [`run_command_logged`] for a program, its arguments and extra env vars.
+async fn run_logged(
+    app: &AppHandle,
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<(), String> {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    run_command_logged(app, cmd).await
 }
 
 /// Longest wait for response headers, and for each body chunk, before a
@@ -612,9 +768,64 @@ async fn step_download_uv(
     client: &reqwest::Client,
 ) -> Result<(), String> {
     let uv = uv_bin(base);
-    if uv.exists() {
+    if !uv.exists() {
+        return install_pinned_uv(app, base, client).await;
+    }
+    if uv_is_current(&uv).await {
         return Ok(());
     }
+    // An older uv still works, so a failed upgrade is not worth failing setup.
+    emit_log(app, &format!("Updating uv to {UV_VERSION}..."));
+    if let Err(e) = install_pinned_uv(app, base, client).await {
+        emit_log(
+            app,
+            &format!("Warning: could not update uv ({e}). Continuing with the installed one."),
+        );
+    }
+    Ok(())
+}
+
+/// `(major, minor, patch)` from `uv --version` output such as
+/// `uv 0.13.4 (x86_64-unknown-linux-gnu)` or a bare `0.13.4`.
+fn parse_uv_version(text: &str) -> Option<(u32, u32, u32)> {
+    let word = text
+        .split_whitespace()
+        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
+    let mut parts = word.split('.');
+    let mut next = || -> Option<u32> {
+        let part = parts.next()?;
+        let digits = part.split(|c: char| !c.is_ascii_digit()).next()?;
+        digits.parse().ok()
+    };
+    Some((next()?, next()?, next().unwrap_or(0)))
+}
+
+/// True when the uv at `uv` is at least [`UV_VERSION`]. A uv that cannot be run
+/// or whose version cannot be read counts as outdated, so it gets replaced.
+async fn uv_is_current(uv: &Path) -> bool {
+    let Some(pinned) = parse_uv_version(UV_VERSION) else {
+        return true;
+    };
+    let mut cmd = tokio::process::Command::new(uv);
+    cmd.arg("--version");
+    hide_window(&mut cmd);
+    match cmd.output().await {
+        Ok(out) if out.status.success() => {
+            parse_uv_version(&String::from_utf8_lossy(&out.stdout)).is_some_and(|v| v >= pinned)
+        }
+        _ => false,
+    }
+}
+
+/// Download the pinned uv (checksum-verified) and move it into `bin/`. The
+/// archive is unpacked into a staging folder and each binary is renamed over the
+/// old one, so an upgrade never leaves a half-written uv behind. Unix replaces a
+/// running uv safely; on Windows the rename fails instead and the old uv stays.
+async fn install_pinned_uv(
+    app: &AppHandle,
+    base: &Path,
+    client: &reqwest::Client,
+) -> Result<(), String> {
     let bin_dir = base.join("bin");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
 
@@ -623,11 +834,14 @@ async fn step_download_uv(
         .ok_or_else(|| format!("No pinned uv {UV_VERSION} download for {asset}"))?;
     let url = url.as_str();
 
+    let staging = base.join("_uv_extract");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+
     #[cfg(not(target_os = "windows"))]
     {
         let archive = base.join("_uv.tar.gz");
         download_file(app, client, url, &archive, "uv", Some(sha256)).await?;
-
         run_logged(
             app,
             "tar",
@@ -636,58 +850,146 @@ async fn step_download_uv(
                 archive.to_str().unwrap(),
                 "--strip-components=1",
                 "-C",
-                bin_dir.to_str().unwrap(),
+                staging.to_str().unwrap(),
             ],
             &[],
         )
         .await
         .map_err(|_| "Failed to extract uv archive".to_string())?;
-
-        // Ensure executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755)).ok();
-        }
         std::fs::remove_file(&archive).ok();
     }
 
     #[cfg(target_os = "windows")]
     {
         let archive = base.join("_uv.zip");
-        let temp_dir = base.join("_uv_extract");
         download_file(app, client, url, &archive, "uv", Some(sha256)).await?;
-
-        // Move-Item takes the found file through the pipeline as -LiteralPath,
-        // which also stops PowerShell globbing its -Destination.
         let ps_cmd = format!(
-            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force; \
-             Get-ChildItem -LiteralPath '{}' -Filter 'uv.exe' -Recurse | Select-Object -First 1 | Move-Item -Destination '{}\\uv.exe' -Force; \
-             Get-ChildItem -LiteralPath '{}' -Filter 'uvx.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 | Move-Item -Destination '{}\\uvx.exe' -Force",
+            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
             ps_quote(&archive),
-            ps_quote(&temp_dir),
-            ps_quote(&temp_dir),
-            ps_quote(&bin_dir),
-            ps_quote(&temp_dir),
-            ps_quote(&bin_dir),
+            ps_quote(&staging),
         );
         run_logged(app, "powershell", &["-NoProfile", "-Command", &ps_cmd], &[])
             .await
             .map_err(|_| "Failed to extract uv archive".to_string())?;
-
-        std::fs::remove_dir_all(&temp_dir).ok();
         std::fs::remove_file(&archive).ok();
     }
 
+    let placed = place_uv_binaries(&staging, &bin_dir);
+    std::fs::remove_dir_all(&staging).ok();
+    placed?;
+
     // Verify uv was actually extracted
+    let uv = uv_bin(base);
     if !uv.exists() {
         return Err(format!(
             "uv binary not found at {} after extraction. The download may have failed or the archive structure changed.",
             uv.display()
         ));
     }
-
     Ok(())
+}
+
+/// Move `uv` (required) and `uvx` (optional) from an unpacked release in
+/// `staging` into `bin_dir`, replacing older copies.
+fn place_uv_binaries(staging: &Path, bin_dir: &Path) -> Result<(), String> {
+    for (name, required) in [("uv", true), ("uvx", false)] {
+        let file_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        let Some(src) = find_file_named(staging, &file_name, 3) else {
+            if required {
+                return Err(format!("{file_name} is missing from the uv archive"));
+            }
+            continue;
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+        std::fs::rename(&src, bin_dir.join(&file_name))
+            .map_err(|e| format!("Cannot replace {file_name}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// First regular file called `name` in `dir`, searching at most `depth` levels.
+fn find_file_named(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
+    let mut subdirs = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs.push(path);
+        } else if entry.file_name() == name {
+            return Some(path);
+        }
+    }
+    if depth == 0 {
+        return None;
+    }
+    subdirs
+        .iter()
+        .find_map(|sub| find_file_named(sub, name, depth - 1))
+}
+
+/// Version of the certifi installed in the venv at `venv_dir`, read from its
+/// `certifi-<version>.dist-info` folder. `None` when certifi is not installed.
+fn venv_certifi_version(venv_dir: &Path) -> Option<(u32, u32, u32)> {
+    let site_packages: Vec<PathBuf> = if cfg!(target_os = "windows") {
+        vec![venv_dir.join("Lib").join("site-packages")]
+    } else {
+        std::fs::read_dir(venv_dir.join("lib"))
+            .ok()?
+            .flatten()
+            .map(|e| e.path().join("site-packages"))
+            .collect()
+    };
+    site_packages.iter().find_map(|dir| {
+        std::fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let version = name.strip_prefix("certifi-")?.strip_suffix(".dist-info")?;
+            parse_uv_version(version)
+        })
+    })
+}
+
+/// Bring an existing install's uv, and the CA bundle in its ComfyUI venv, up to
+/// [`UV_VERSION`] and [`CERTIFI_REQUIREMENT`]. Setup downloads uv only once, so
+/// without this an install keeps the uv it was created with, and that release's
+/// bundled root certificates, forever. Runs in the background at launch and
+/// skips while setup or a ComfyUI update holds the setup lock; failures are
+/// logged and retried on the next launch.
+pub async fn refresh_python_tooling(app: AppHandle, state: Arc<AppState>) {
+    let Ok(_setup) = SETUP_LOCK.try_lock() else {
+        return;
+    };
+    let Ok(base) = data_dir(&app) else {
+        return;
+    };
+    let uv = uv_bin(&base);
+    // Not set up yet: setup installs the pinned uv itself.
+    if !uv.exists() {
+        return;
+    }
+    if !uv_is_current(&uv).await {
+        log::info!("Updating the managed uv to {UV_VERSION}");
+        if let Err(e) = install_pinned_uv(&app, &base, &state.http_client).await {
+            log::warn!("Could not update uv to {UV_VERSION}: {e}");
+            return;
+        }
+    }
+
+    let venv_dir = base.join("venv");
+    let outdated = venv_certifi_version(&venv_dir).is_some_and(|v| v < CERTIFI_MIN);
+    if !outdated || !venv_python(&base).exists() {
+        return;
+    }
+    let net = {
+        let config = state.config.read().await;
+        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
+    };
+    log::info!("Updating certifi in the ComfyUI venv ({CERTIFI_REQUIREMENT})");
+    if let Err(e) = uv_pip(&app, &base, &[CERTIFI_REQUIREMENT], &net, true).await {
+        log::warn!("Could not update certifi in the ComfyUI venv: {e}");
+    }
 }
 
 async fn step_install_python(
@@ -1181,6 +1483,18 @@ async fn uv_pip(
     net: &SetupNetworkOpts,
     apply_pip_mirror: bool,
 ) -> Result<(), String> {
+    uv_pip_observed(app, base, args, net, apply_pip_mirror, None).await
+}
+
+/// [`uv_pip`] that hands every line uv prints to `observer`.
+async fn uv_pip_observed(
+    app: &AppHandle,
+    base: &Path,
+    args: &[&str],
+    net: &SetupNetworkOpts,
+    apply_pip_mirror: bool,
+    observer: Option<LineObserver>,
+) -> Result<(), String> {
     let uv = uv_bin(base);
     let python = venv_python(base);
     let python_dir = base.join("python");
@@ -1208,7 +1522,7 @@ async fn uv_pip(
         crate::comfyui::nodes::apply_network_proxy(&mut cmd, net.network_proxy.as_deref());
     }
 
-    run_command_logged(app, cmd)
+    run_command_observed(app, cmd, observer)
         .await
         .map_err(|_| format!("pip install failed for: {}", args.join(" ")))
 }
@@ -1421,43 +1735,412 @@ async fn nvidia_pytorch_index_url() -> &'static str {
     CU128
 }
 
+// ─── PyTorch install progress and disk space ─────────────────────────────────
+
+/// What uv has said so far about the packages it is fetching.
+#[derive(Default)]
+struct UvDownloadWatch {
+    /// Sum of the sizes uv announced in "Downloading <package> (<size>)".
+    announced_bytes: std::sync::atomic::AtomicU64,
+    started: std::sync::atomic::AtomicU32,
+    finished: std::sync::atomic::AtomicU32,
+    /// uv printed "Prepared N packages": every download is done and it is
+    /// linking or copying files into the venv.
+    prepared: std::sync::atomic::AtomicBool,
+}
+
+impl UvDownloadWatch {
+    fn observe(&self, line: &str) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let line = line.trim();
+        if let Some(size) = uv_download_announcement(line) {
+            self.started.fetch_add(1, Relaxed);
+            self.announced_bytes.fetch_add(size, Relaxed);
+        } else if line.starts_with("Downloaded ") {
+            self.finished.fetch_add(1, Relaxed);
+        } else if line.starts_with("Prepared ") {
+            self.prepared.store(true, Relaxed);
+        }
+    }
+
+    /// True while a download uv announced has not finished. Without any
+    /// announcement (a uv that prints none) assume one is running.
+    fn downloading(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let started = self.started.load(Relaxed);
+        !self.prepared.load(Relaxed) && (started == 0 || started > self.finished.load(Relaxed))
+    }
+}
+
+/// The size in bytes from uv's "Downloading torch (1.9GiB)" line.
+fn uv_download_announcement(line: &str) -> Option<u64> {
+    let rest = line.strip_prefix("Downloading ")?;
+    let size = rest.rsplit_once('(')?.1.strip_suffix(')')?;
+    parse_uv_size(size)
+}
+
+/// Parse uv's human-readable sizes: `512B`, `40.5KiB`, `199.8MiB`, `1.9GiB`.
+fn parse_uv_size(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let split = text.find(|c: char| c.is_ascii_alphabetic())?;
+    let (number, unit) = text.split_at(split);
+    let number: f64 = number.trim().parse().ok()?;
+    let multiplier = match unit {
+        "B" => 1.0,
+        "KiB" => 1024.0,
+        "MiB" => 1024.0 * 1024.0,
+        "GiB" => 1024.0 * 1024.0 * 1024.0,
+        "TiB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    (number.is_finite() && number >= 0.0).then_some((number * multiplier) as u64)
+}
+
+/// Bytes as GB or MB (decimal), e.g. `1.24 GB`, `640 MB`.
+fn format_bytes(bytes: u64) -> String {
+    let bytes = bytes as f64;
+    if bytes >= 1e9 {
+        format!("{:.2} GB", bytes / 1e9)
+    } else {
+        format!("{:.0} MB", bytes / 1e6)
+    }
+}
+
+/// The setup progress for PyTorch while uv downloads: the step runs from 50%
+/// to 75%, and an unpacked wheel is about 1.5 times its download size.
+fn pytorch_download_percent(written: u64, announced: u64) -> u32 {
+    if announced == 0 {
+        return 50;
+    }
+    let expected = announced as f64 * 1.5;
+    let fraction = (written as f64 / expected).clamp(0.0, 1.0);
+    50 + (fraction * 22.0) as u32
+}
+
+/// uv's package cache folder, where it unpacks wheels while downloading them.
+async fn uv_cache_dir(uv: &Path) -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("UV_CACHE_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let mut cmd = tokio::process::Command::new(uv);
+    cmd.args(["cache", "dir"]);
+    hide_window(&mut cmd);
+    let out = cmd.output().await.ok()?;
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !dir.is_empty()).then(|| PathBuf::from(dir))
+}
+
+/// Total size of the files under `path` (a file's own size for a file).
+fn tree_size(path: &Path) -> u64 {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if !meta.is_dir() {
+        return meta.len();
+    }
+    std::fs::read_dir(path)
+        .map(|entries| entries.flatten().map(|e| tree_size(&e.path())).sum())
+        .unwrap_or(0)
+}
+
+/// Bytes uv has written to the temporary folders it unpacks downloads into
+/// (`<cache>/.tmpXXXX`), counting each folder's largest size seen so one that
+/// was finished and moved into the cache still counts. Folders in `baseline`
+/// were there before this install started.
+fn uv_written_bytes(
+    cache_root: &Path,
+    baseline: &std::collections::HashSet<std::ffi::OsString>,
+    seen: &mut std::collections::HashMap<std::ffi::OsString, u64>,
+) -> u64 {
+    if let Ok(entries) = std::fs::read_dir(cache_root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if !name.to_string_lossy().starts_with(".tmp") || baseline.contains(&name) {
+                continue;
+            }
+            let size = tree_size(&entry.path());
+            let best = seen.entry(name).or_insert(0);
+            *best = (*best).max(size);
+        }
+    }
+    seen.values().sum()
+}
+
+/// How long without new data before the PyTorch step says so.
+const PYTORCH_STALL_NOTICE: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Keep the PyTorch step's status line moving while uv downloads: data
+/// written so far and the rate, a note when nothing has arrived for a while,
+/// and a heartbeat in the log every 30 s.
+async fn watch_pytorch_install(
+    app: AppHandle,
+    cache_root: Option<PathBuf>,
+    label: String,
+    watch: Arc<UvDownloadWatch>,
+) {
+    use std::sync::atomic::Ordering::Relaxed;
+    use std::time::{Duration, Instant};
+
+    let baseline: Arc<std::collections::HashSet<std::ffi::OsString>> = Arc::new(
+        cache_root
+            .as_deref()
+            .and_then(|root| std::fs::read_dir(root).ok())
+            .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default(),
+    );
+    let mut seen = std::collections::HashMap::new();
+    let started = Instant::now();
+    let mut last_bytes = 0u64;
+    let mut last_change = Instant::now();
+    let mut samples: std::collections::VecDeque<(Instant, u64)> = Default::default();
+    let mut last_heartbeat = Instant::now();
+    let mut stall_logged = false;
+    let mut percent = 50u32;
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let now = Instant::now();
+
+        let written = match cache_root.clone() {
+            Some(root) => {
+                let baseline = baseline.clone();
+                let mut state = std::mem::take(&mut seen);
+                let (bytes, state) = tokio::task::spawn_blocking(move || {
+                    let bytes = uv_written_bytes(&root, &baseline, &mut state);
+                    (bytes, state)
+                })
+                .await
+                .unwrap_or_default();
+                seen = state;
+                bytes
+            }
+            None => 0,
+        };
+        if written > last_bytes {
+            last_bytes = written;
+            last_change = now;
+            stall_logged = false;
+        }
+        samples.push_back((now, written));
+        while samples.len() > 2 && now.duration_since(samples[0].0) > Duration::from_secs(10) {
+            samples.pop_front();
+        }
+        let rate = samples.front().and_then(|(t, b)| {
+            let secs = now.duration_since(*t).as_secs_f64();
+            (secs >= 1.0).then(|| (written.saturating_sub(*b)) as f64 / secs)
+        });
+
+        let idle = now.duration_since(last_change);
+        let message = if watch.prepared.load(Relaxed) {
+            percent = percent.max(73);
+            format!("Installing PyTorch ({label}): copying files into the environment...")
+        } else if watch.downloading() && idle >= PYTORCH_STALL_NOTICE {
+            let minutes = idle.as_secs() / 60;
+            let waited = if minutes >= 1 {
+                format!("{minutes} min")
+            } else {
+                format!("{} s", idle.as_secs())
+            };
+            if !stall_logged {
+                stall_logged = true;
+                emit_log(
+                    &app,
+                    "No new PyTorch data for a while. uv keeps waiting and retries on its own. \
+                     A slow connection, or a VPN, proxy, firewall or antivirus between this PC \
+                     and download.pytorch.org, can cause this.",
+                );
+            }
+            format!(
+                "Installing PyTorch ({label}): no new data for {waited}, still waiting ({} so far)",
+                format_bytes(written)
+            )
+        } else if written > 0 {
+            percent = percent.max(pytorch_download_percent(
+                written,
+                watch.announced_bytes.load(Relaxed),
+            ));
+            match rate {
+                Some(rate) if rate >= 1.0 => format!(
+                    "Installing PyTorch ({label}): {} downloaded and unpacked, {}/s",
+                    format_bytes(written),
+                    format_bytes(rate as u64)
+                ),
+                _ => format!(
+                    "Installing PyTorch ({label}): {} downloaded and unpacked",
+                    format_bytes(written)
+                ),
+            }
+        } else {
+            continue_heartbeat(&app, started, &mut last_heartbeat, written);
+            continue;
+        };
+        emit(&app, "pytorch", &message, percent);
+        continue_heartbeat(&app, started, &mut last_heartbeat, written);
+    }
+}
+
+/// Log a "still working" line every 30 s, so the log shows time passing.
+fn continue_heartbeat(
+    app: &AppHandle,
+    started: std::time::Instant,
+    last: &mut std::time::Instant,
+    written: u64,
+) {
+    if last.elapsed() < std::time::Duration::from_secs(30) {
+        return;
+    }
+    *last = std::time::Instant::now();
+    let elapsed = started.elapsed().as_secs();
+    let progress = if written > 0 {
+        format!(", {} so far", format_bytes(written))
+    } else {
+        String::new()
+    };
+    emit_log(
+        app,
+        &format!(
+            "[{}m {:02}s] Still working on PyTorch{progress}...",
+            elapsed / 60,
+            elapsed % 60
+        ),
+    );
+}
+
+/// True when the venv already has a torch package (re-running setup).
+fn venv_has_torch(base: &Path) -> bool {
+    let venv = base.join("venv");
+    if cfg!(windows) {
+        return venv
+            .join("Lib")
+            .join("site-packages")
+            .join("torch")
+            .is_dir();
+    }
+    std::fs::read_dir(venv.join("lib"))
+        .map(|dirs| {
+            dirs.flatten()
+                .any(|d| d.path().join("site-packages").join("torch").is_dir())
+        })
+        .unwrap_or(false)
+}
+
+/// Free space a fresh PyTorch install needs on each drive it writes to. A
+/// floor that only catches installs that cannot fit: the Windows CUDA torch
+/// wheel alone unpacks to about 3 GB, ROCm wheels to much more.
+fn pytorch_space_needed(gpu: &str) -> u64 {
+    match gpu {
+        "cpu" | "mps" => 2_000_000_000,
+        _ => 6_000_000_000,
+    }
+}
+
+/// The free space of the mount that holds `path`: the longest mount point
+/// `path` starts with. Windows paths compare case-insensitively.
+fn free_space_on(path: &Path, mounts: &[(PathBuf, u64)]) -> Option<(PathBuf, u64)> {
+    let normalise = |p: &Path| {
+        let text = p.to_string_lossy().replace('\\', "/");
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text
+        }
+    };
+    let target = normalise(path);
+    mounts
+        .iter()
+        .filter(|(mount, _)| {
+            let mount = normalise(mount);
+            let mount = mount.trim_end_matches('/');
+            mount.is_empty() || target == mount || target.starts_with(&format!("{mount}/"))
+        })
+        .max_by_key(|(mount, _)| mount.as_os_str().len())
+        .cloned()
+}
+
+/// Stop before a multi-GB download that cannot fit: the install drive holds
+/// the venv, and uv's cache (on C: by default, wherever MooshieUI installs)
+/// holds an unpacked copy of every wheel.
+fn check_pytorch_disk_space(
+    app: &AppHandle,
+    base: &Path,
+    cache_root: Option<&Path>,
+    gpu: &str,
+) -> Result<(), String> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let mounts: Vec<(PathBuf, u64)> = disks
+        .iter()
+        .map(|d| (d.mount_point().to_path_buf(), d.available_space()))
+        .collect();
+    let needed = pytorch_space_needed(gpu);
+    let mut targets = vec![("the install folder", base.to_path_buf())];
+    if let Some(cache) = cache_root {
+        targets.push(("uv's package cache", cache.to_path_buf()));
+    }
+    let mut checked: Vec<PathBuf> = Vec::new();
+    for (what, path) in targets {
+        let Some((mount, free)) = free_space_on(&path, &mounts) else {
+            continue;
+        };
+        emit_log(
+            app,
+            &format!(
+                "Free space for {what} ({}): {} on {}",
+                path.display(),
+                format_bytes(free),
+                mount.display()
+            ),
+        );
+        if checked.contains(&mount) {
+            continue;
+        }
+        checked.push(mount.clone());
+        if free < needed {
+            return Err(format!(
+                "Not enough disk space to install PyTorch: {} has {} free, and {what} ({}) needs at least {}. \
+                 Free up space on that drive, then click Retry.",
+                mount.display(),
+                format_bytes(free),
+                path.display(),
+                format_bytes(needed)
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn step_install_pytorch(
     app: &AppHandle,
     base: &Path,
     gpu: &str,
+    label: &str,
     amd_windows_rocm: bool,
     net: &SetupNetworkOpts,
 ) -> Result<(), String> {
-    // Spawn a heartbeat so the user sees activity during the long, silent download.
-    // uv produces no line output while downloading multi-GB CUDA wheels.
-    let app_hb = app.clone();
-    let heartbeat = tokio::spawn(async move {
-        let mut elapsed = 0u64;
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            elapsed += 30;
-            let mins = elapsed / 60;
-            let secs = elapsed % 60;
-            let msg = if elapsed < 60 {
-                format!(
-                    "[{}s] Still working \u{2014} downloading PyTorch packages...",
-                    secs
-                )
-            } else {
-                format!(
-                    "[{}m {}s] Still working \u{2014} large GPU packages are downloading...",
-                    mins, secs
-                )
-            };
-            emit_log(&app_hb, &msg);
-        }
-    });
+    let cache_root = uv_cache_dir(&uv_bin(base)).await;
+    if !venv_has_torch(base) {
+        check_pytorch_disk_space(app, base, cache_root.as_deref(), gpu)?;
+    }
+
+    // uv prints one "Downloading torch (1.9GiB)" line and then nothing until
+    // the multi-GB wheel is done, so without this the step looks frozen.
+    let watch = Arc::new(UvDownloadWatch::default());
+    let observer: LineObserver = {
+        let watch = watch.clone();
+        Arc::new(move |line: &str| watch.observe(line))
+    };
+    let monitor = tokio::spawn(watch_pytorch_install(
+        app.clone(),
+        cache_root,
+        label.to_string(),
+        watch,
+    ));
+    let observer = Some(observer);
 
     let result = match gpu {
         "nvidia" => {
             let index_url = nvidia_pytorch_index_url().await;
             emit_log(app, &format!("Using PyTorch index: {}", index_url));
-            uv_pip(
+            uv_pip_observed(
                 app,
                 base,
                 &[
@@ -1469,6 +2152,7 @@ async fn step_install_pytorch(
                 ],
                 net,
                 false,
+                observer.clone(),
             )
             .await
         }
@@ -1492,7 +2176,7 @@ async fn step_install_pytorch(
                  for most discrete cards, or on Windows via AMD's ROCm preview for a \
                  narrow set of RDNA3/4 models.",
             );
-            uv_pip(
+            uv_pip_observed(
                 app,
                 base,
                 &[
@@ -1506,11 +2190,12 @@ async fn step_install_pytorch(
                 ],
                 net,
                 false,
+                observer.clone(),
             )
             .await
         }
         "intel" => {
-            uv_pip(
+            uv_pip_observed(
                 app,
                 base,
                 &[
@@ -1524,32 +2209,35 @@ async fn step_install_pytorch(
                 ],
                 net,
                 false,
+                observer.clone(),
             )
             .await
         }
         "mps" => {
-            uv_pip(
+            uv_pip_observed(
                 app,
                 base,
                 &["torch", "torchvision", "torchaudio"],
                 net,
                 true,
+                observer.clone(),
             )
             .await
         }
         "cpu" if cfg!(target_os = "macos") => {
             // CPU execution uses the same native PyPI wheels as MPS on macOS.
-            uv_pip(
+            uv_pip_observed(
                 app,
                 base,
                 &["torch", "torchvision", "torchaudio"],
                 net,
                 true,
+                observer.clone(),
             )
             .await
         }
         _ => {
-            uv_pip(
+            uv_pip_observed(
                 app,
                 base,
                 &[
@@ -1563,12 +2251,13 @@ async fn step_install_pytorch(
                 ],
                 net,
                 false,
+                observer.clone(),
             )
             .await
         }
     };
 
-    heartbeat.abort();
+    monitor.abort();
     result
 }
 
@@ -1593,6 +2282,8 @@ async fn step_install_deps(
         .arg(&python_str)
         .arg("-r")
         .arg(&req_str)
+        // ComfyUI leaves certifi unpinned, so an existing venv keeps an old one.
+        .arg(CERTIFI_REQUIREMENT)
         .env("UV_PYTHON_INSTALL_DIR", &python_dir_str);
     crate::comfyui::nodes::apply_pip_install_options(
         &mut cmd,
@@ -2687,7 +3378,7 @@ pub async fn run_setup(
         ),
         50,
     );
-    step_install_pytorch(&app, &base, &gpu, amd_windows_rocm, &net).await?;
+    step_install_pytorch(&app, &base, &gpu, label, amd_windows_rocm, &net).await?;
 
     // 6. Install ComfyUI deps
     emit(&app, "deps", "Installing ComfyUI dependencies...", 75);
@@ -2930,10 +3621,187 @@ pub async fn update_comfyui(
 mod tests {
     use super::{
         amd_windows_rocm_model_supported, check_resume, content_range_start, device_vram_bytes,
-        parse_vram_from_drm_root, remove_dir_contents_except, uv_asset_name, uv_download,
-        venv_python_version, ResumeCheck, UV_ASSETS, UV_VERSION,
+        find_file_named, format_bytes, free_space_on, is_disk_full, is_network_failure,
+        is_uv_lock_timeout, is_uv_program, parse_uv_size, parse_uv_version,
+        parse_vram_from_drm_root, place_uv_binaries, pytorch_download_percent,
+        remove_dir_contents_except, uv_asset_name, uv_download, uv_download_announcement,
+        uv_setup_env_defaults, uv_written_bytes, venv_certifi_version, venv_python_version,
+        OutputFlags, ResumeCheck, UvDownloadWatch, CERTIFI_MIN, CERTIFI_REQUIREMENT, UV_ASSETS,
+        UV_VERSION,
     };
     use std::fs;
+
+    #[test]
+    fn uv_lock_timeouts_are_recognised() {
+        // uv 0.13's own wording, as a Windows user hit it installing CUDA torch.
+        assert!(is_uv_lock_timeout(
+            "error: Failed to acquire lock on the client cache"
+        ));
+        assert!(is_uv_lock_timeout(
+            "  Caused by: Timeout (300s) when waiting for lock on `C:\\Users\\u\\AppData\\Local\\uv\\cache\\wheels-v7\\index\\09e0bc338403d139\\torch\\2.14.1+cu130-cp311-cp311-win_amd64.lock` at `C:\\Users\\u\\AppData\\Local\\uv\\cache\\wheels-v7\\index\\09e0bc338403d139\\torch\\2.14.1+cu130-cp311-cp311-win_amd64.lock`, is another uv process running? You can set `UV_LOCK_TIMEOUT` to increase the timeout."
+        ));
+        assert!(!is_uv_lock_timeout("Resolved 42 packages in 1.2s"));
+        assert!(!is_uv_lock_timeout(
+            "error: Request failed after 3 retries: Timeout"
+        ));
+    }
+
+    #[test]
+    fn uv_download_sizes_are_parsed() {
+        assert_eq!(parse_uv_size("512B"), Some(512));
+        assert_eq!(parse_uv_size("2.0MiB"), Some(2 * 1024 * 1024));
+        assert_eq!(
+            parse_uv_size("1.9GiB"),
+            Some((1.9 * 1024.0 * 1024.0 * 1024.0) as u64)
+        );
+        assert_eq!(parse_uv_size("MiB"), None);
+        assert_eq!(parse_uv_size("12 parsecs"), None);
+        // uv 0.13's own lines, captured from a torch install.
+        assert_eq!(
+            uv_download_announcement("Downloading torch (199.8MiB)"),
+            Some((199.8 * 1024.0 * 1024.0) as u64)
+        );
+        assert_eq!(uv_download_announcement(" Downloaded torch"), None);
+        assert_eq!(uv_download_announcement("Downloading cpython-3.11"), None);
+    }
+
+    #[test]
+    fn uv_download_watch_follows_uv_output() {
+        let watch = UvDownloadWatch::default();
+        assert!(
+            watch.downloading(),
+            "no announcement yet counts as downloading"
+        );
+        for line in [
+            "Resolved 10 packages in 1.42s",
+            "Downloading networkx (2.0MiB)",
+            "Downloading torch (1.9GiB)",
+            " Downloaded networkx",
+        ] {
+            watch.observe(line);
+        }
+        assert!(watch.downloading());
+        watch.observe(" Downloaded torch");
+        assert!(!watch.downloading());
+        watch.observe("Prepared 10 packages in 8.35s");
+        assert!(watch.prepared.load(std::sync::atomic::Ordering::Relaxed));
+        let announced = watch
+            .announced_bytes
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(announced > 2_000_000_000 && announced < 2_100_000_000);
+    }
+
+    #[test]
+    fn pytorch_percent_stays_inside_its_step() {
+        assert_eq!(pytorch_download_percent(5_000, 0), 50);
+        assert_eq!(pytorch_download_percent(0, 1_000), 50);
+        let half = pytorch_download_percent(750, 1_000);
+        assert!(half > 50 && half < 72, "{half}");
+        assert_eq!(pytorch_download_percent(10_000, 1_000), 72);
+    }
+
+    #[test]
+    fn bytes_are_shown_in_decimal_units() {
+        assert_eq!(format_bytes(1_240_000_000), "1.24 GB");
+        assert_eq!(format_bytes(640_000_000), "640 MB");
+        assert_eq!(format_bytes(6_100_000), "6 MB");
+    }
+
+    #[test]
+    fn network_and_disk_failures_are_recognised() {
+        assert!(is_network_failure(
+            "  Caused by: Failed to download distribution due to network timeout. Try increasing UV_HTTP_TIMEOUT (current value: 30s)."
+        ));
+        assert!(is_network_failure(
+            "  Caused by: request or response body error: operation timed out"
+        ));
+        assert!(!is_network_failure(
+            "  Caused by: Timeout (300s) when waiting for lock on `C:\\uv\\cache\\torch.lock`"
+        ));
+        assert!(!is_network_failure("Resolved 42 packages in 1.2s"));
+        assert!(is_disk_full("error: No space left on device (os error 28)"));
+        assert!(is_disk_full(
+            "error: There is not enough space on the disk. (os error 112)"
+        ));
+        assert!(!is_disk_full("Installed 10 packages in 143ms"));
+
+        let mut flags = OutputFlags::default();
+        flags.note("error: There is not enough space on the disk. (os error 112)");
+        let merged = flags.merge(OutputFlags {
+            lock_timeout: true,
+            ..Default::default()
+        });
+        assert!(merged.disk_full && merged.lock_timeout && !merged.network_error);
+    }
+
+    #[test]
+    fn setup_uv_env_raises_timeouts_and_retries() {
+        let defaults = uv_setup_env_defaults();
+        let get = |key: &str| defaults.iter().find(|(k, _, _)| *k == key).unwrap();
+        assert_eq!(get("UV_LOCK_TIMEOUT").1, "14400");
+        let (_, http_timeout, aliases) = get("UV_HTTP_TIMEOUT");
+        assert!(
+            http_timeout.parse::<u32>().unwrap() > 30,
+            "uv's own default is 30 s"
+        );
+        assert!(aliases.contains(&"HTTP_TIMEOUT"));
+        assert!(get("UV_HTTP_RETRIES").1.parse::<u32>().unwrap() > 3);
+    }
+
+    #[test]
+    fn free_space_comes_from_the_deepest_mount() {
+        let mounts = vec![
+            (std::path::PathBuf::from("/"), 100),
+            (std::path::PathBuf::from("/mnt/data"), 7),
+            (std::path::PathBuf::from("/mnt/dat"), 3),
+        ];
+        let on = |p: &str| free_space_on(std::path::Path::new(p), &mounts).map(|(_, f)| f);
+        assert_eq!(on("/home/u/.cache/uv"), Some(100));
+        assert_eq!(on("/mnt/data/MooshieUI"), Some(7));
+        assert_eq!(on("/mnt/data"), Some(7));
+        assert_eq!(
+            on("/mnt/database"),
+            Some(100),
+            "a name prefix is not a mount"
+        );
+        assert_eq!(free_space_on(std::path::Path::new("/x"), &[]), None);
+    }
+
+    #[test]
+    fn written_bytes_count_only_new_uv_temp_folders() {
+        let root = unique_temp_dir("uv-written");
+        std::fs::create_dir_all(root.join(".tmpOld")).unwrap();
+        std::fs::write(root.join(".tmpOld/a"), vec![0u8; 50]).unwrap();
+        let baseline: std::collections::HashSet<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        std::fs::create_dir_all(root.join(".tmpNew/torch/lib")).unwrap();
+        std::fs::write(root.join(".tmpNew/torch/lib/x.dll"), vec![0u8; 300]).unwrap();
+        std::fs::create_dir_all(root.join("archive-v0")).unwrap();
+        std::fs::write(root.join("archive-v0/old"), vec![0u8; 999]).unwrap();
+        let mut seen = std::collections::HashMap::new();
+        assert_eq!(uv_written_bytes(&root, &baseline, &mut seen), 300);
+        // uv moves the finished folder into the cache: it still counts.
+        std::fs::rename(root.join(".tmpNew"), root.join("archive-v0/done")).unwrap();
+        std::fs::write(root.join(".tmpNext"), vec![0u8; 20]).unwrap();
+        assert_eq!(uv_written_bytes(&root, &baseline, &mut seen), 320);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn only_uv_gets_the_uv_lock_timeout() {
+        assert!(is_uv_program("uv".as_ref()));
+        assert!(is_uv_program("uv.exe".as_ref()));
+        assert!(is_uv_program("C:/MooshieUI/bin/UV.EXE".as_ref()));
+        assert!(is_uv_program(
+            "/home/u/.local/share/mooshieui/bin/uv".as_ref()
+        ));
+        assert!(!is_uv_program("powershell".as_ref()));
+        assert!(!is_uv_program("unzip".as_ref()));
+        assert!(!is_uv_program("/opt/uvx".as_ref()));
+    }
 
     #[test]
     fn moving_an_install_keeps_the_in_place_gallery_and_pointer() {
@@ -2989,6 +3857,72 @@ mod tests {
             assert!(sha256.bytes().all(|b| b.is_ascii_hexdigit()), "{asset}");
         }
         assert!(uv_download("uv-unknown.tar.gz").is_none());
+    }
+
+    #[test]
+    fn uv_version_parses_cli_output_and_compares() {
+        assert_eq!(
+            parse_uv_version("uv 0.13.4 (x86_64-unknown-linux-gnu)"),
+            Some((0, 13, 4))
+        );
+        assert_eq!(
+            parse_uv_version("uv 0.12.19 (abc1234 2026-09-24)\n"),
+            Some((0, 12, 19))
+        );
+        assert_eq!(parse_uv_version("0.9.0"), Some((0, 9, 0)));
+        assert_eq!(parse_uv_version("uv 0.5.0-rc.1"), Some((0, 5, 0)));
+        assert_eq!(parse_uv_version("uv"), None);
+        assert_eq!(parse_uv_version(""), None);
+        let pinned = parse_uv_version(UV_VERSION).expect("pinned version parses");
+        assert!(parse_uv_version("uv 0.12.19").unwrap() < pinned);
+        assert!(parse_uv_version("uv 0.13.10").unwrap() > pinned);
+    }
+
+    #[test]
+    fn certifi_floor_matches_its_requirement() {
+        let floor = format!(
+            "certifi>={}.{}.{}",
+            CERTIFI_MIN.0, CERTIFI_MIN.1, CERTIFI_MIN.2
+        );
+        assert_eq!(CERTIFI_REQUIREMENT, floor);
+    }
+
+    #[test]
+    fn venv_certifi_version_reads_the_dist_info() {
+        let venv = unique_temp_dir("certifi-venv");
+        let site = if cfg!(target_os = "windows") {
+            venv.join("Lib").join("site-packages")
+        } else {
+            venv.join("lib").join("python3.11").join("site-packages")
+        };
+        fs::create_dir_all(site.join("certifi")).unwrap();
+        assert_eq!(venv_certifi_version(&venv), None);
+        fs::create_dir_all(site.join("certifi-2026.7.22.dist-info")).unwrap();
+        assert_eq!(venv_certifi_version(&venv), Some((2026, 7, 22)));
+        assert!(venv_certifi_version(&venv).unwrap() < CERTIFI_MIN);
+        let _ = fs::remove_dir_all(&venv);
+    }
+
+    #[test]
+    fn uv_binaries_replace_the_old_ones() {
+        let root = unique_temp_dir("uv-place");
+        let exe = std::env::consts::EXE_SUFFIX;
+        let staging = root.join("staging").join("uv-x86_64-unknown-linux-gnu");
+        let bin = root.join("bin");
+        fs::create_dir_all(&staging).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(staging.join(format!("uv{exe}")), b"new uv").unwrap();
+        fs::write(staging.join(format!("uvx{exe}")), b"new uvx").unwrap();
+        fs::write(bin.join(format!("uv{exe}")), b"old uv").unwrap();
+
+        assert!(find_file_named(&root.join("staging"), &format!("uv{exe}"), 0).is_none());
+        place_uv_binaries(&root.join("staging"), &bin).unwrap();
+        assert_eq!(fs::read(bin.join(format!("uv{exe}"))).unwrap(), b"new uv");
+        assert_eq!(fs::read(bin.join(format!("uvx{exe}"))).unwrap(), b"new uvx");
+
+        // uv itself is required; a missing uvx is not.
+        assert!(place_uv_binaries(&root.join("staging"), &bin).is_err());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

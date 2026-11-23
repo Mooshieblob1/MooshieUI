@@ -1,13 +1,17 @@
+pub mod architectures;
 pub mod attention;
 pub mod auth;
+pub mod backup;
 pub mod cloud;
 pub mod comfyui;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod comfyui_version;
 pub mod commands;
 pub mod config;
+pub mod eagle;
 pub mod error;
 pub mod gallery_index;
+pub mod http_error;
 pub mod http_range;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
@@ -21,22 +25,32 @@ pub mod lan_upnp;
 #[cfg(any(feature = "desktop", test))]
 pub mod linked_folders;
 pub mod log_buffer;
+pub mod mcp;
 pub mod media_tools;
 pub mod metadata;
+pub mod model_hash_cache;
 pub mod model_requests;
 pub mod notifications;
 pub mod novelai;
+pub mod novelai_keys;
 pub mod output_owners;
+#[cfg(any(feature = "desktop", test))]
+pub mod package_manager;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
+pub mod related_tags;
 #[cfg(feature = "desktop")]
 pub mod setup;
 pub mod state;
 pub mod temp_images;
 pub mod templates;
+pub mod thumbnail_cache;
 pub mod user_prefs;
 pub mod user_secrets;
+pub mod watermark;
 pub mod webserver;
+#[cfg(feature = "desktop")]
+pub mod webview_rest;
 
 use std::sync::Arc;
 
@@ -275,7 +289,8 @@ pub fn run() {
             {
                 let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
                 webserver::spawn_prompt_cleanup_reactor(shared_state.clone());
-                webserver::spawn_stuck_worker_watchdog(shared_state);
+                webserver::spawn_stuck_worker_watchdog(shared_state.clone());
+                comfyui::idle_unload::spawn(shared_state);
             }
 
             // Store the AppHandle so the web server can show/hide the window later.
@@ -285,7 +300,19 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     media_tools::start(shared_state.clone());
                     *shared_state.app_handle.lock().await = Some(handle);
+                    // Opt-in local MCP server; a no-op unless Settings turned it on.
+                    mcp::sync(shared_state).await;
                 });
+            }
+
+            // Move an existing install's uv and venv CA bundle up to the pinned
+            // versions (setup itself only ever downloads uv once).
+            {
+                let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
+                tauri::async_runtime::spawn(setup::refresh_python_tooling(
+                    _app.handle().clone(),
+                    shared_state,
+                ));
             }
 
             // In browser mode: hide the window, start web server, open browser
@@ -325,6 +352,22 @@ pub fn run() {
                 log::info!("Opening browser at {}", url);
                 let _ = open::that(&url);
             } else {
+                // App mode with LAN access on: serve the browser UI to other
+                // devices while the owner keeps using this window. No
+                // heartbeat watchdog (the window, not a tab, owns the process)
+                // and no browser tab is opened.
+                if lan_enabled {
+                    let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
+                    shared_state
+                        .app_mode_active
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    tauri::async_runtime::spawn(async move {
+                        let (port, _handle) =
+                            webserver::start_server(shared_state, ui_server_port, true).await;
+                        log::info!("LAN web server started in app mode on port {}", port);
+                    });
+                }
+
                 // Normal app mode — configure WebView
                 #[cfg(target_os = "linux")]
                 {
@@ -400,7 +443,10 @@ pub fn run() {
                             tauri::http::Response::builder()
                                 .status(200)
                                 .header("Content-Type", "image/webp")
-                                .header("Cache-Control", "no-cache")
+                                .header(
+                                    "Cache-Control",
+                                    thumbnail_cache::cache_control_for_query(query),
+                                )
                                 .body(data)
                                 .unwrap(),
                         );
@@ -606,6 +652,7 @@ pub fn run() {
             commands::server::kill_port_process,
             commands::server::check_server_health,
             commands::api::get_models,
+            commands::api::list_model_architectures,
             commands::api::get_samplers,
             commands::api::get_embeddings,
             commands::api::get_queue,
@@ -633,10 +680,14 @@ pub fn run() {
             commands::api::save_text_file,
             commands::api::embed_image_metadata_bytes,
             commands::api::save_to_gallery,
+            commands::api::related_tags,
+            commands::api::eagle_status,
+            commands::api::send_to_eagle,
             commands::api::save_to_gallery_bytes,
             commands::api::save_to_gallery_temp,
             commands::api::list_gallery_images,
             commands::api::list_gallery_image_entries,
+            commands::api::find_gallery_visual_duplicates,
             commands::api::copy_gallery_file_to,
             commands::api::load_gallery_image,
             commands::api::load_gallery_image_display,
@@ -661,6 +712,7 @@ pub fn run() {
             commands::api::civitai_list_architectures,
             commands::api::read_modelspec,
             commands::api::detect_model_kind,
+            commands::api::detect_h3_video_loras,
             commands::api::get_lora_civitai_info,
             commands::api::get_checkpoint_civitai_info,
             commands::api::read_image_metadata,
@@ -691,6 +743,10 @@ pub fn run() {
             commands::novelai::novelai_generate,
             commands::novelai::novelai_subscription,
             commands::novelai::set_novelai_api_key,
+            commands::novelai::list_novelai_keys,
+            commands::novelai::save_novelai_key,
+            commands::novelai::delete_novelai_key,
+            commands::novelai::use_novelai_key,
             commands::cloud::set_cloud_api_key,
             commands::cloud::cloud_key_status,
             commands::config::api_key_env_status,
@@ -713,12 +769,22 @@ pub fn run() {
             commands::cloud::scene_upgrade_draft,
             commands::cloud::scene_exact_voice,
             commands::config::get_config,
+            commands::config::app_package_manager,
             commands::config::update_config,
+            commands::mcp::get_mcp_status,
+            commands::watermark::get_watermark_status,
+            commands::watermark::prepare_watermark,
+            commands::mcp::set_mcp_settings,
+            commands::mcp::regenerate_mcp_token,
             commands::config::get_user_prefs,
             commands::config::save_user_prefs,
+            commands::backup::export_backup_zip,
+            commands::backup::inspect_backup_zip,
+            commands::backup::apply_backup_admin_data,
             commands::config::get_gallery_path,
             commands::config::set_gallery_path,
             commands::config::switch_to_browser_mode,
+            commands::config::lan_admin,
             commands::interrogator::interrogate_image,
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,
@@ -739,12 +805,15 @@ pub fn run() {
             commands::prompt_assistant::set_llm_provider,
             commands::prompt_assistant::set_llm_api_key,
             commands::prompt_assistant::set_llm_model,
+            commands::prompt_assistant::set_llm_fallback_models,
             commands::prompt_assistant::set_llm_base_url,
             commands::prompt_assistant::list_external_llm_models,
             commands::prompt_assistant::connect_llm_oauth,
             commands::prompt_assistant::cancel_llm_oauth,
             commands::prompt_assistant::set_llm_xai_client,
             commands::prompt_assistant::call_external_llm,
+            commands::prompt_assistant::cancel_llm_request,
+            commands::prompt_assistant::describe_image,
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,
             commands::api::get_gpu_stats,
@@ -792,19 +861,44 @@ pub fn run() {
             commands::music::get_music_status,
             commands::music::load_music_audio,
             commands::music::save_music_audio,
+            commands::wildcards::list_wildcards,
+            commands::wildcards::save_wildcard,
+            commands::wildcards::delete_wildcard,
+            commands::splat::get_splat_capabilities,
+            commands::splat::generate_splat,
+            commands::splat::get_splat_status,
+            commands::splat::load_splat_ply,
+            commands::splat::save_splat_file,
+            commands::mesh3d::get_mesh_capabilities,
+            commands::mesh3d::generate_mesh,
+            commands::mesh3d::get_mesh_status,
+            commands::mesh3d::load_mesh_glb,
+            commands::mesh3d::save_mesh_file,
             commands::music::save_music_file,
             commands::api::save_video_to_gallery_manual,
             commands::api::civitai_bulk_scan,
             commands::api::civitai_bulk_scan_cancel,
+            webview_rest::set_ui_resting,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        if let RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Resized(_),
+            ..
+        } = &event
+        {
+            if let Some(window) = app_handle.get_webview_window(label) {
+                webview_rest::sync_minimized(&window);
+            }
+        }
         if let RunEvent::ExitRequested { .. } = event {
             let state = app_handle.state::<Arc<AppState>>();
             tauri::async_runtime::block_on(async {
                 media_tools::shutdown(&state).await;
+                mcp::shutdown().await;
                 prompt_assistant::companion::shutdown().await;
                 commands::music_link::shutdown(&state).await;
                 commands::music_audio_style::shutdown(&state).await;

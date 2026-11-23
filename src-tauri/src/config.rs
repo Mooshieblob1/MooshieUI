@@ -95,6 +95,12 @@ pub struct AppConfig {
     pub keep_alive: bool,
     /// Automatically start ComfyUI when the app launches (default: true)
     pub auto_start: bool,
+    /// Unload the managed ComfyUI's models and clear its cache after a stretch
+    /// with no activity, to free VRAM and RAM (off by default). ComfyUI keeps
+    /// running; see `comfyui::idle_unload`.
+    pub comfyui_idle_unload: bool,
+    /// Minutes without ComfyUI activity before that unload.
+    pub comfyui_idle_unload_minutes: u32,
     /// UI theme mode: "dark", "light"
     pub theme: String,
     /// UI color palette shared across dark and light modes.
@@ -115,7 +121,8 @@ pub struct AppConfig {
     /// MooshieUI never downloads or deletes files from these paths.
     #[serde(default)]
     pub interrogator_custom_models: Vec<CustomInterrogatorModel>,
-    /// Interrogator: also guess the artist with Kaloscope 3.0 (extra 169 MB download).
+    /// Interrogator: also guess the artist with Kaloscope 3.0 (extra 169 MB download
+    /// on the first run). On by default.
     pub interrogator_detect_artists: bool,
     /// Interrogator: minimum Kaloscope softmax score for an artist tag (0.0–1.0).
     pub interrogator_artist_threshold: f32,
@@ -133,6 +140,10 @@ pub struct AppConfig {
     /// fetching. This and every other owner key field below may instead hold
     /// `env:NAME`; read them through `civitai_key()` and its siblings.
     pub civitai_api_key: Option<String>,
+    /// Optional HTTP/HTTPS/SOCKS5 proxy URL used only for CivitAI API requests
+    /// and CivitAI model downloads. Example: `socks5://127.0.0.1:1080`.
+    #[serde(default)]
+    pub civitai_proxy: Option<String>,
     /// Optional NovelAI API key. Required before any NovelAI model can be used.
     #[serde(default)]
     pub novelai_api_key: Option<String>,
@@ -197,6 +208,13 @@ pub struct AppConfig {
     pub webhook_include_sensitive: bool,
     /// Allow localhost/private webhook targets.
     pub webhook_allow_private_targets: bool,
+    /// Eagle (eagle.cool) export through its local API: shows "Send to Eagle"
+    /// in the gallery.
+    pub eagle_enabled: bool,
+    /// With Eagle export on, also send every image as it is saved.
+    pub eagle_auto_send: bool,
+    /// Eagle folder id the images go into. None puts them in Eagle's inbox.
+    pub eagle_folder_id: Option<String>,
     /// Active custom theme profile ID. Null = built-in palette only.
     pub theme_profile_id: Option<String>,
     /// User-defined custom theme profiles.
@@ -227,6 +245,22 @@ pub struct AppConfig {
     /// External LLM model name (e.g. `gpt-4o-mini`, or the model id LM Studio exposes).
     #[serde(default)]
     pub llm_external_model: String,
+    /// More models on the same provider, tried in order when the model above
+    /// cannot answer right now (no response, timeout, rate limit, server
+    /// error). Part of the provider row: set by `set_llm_fallback_models` and
+    /// cleared on a provider switch, since model names do not carry over.
+    #[serde(default)]
+    pub llm_fallback_models: Vec<String>,
+    /// When the external provider (and every fallback model) cannot answer,
+    /// answer with an installed bundled natural-language model instead.
+    #[serde(default)]
+    pub llm_fallback_local: bool,
+    /// How hard a hosted model that reasons should think before answering:
+    /// `"low"` (the default), `"medium"`, `"high"`, or `"default"` for each
+    /// model's own default. Mapped per model in `prompt_assistant::reasoning`;
+    /// models and providers that take no effort ignore it.
+    #[serde(default = "default_llm_reasoning_effort")]
+    pub llm_reasoning_effort: String,
     /// Refresh token for providers whose sign-in issues a *short-lived* access
     /// token (Nous Portal). Empty for every other provider: an API key does not
     /// expire, and OpenRouter's PKCE flow issues a long-lived key rather than
@@ -287,6 +321,12 @@ fn default_report_endpoint() -> Option<String> {
     Some("https://report.mooshieblob.com/report".to_string())
 }
 
+/// Default for `llm_reasoning_effort`: the fast end, which is what a prompt
+/// rewrite needs.
+fn default_llm_reasoning_effort() -> String {
+    "low".to_string()
+}
+
 /// Default external LLM provider id. Kept as a literal because `config` is
 /// compiled in builds that gate out `prompt_assistant`; the registry asserts it
 /// matches `providers::DEFAULT_PROVIDER`.
@@ -341,6 +381,8 @@ impl Default for AppConfig {
             vram_mode: "normal".to_string(),
             keep_alive: false,
             auto_start: true,
+            comfyui_idle_unload: false,
+            comfyui_idle_unload_minutes: crate::comfyui::idle_unload::DEFAULT_IDLE_UNLOAD_MINUTES,
             theme: "dark".to_string(),
             theme_palette: "mooshie".to_string(),
             font_scale: 1.0,
@@ -350,14 +392,15 @@ impl Default for AppConfig {
             interrogator_character_threshold: 0.85,
             interrogator_model: crate::interrogator::DEFAULT_INTERROGATOR_MODEL.to_string(),
             interrogator_custom_models: vec![],
-            interrogator_detect_artists: false,
+            interrogator_detect_artists: true,
             // Correct guesses on test images scored 0.24-0.86, wrong ones about 0.01.
             interrogator_artist_threshold: 0.10,
-            interrogator_detect_characters: false,
+            interrogator_detect_characters: true,
             prompt_assistant_model_id: None,
             prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,
             civitai_api_key: None,
+            civitai_proxy: None,
             novelai_api_key: None,
             elevenlabs_api_key: None,
             fal_api_key: None,
@@ -378,6 +421,9 @@ impl Default for AppConfig {
             webhook_events: vec!["image_saved".to_string()],
             webhook_include_sensitive: false,
             webhook_allow_private_targets: false,
+            eagle_enabled: false,
+            eagle_auto_send: true,
+            eagle_folder_id: None,
             theme_profile_id: None,
             theme_profiles: vec![],
             tls_cert_path: None,
@@ -387,6 +433,9 @@ impl Default for AppConfig {
             llm_external_base_url: String::new(),
             llm_external_api_key: String::new(),
             llm_external_model: String::new(),
+            llm_fallback_models: Vec::new(),
+            llm_fallback_local: false,
+            llm_reasoning_effort: default_llm_reasoning_effort(),
             llm_oauth_refresh_token: String::new(),
             llm_oauth_client_id: String::new(),
             llm_oauth_expires_at: 0,
@@ -407,9 +456,10 @@ impl Default for AppConfig {
 /// webhook with a token in its userinfo or query. Only the instance admin sees
 /// them; every other client gets `null` plus a `{name}_configured` flag.
 /// [`operator_secrets`] must list the same fields in the same order.
-fn operator_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<String>); 4] {
+fn operator_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<String>); 5] {
     [
         ("civitai_api_key", &mut config.civitai_api_key),
+        ("civitai_proxy", &mut config.civitai_proxy),
         ("webhook_url", &mut config.webhook_url),
         ("network_proxy", &mut config.network_proxy),
         ("pip_index_url", &mut config.pip_index_url),
@@ -417,9 +467,10 @@ fn operator_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<S
 }
 
 /// Read-only twin of [`operator_secrets_mut`], same fields in the same order.
-fn operator_secrets(config: &AppConfig) -> [&Option<String>; 4] {
+fn operator_secrets(config: &AppConfig) -> [&Option<String>; 5] {
     [
         &config.civitai_api_key,
+        &config.civitai_proxy,
         &config.webhook_url,
         &config.network_proxy,
         &config.pip_index_url,
@@ -714,8 +765,27 @@ pub fn load_persisted_config() -> AppConfig {
     AppConfig::default()
 }
 
+pub(crate) fn validate_civitai_proxy(proxy: Option<&str>) -> Result<(), String> {
+    let Some(trimmed) = proxy.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let parsed = reqwest::Url::parse(trimmed).map_err(|_| {
+        "Invalid CivitAI proxy URL (expected http, https, socks5, or socks5h)".to_string()
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return Err(
+            "Invalid CivitAI proxy scheme (must be http, https, socks5, or socks5h)".to_string(),
+        );
+    }
+    if parsed.host_str().is_none_or(|h| h.trim().is_empty()) {
+        return Err("Invalid CivitAI proxy URL: missing host".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
     for field in [
+        &mut config.civitai_proxy,
         &mut config.network_proxy,
         &mut config.pip_index_url,
         &mut config.output_filename_template,
@@ -774,16 +844,17 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
 /// Keep the external-LLM provider row exactly as the server has it.
 ///
 /// Every one of these fields is written only by a dedicated command
-/// (`set_llm_provider`, `set_llm_api_key`, `set_llm_model`, `set_llm_base_url`,
-/// `set_llm_xai_client`, the OAuth sign-in) or by the background token refresh,
+/// (`set_llm_provider`, `set_llm_api_key`, `set_llm_model`,
+/// `set_llm_fallback_models`, `set_llm_base_url`, `set_llm_xai_client`, the
+/// OAuth sign-in) or by the background token refresh,
 /// so whatever a full-config save carries for them is at best a stale echo of
 /// a page-load snapshot. Accepting it would write back a key the user has
 /// since cleared or replaced, an expired access token, or a refresh token the
 /// provider already rotated out. It would also let a full-config save pair the
 /// stored key with a different provider or base URL, sending it to a host
-/// `set_llm_base_url` would have made it forget the key for. The one field
-/// left to `update_config` is `llm_external_enabled`, which the settings page
-/// toggles through its autosave.
+/// `set_llm_base_url` would have made it forget the key for. The fields left
+/// to `update_config` are `llm_external_enabled`, `llm_fallback_local` and
+/// `llm_reasoning_effort`, which the settings page sets through its autosave.
 fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
     incoming.llm_provider.clone_from(&current.llm_provider);
     incoming
@@ -792,6 +863,9 @@ fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
     incoming
         .llm_external_model
         .clone_from(&current.llm_external_model);
+    incoming
+        .llm_fallback_models
+        .clone_from(&current.llm_fallback_models);
     incoming
         .llm_external_api_key
         .clone_from(&current.llm_external_api_key);
@@ -1388,5 +1462,45 @@ mod secret_handling_tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn civitai_proxy_validation_checks_scheme_and_never_echoes_credentials() {
+        assert!(validate_civitai_proxy(None).is_ok());
+        assert!(validate_civitai_proxy(Some("   ")).is_ok());
+        for valid in [
+            "http://127.0.0.1:7890",
+            "https://user:secret@proxy.example.com:8443",
+            "socks5://127.0.0.1:1080",
+            "socks5h://user:secret@127.0.0.1:1080",
+        ] {
+            assert!(validate_civitai_proxy(Some(valid)).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "ftp://user:SECRET_PASS@proxy.example.com:21",
+            "socks4://user:SECRET_PASS@127.0.0.1:1080",
+            "not a url with SECRET_PASS",
+            "http://",
+        ] {
+            let err = validate_civitai_proxy(Some(invalid)).unwrap_err();
+            assert!(!err.contains("SECRET_PASS"), "leaked credentials: {err}");
+        }
+    }
+
+    #[test]
+    fn civitai_proxy_is_redacted_for_non_admins() {
+        let mut current = owner_config();
+        current.civitai_proxy = Some("http://user:secret@127.0.0.1:7890".into());
+        let redacted = config_to_client_json(&current, false).unwrap();
+        assert!(redacted["civitai_proxy"].is_null());
+        assert_eq!(
+            redacted["civitai_proxy_configured"],
+            serde_json::json!(true)
+        );
+
+        let mut incoming = echo(redacted);
+        preserve_secrets(&mut incoming, &current);
+        preserve_redacted_secrets(&mut incoming, &current);
+        assert_eq!(incoming.civitai_proxy, current.civitai_proxy);
     }
 }

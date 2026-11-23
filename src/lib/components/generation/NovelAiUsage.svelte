@@ -11,8 +11,26 @@
   // Fetch once per key rather than on every mount: this sits above the generate
   // button, so it remounts every time the generation page is rebuilt.
   $effect(() => {
-    if (show) void novelai.ensureSubscription();
+    if (show) {
+      void novelai.ensureSubscription();
+      novelai.ensureSavedKeys();
+    }
   });
+
+  let switching = $state(false);
+  const activeKeyLabel = $derived(novelai.savedKeys.find((k) => k.active)?.label ?? "");
+
+  async function switchKey(label: string) {
+    if (!label || label === activeKeyLabel) return;
+    switching = true;
+    try {
+      await novelai.useNamedKey(label);
+    } catch (e) {
+      console.error("Failed to switch NovelAI key:", e);
+    } finally {
+      switching = false;
+    }
+  }
 
   // Anlas is spent the moment a NovelAI generation runs, so a balance that is
   // never re-read is a wrong balance. Refresh on the busy-to-idle edge.
@@ -27,48 +45,89 @@
 </script>
 
 {#if show}
-  <div class="mb-2 rounded-lg border border-neutral-800 bg-neutral-900/60 px-2.5 py-1.5 space-y-1">
-    <div class="flex items-center justify-between gap-2">
-      <span class="text-[10px] text-neutral-400">{locale.t('settings.novelai.anlas')}</span>
-      <div class="flex items-center gap-1.5">
-        <span class="text-xs font-mono text-neutral-200">
-          {novelai.subscription ? novelai.anlas.toLocaleString() : '--'}
-        </span>
-        <button
-          class="p-0.5 rounded text-neutral-500 hover:text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          disabled={novelai.subscriptionLoading}
-          title={locale.t('settings.novelai.refresh_account')}
-          aria-label={locale.t('settings.novelai.refresh_account')}
-          onclick={() => { void novelai.refreshSubscription(); }}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 {novelai.subscriptionLoading ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"/>
-            <polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-
-    {#if novelai.subscriptionError}
-      <p class="text-[10px] text-red-400">{novelai.subscriptionError}</p>
-    {:else if allowance}
-      <div class="h-1 w-full rounded-full bg-neutral-800 overflow-hidden">
-        <div
-          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : allowance.isBonus ? 'bg-emerald-500' : 'bg-teal-500'}"
-          style="width: {allowance.barPercent}%"
-        ></div>
-      </div>
-      <p class="text-[10px] {allowance.isLow ? 'text-amber-400' : 'text-neutral-500'}">
-        {#if allowance.isEmpty}
-          {locale.t('settings.novelai.allowance_empty')}
-        {:else}
-          {locale.t('settings.novelai.allowance_remaining', {
+  <!-- One quiet line above Generate: Anlas, then the Opus allowance as a small bar. -->
+  <div class="mb-2.5 flex items-center gap-2 text-xs">
+    <span class="text-neutral-400">{locale.t('settings.novelai.anlas')}</span>
+    <span class="font-mono {novelai.subscriptionError ? 'text-neutral-500' : 'text-neutral-200'}">{novelai.subscription ? novelai.anlas.toLocaleString() : '--'}</span>
+    {#if allowance}
+      {@const allowanceText = allowance.isEmpty
+        ? locale.t('settings.novelai.allowance_empty')
+        : locale.t('settings.novelai.allowance_remaining', {
             percent: allowance.percent,
             images: allowance.approxImages.toLocaleString(),
           })}
-        {/if}
-      </p>
+      <span class="text-neutral-600" aria-hidden="true">·</span>
+      <span
+        class="flex min-w-0 items-center gap-1.5"
+        title="{locale.t('settings.novelai.allowance_title')}: {allowanceText}"
+        aria-label="{locale.t('settings.novelai.allowance_title')}: {allowanceText}"
+      >
+        <span class="h-1 w-10 shrink-0 overflow-hidden rounded-full bg-neutral-800">
+          <span
+            class="block h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : allowance.isBonus ? 'bg-emerald-500' : 'bg-teal-500'}"
+            style="width: {allowance.barPercent}%"
+          ></span>
+        </span>
+        <span class="font-mono {allowance.isLow ? 'text-amber-400' : 'text-neutral-300'}">{allowance.percent}%</span>
+      </span>
     {/if}
+    {#if novelai.daysPaidThrough !== null && novelai.paidThrough}
+      {@const paidText = locale.t('settings.novelai.paid_through', {
+        date: novelai.paidThrough.toLocaleDateString(locale.current, { year: 'numeric', month: 'short', day: 'numeric' }),
+        days: String(novelai.daysPaidThrough),
+      })}
+      <span class="text-neutral-600" aria-hidden="true">·</span>
+      <span
+        class="font-mono {novelai.daysPaidThrough <= 3 ? 'text-amber-400' : 'text-neutral-500'}"
+        title={paidText}
+        aria-label={paidText}
+      >{locale.t('settings.novelai.days_short', { days: String(novelai.daysPaidThrough) })}</span>
+    {/if}
+    {#if novelai.savedKeys.length > 1}
+      <!-- Quick account switch between the owner's saved keys. -->
+      <select
+        class="min-w-0 max-w-28 truncate rounded bg-neutral-800 border border-neutral-700 px-1 py-0.5 text-xs text-neutral-300 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+        title={locale.t('settings.novelai.switch_key')}
+        aria-label={locale.t('settings.novelai.switch_key')}
+        disabled={switching}
+        value={activeKeyLabel}
+        onchange={(e) => { void switchKey((e.currentTarget as HTMLSelectElement).value); }}
+      >
+        {#if !activeKeyLabel}
+          <option value="">{locale.t('settings.novelai.unsaved_key')}</option>
+        {/if}
+        {#each novelai.savedKeys as saved (saved.label)}
+          <option value={saved.label}>{saved.label}</option>
+        {/each}
+      </select>
+    {/if}
+    {#if novelai.subscriptionError}
+      <!-- Stale or missing balance: an icon with the reason on hover, never the raw error text. -->
+      <span
+        class="flex shrink-0 text-amber-400"
+        title={novelai.subscriptionError}
+        aria-label={novelai.subscriptionError}
+        role="img"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </span>
+    {/if}
+    <button
+      class="ml-auto rounded p-1 text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+      disabled={novelai.subscriptionLoading}
+      title={locale.t('settings.novelai.refresh_account')}
+      aria-label={locale.t('settings.novelai.refresh_account')}
+      onclick={() => { void novelai.refreshSubscription(); }}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 {novelai.subscriptionLoading ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <polyline points="1 20 1 14 7 14"/>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+      </svg>
+    </button>
   </div>
 {/if}

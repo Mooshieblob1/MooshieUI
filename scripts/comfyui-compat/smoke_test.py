@@ -60,7 +60,11 @@ NODE_FILE_MAP = [
     ("comfyui-nodes/h3_upscaler.py", "mooshie-nodes/h3_upscaler.py"),
     ("comfyui-nodes/h3_preview.py", "mooshie-nodes/h3_preview.py"),
     ("comfyui-nodes/h3_upscaler.LICENSE", "mooshie-nodes/h3_upscaler.LICENSE"),
+    ("comfyui-nodes/anima_art_style.py", "mooshie-nodes/anima_art_style.py"),
+    ("comfyui-nodes/anima_art_style.LICENSE", "mooshie-nodes/anima_art_style.LICENSE"),
     ("comfyui-nodes/gguf_compat.py", "mooshie-nodes/gguf_compat.py"),
+    ("comfyui-nodes/skin_contrast_1x.safetensors", "mooshie-nodes/skin_contrast_1x.safetensors"),
+    ("comfyui-nodes/skin_contrast_1x.LICENSE", "mooshie-nodes/skin_contrast_1x.LICENSE"),
     ("comfyui-nodes/nodes_tiled_diffusion.py", "nodes_tiled_diffusion.py"),
     ("comfyui-nodes/nodes_guidance.py", "nodes_guidance.py"),
     ("comfyui-nodes/nodes_anima_teacache.py", "nodes_anima_teacache.py"),
@@ -71,6 +75,10 @@ NODE_FILE_MAP = [
     ("comfyui-nodes/nanosaur_support/model.py", "nanosaur_support/model.py"),
     ("comfyui-nodes/nanosaur_support/text_encoder.py", "nanosaur_support/text_encoder.py"),
     ("comfyui-nodes/nanosaur_support/vae.py", "nanosaur_support/vae.py"),
+    ("comfyui-nodes/kolors_support/__init__.py", "kolors_support/__init__.py"),
+    ("comfyui-nodes/kolors_support/nodes.py", "kolors_support/nodes.py"),
+    ("comfyui-nodes/kolors_support/model.py", "kolors_support/model.py"),
+    ("comfyui-nodes/kolors_support/text_encoder.py", "kolors_support/text_encoder.py"),
 ] + [
     # The vendored H3 Director package (REQUIRED_H3_DIRECTOR_NODE_CLASSES in nodes.rs).
     (f"comfyui-nodes/minimax_director/{name}", f"minimax_director/{name}")
@@ -92,6 +100,7 @@ DEFAULT_REQUIRED_CLASSES = [
     "MooshieSoftGuidance",
     "MooshieSmartGuidance",
     "NanoSaurLoader",
+    "MooshieKolorsLoader",
     "ApplyTiledDiffusion",
 ]
 DEFAULT_MOOSHIE_REQUIREMENTS = "ultralytics==8.4.75\n"
@@ -109,6 +118,10 @@ REQUIRED_CORE_NODE_INPUTS = {
     "EmptyYuE2LatentAudio": ["seconds", "batch_size"],
     "VAEDecodeAudioTiled": ["samples", "vae", "tile_size", "overlap"],
     "ModelPatchLoader": ["name"],
+    # Moody Moss SeedVR2 finish (templates/moody_moss.rs).
+    "ImageScaleToMaxDimension": ["image", "upscale_method", "largest_size"],
+    "SeedVR2PostProcessing": ["images", "original_resized_images", "color_correction_method"],
+    "ImageBlend": ["image1", "image2", "blend_factor", "blend_mode"],
     "AnimaLLLiteApply": [
         "model",
         "model_patch",

@@ -392,7 +392,8 @@ const XMP_UUID: [u8; 16] = [
 const XMP_OPEN: &str = "<mooshie:parameters>";
 const XMP_CLOSE: &str = "</mooshie:parameters>";
 
-/// Wrap `json` in the smallest XMP packet exiftool will still recognise.
+/// Wrap `json` in the smallest XMP packet exiftool will still recognise,
+/// including the IPTC `trainedAlgorithmicMedia` digital source type.
 fn xmp_packet(json: &str) -> String {
     let escaped = json
         .replace('&', "&amp;")
@@ -402,7 +403,9 @@ fn xmp_packet(json: &str) -> String {
         "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\
 <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
-<rdf:Description rdf:about=\"\" xmlns:mooshie=\"http://mooshieui.local/ns/1.0/\">\
+<rdf:Description rdf:about=\"\" xmlns:mooshie=\"http://mooshieui.local/ns/1.0/\" \
+xmlns:iptcExt=\"http://iptc.org/std/Iptc4xmpExt/2008-02-29/\" \
+iptcExt:DigitalSourceType=\"http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia\">\
 {XMP_OPEN}{escaped}{XMP_CLOSE}\
 </rdf:Description></rdf:RDF></x:xmpmeta>\
 <?xpacket end=\"w\"?>"

@@ -14,12 +14,14 @@
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
   import NovelAiUsage from "./NovelAiUsage.svelte";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
+  import { hasOutpaintPadding } from "../../utils/outpaintCanvas.js";
   import { runRegionalInpaintChain } from "../../utils/regionalInpaintChain.js";
   import {
     suppressRegionalChainGallerySave,
@@ -27,6 +29,11 @@
   } from "../../utils/regionalChainGallery.js";
   import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
   import { ensureUpscalerInstalled } from "../../utils/upscalerInstall.js";
+  import {
+    downloadSizeGb,
+    missingMoodyMossFiles,
+    moodyMossRequiredFiles,
+  } from "../../utils/moodyMoss.js";
   import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
   import { requestGeneration, trackGeneration, submitGeneration } from "../../utils/generationSubmit.js";
@@ -36,9 +43,11 @@
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
+    /** Phone dock: tighter gaps so Generate keeps its width beside the panel buttons. */
+    compact?: boolean;
   }
 
-  let { canvasEditorRef }: Props = $props();
+  let { canvasEditorRef, compact = false }: Props = $props();
   let errorMsg = $state<string | null>(null);
   let isSubmitting = $state(false);
   let orderedRunPromptIds = $state<string[]>([]);
@@ -50,6 +59,26 @@
   const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
   const orderedWildcardRunCount = $derived(compare.active && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
   const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
+
+  // Continuous generation: one click runs the normal single-image path again
+  // and again, waiting for each image before starting the next.
+  const repeatActive = $derived(generation.repeatCount !== 1 && generation.mode !== "video");
+  let repeatRunning = $state(false);
+  let repeatDone = $state(0);
+  let repeatTotal = $state(0);
+  let repeatCancelRequested = false;
+  let repeatRunToken = 0;
+  let repeatMenuOpen = $state(false);
+  /** A continuous run gives up after this many failures in a row, even when
+   *  set to keep going, so a dead connection or empty Anlas balance does not
+   *  loop forever. */
+  const REPEAT_MAX_CONSECUTIVE_FAILURES = 3;
+
+  // NovelAI: the last request sent, so an identical paid request (same fixed
+  // seed, same everything) asks for a second click instead of spending Anlas
+  // on the same image twice.
+  let lastNovelAiFingerprint: string | null = null;
+  let duplicateWarning = $state(false);
 
   const generateButtonTitle = $derived.by(() => {
     if (orderedWildcardRunCount > 1) {
@@ -128,6 +157,7 @@
   function isSequentialGenerateRun(): boolean {
     if (compare.active && compare.cellCount > 1) return true;
     if (orderedWildcardRunCount > 1) return true;
+    if (repeatActive && !generation.isPaused) return true;
     return willRunRegionalInpaintChain();
   }
 
@@ -286,11 +316,47 @@
         }
       }
 
+      if (generation.mode === "outpainting") {
+        if (!generation.inputImage) {
+          errorMsg = locale.t('generation.error_no_image');
+          return;
+        }
+        if (
+          !hasOutpaintPadding({
+            top: generation.outpaintTop,
+            bottom: generation.outpaintBottom,
+            left: generation.outpaintLeft,
+            right: generation.outpaintRight,
+            feather: generation.outpaintFeather,
+          })
+        ) {
+          errorMsg = locale.t('generation.error_no_outpaint_padding');
+          return;
+        }
+      }
+
       // Ensure face fix dependencies are ready when enabled
       if (generation.facefixEnabled) {
         const detector = generation.facefixDetector || "Anzhc Face seg 640 v4 y11n.pt";
         await ensureUltralyticsDetector(detector, "generation.downloading_facefix");
         generation.facefixDetector = detector;
+      }
+
+      // Moody Moss finishing steps load their own models (face detector,
+      // SeedVR2, the 4x blend upscaler); fetch the missing ones first.
+      if (generation.isMoodyMossMix && generation.mode === "txt2img") {
+        const missing = missingMoodyMossFiles(moodyMossRequiredFiles(generation.moodyMoss), models);
+        if (missing.length > 0) {
+          gallery.showToast(
+            locale.t("generation.sampler.moody_moss_downloading", { size: downloadSizeGb(missing) }),
+            "info",
+          );
+          for (const file of missing) {
+            await downloadModel(file.url, file.category, file.filename, undefined, file.sha256);
+          }
+          await models.refresh();
+        }
+        if (generation.moodyMoss.faceDetail) await ensureFacefixPythonDependency();
       }
 
       // Ensure YOLO detectors referenced by <segment:yolo-...> tags are ready
@@ -314,8 +380,14 @@
         }
       }
 
-      // Anima models produce poor results below 1024 — clamp to 1024² area preserving aspect ratio
-      if (generation.isAnima && (generation.width < 1024 || generation.height < 1024)) {
+      // Anima models produce poor results below 1024, so clamp to a 1024² area
+      // preserving the aspect ratio. Lock resolution means the user chose this
+      // size on purpose, so a locked size is generated as is.
+      if (
+        generation.isAnima &&
+        !generation.resolutionLocked &&
+        (generation.width < 1024 || generation.height < 1024)
+      ) {
         const ratio = generation.width / generation.height;
         const area = 1024 * 1024;
         generation.width = Math.round(Math.sqrt(area * ratio) / 8) * 8;
@@ -419,13 +491,25 @@
         } finally {
           clearAllRegionalChainGallerySuppress();
         }
+      } else if (repeatActive) {
+        await runRepeat();
       } else {
         const params = generation.toParams();
         const sentRegions = params.positive_regions?.length ?? 0;
         if (sentRegions > 0) {
           console.log("[regional] Sending", sentRegions, "region(s) via conditioning");
         }
+        let fingerprint: string | null = null;
+        if (generation.isNovelAi && params.seed !== "-1") {
+          fingerprint = JSON.stringify(params);
+          if (fingerprint === lastNovelAiFingerprint && !duplicateWarning) {
+            duplicateWarning = true;
+            return;
+          }
+        }
+        duplicateWarning = false;
         await submitGeneration(params);
+        lastNovelAiFingerprint = fingerprint;
       }
       generation.saveSettings();
     } catch (e) {
@@ -444,6 +528,79 @@
     } finally {
       if (sequential) finishSubmitRun(runToken);
     }
+  }
+
+  /** Resolves after `ms`, or early with false once `stopped()` turns true. */
+  function waitOrStop(ms: number, stopped: () => boolean): Promise<boolean> {
+    return new Promise((resolve) => {
+      const end = Date.now() + ms;
+      const tick = () => {
+        if (stopped()) return resolve(false);
+        if (Date.now() >= end) return resolve(true);
+        setTimeout(tick, Math.min(250, end - Date.now()));
+      };
+      tick();
+    });
+  }
+
+  /** Waits until `promptId` leaves the queue. */
+  async function waitForPrompt(promptId: string, stopped: () => boolean): Promise<"done" | "failed" | "stopped"> {
+    while (progress.pendingPrompts.some((p) => p.promptId === promptId)) {
+      if (!(await waitOrStop(250, stopped))) return "stopped";
+    }
+    return progress.takeFailed(promptId) ? "failed" : "done";
+  }
+
+  async function runRepeat() {
+    const token = ++repeatRunToken;
+    const stopped = () => repeatCancelRequested || token !== repeatRunToken;
+    repeatCancelRequested = false;
+    repeatTotal = generation.repeatCount;
+    repeatDone = 0;
+    repeatRunning = true;
+    let failuresInARow = 0;
+    try {
+      while (!stopped() && (repeatTotal === 0 || repeatDone < repeatTotal)) {
+        if (repeatDone > 0) {
+          // A failure waits at least a few seconds, so a rate limit has room to clear.
+          const delayMs = Math.max(generation.repeatDelaySec * 1000, failuresInARow > 0 ? 3000 : 0);
+          if (delayMs > 0 && !(await waitOrStop(delayMs, stopped))) break;
+        }
+        let outcome: "done" | "failed" | "stopped";
+        try {
+          // Fresh params each run, so random seeds and wildcards reroll.
+          const promptId = await submitGeneration(generation.toParams());
+          outcome = await waitForPrompt(promptId, stopped);
+        } catch (e) {
+          if (stopped()) break;
+          console.error("[repeat] run failed to start:", e);
+          const message = e instanceof Error ? e.message : String(e);
+          errorMsg = locale.t("generation.error_failed_message", { message });
+          outcome = "failed";
+        }
+        if (outcome === "stopped") break;
+        repeatDone++;
+        if (outcome === "failed") {
+          failuresInARow++;
+          if (generation.repeatStopOnError || failuresInARow >= REPEAT_MAX_CONSECUTIVE_FAILURES) break;
+        } else {
+          failuresInARow = 0;
+        }
+      }
+    } finally {
+      if (token === repeatRunToken) repeatRunning = false;
+    }
+  }
+
+  function stopRepeat() {
+    repeatCancelRequested = true;
+    repeatRunToken++;
+    repeatRunning = false;
+  }
+
+  function setRepeatCount(value: number) {
+    generation.repeatCount = Number.isFinite(value) ? Math.max(1, Math.min(999, Math.round(value))) : 1;
+    generation.saveSettings();
   }
 
   async function handleOrderedWildcardGenerate(count: number) {
@@ -495,11 +652,14 @@
 
   /** Left-click: skip the current ordered item, otherwise cancel the current generation. */
   async function handleCancelCurrent() {
+    if (repeatRunning) stopRepeat();
     if (pendingOrderedRunIds.length > 0) {
       await handleSkipOrderedPrompt();
       return;
     }
     const promptId = progress.activePromptId ?? progress.pendingPrompts[0]?.promptId;
+    // Stopping a continuous run during its pause between images has nothing to interrupt.
+    if (!promptId && !progress.isGenerating) return;
     await interruptGeneration(promptId ?? undefined);
     if (promptId) progress.removePrompt(promptId);
   }
@@ -534,6 +694,7 @@
   /** Right-click: cancel current + clear the entire queue. */
   async function handleCancelAll(e: MouseEvent) {
     e.preventDefault();
+    stopRepeat();
     orderedRunCancelRequested = true;
     submitRunToken++;
     orderedRunToken++;
@@ -662,7 +823,7 @@
    * is up marks its overlay with it.
    */
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+    if (!shortcuts.matches("generate.submit", e)) return;
     if (e.defaultPrevented) return;
     if (document.querySelector("[data-modal-open]")) return;
     e.preventDefault();
@@ -676,17 +837,159 @@
   <NovelAiUsage />
 {/if}
 
-<div class="relative flex gap-3">
+<div class="relative flex items-center {compact ? 'gap-1.5' : 'gap-2'}">
+  {#if !compact && generation.mode !== "video"}
+    <!-- Batch size, the same value as the Sampler section's Batch slider. -->
+    <div class="flex h-11 shrink-0 items-center rounded-xl border border-neutral-700" role="group" aria-label={locale.t('generation.sampler.batch')} title={locale.t('generation.sampler.batch')}>
+      <button
+        type="button"
+        class="flex h-full w-7 items-center justify-center rounded-l-xl text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        aria-label={locale.t('generation.batch_fewer')}
+        disabled={generation.batchSize <= 1}
+        onclick={() => (generation.batchSize = Math.max(1, generation.batchSize - 1))}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/></svg>
+      </button>
+      <span class="w-5 text-center font-mono text-sm tabular-nums text-neutral-100">{generation.batchSize}</span>
+      <button
+        type="button"
+        class="flex h-full w-7 items-center justify-center rounded-r-xl text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        aria-label={locale.t('generation.batch_more')}
+        disabled={generation.batchSize >= 8}
+        onclick={() => (generation.batchSize = Math.min(8, generation.batchSize + 1))}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+      </button>
+    </div>
+
+    <!-- Continuous generation: how many runs one click starts. -->
+    <div class="relative shrink-0">
+      <button
+        type="button"
+        onclick={() => (repeatMenuOpen = !repeatMenuOpen)}
+        class="flex h-11 items-center gap-1 rounded-xl border px-2 text-sm transition-colors
+          {repeatActive
+            ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20'
+            : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100'}"
+        title={locale.t('generation.repeat.title')}
+        aria-label={locale.t('generation.repeat.title')}
+        aria-expanded={repeatMenuOpen}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+        {#if repeatActive}
+          <span class="font-mono text-xs tabular-nums">{generation.repeatCount === 0 ? "∞" : `×${generation.repeatCount}`}</span>
+        {/if}
+      </button>
+
+      {#if repeatMenuOpen}
+        <!-- portal-exempt: click-catcher for the anchored menu below; it must stay its sibling. -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="fixed inset-0 z-40"
+          onmousedown={() => (repeatMenuOpen = false)}
+          onkeydown={(e) => { if (e.key === "Escape") repeatMenuOpen = false; }}
+        ></div>
+        <div
+          class="absolute bottom-full left-0 z-50 mb-2 w-60 space-y-3 rounded-xl border border-neutral-700 bg-neutral-900 p-3 shadow-2xl"
+          role="dialog"
+          aria-label={locale.t('generation.repeat.title')}
+        >
+          <div class="flex items-center justify-between gap-2">
+            <label class="text-xs text-neutral-300" for="repeat-count">{locale.t('generation.repeat.runs')}</label>
+            <input
+              id="repeat-count"
+              type="number"
+              min="1"
+              max="999"
+              disabled={generation.repeatCount === 0}
+              value={generation.repeatCount === 0 ? "" : generation.repeatCount}
+              onchange={(e) => setRepeatCount(Number((e.target as HTMLInputElement).value))}
+              class="w-20 rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-right text-xs text-neutral-100 disabled:opacity-40"
+            />
+          </div>
+          <label class="flex cursor-pointer select-none items-center gap-2 text-xs text-neutral-300">
+            <input
+              type="checkbox"
+              class="h-3.5 w-3.5 rounded accent-indigo-500"
+              checked={generation.repeatCount === 0}
+              onchange={(e) => {
+                generation.repeatCount = (e.target as HTMLInputElement).checked ? 0 : 1;
+                generation.saveSettings();
+              }}
+            />
+            {locale.t('generation.repeat.until_stopped')}
+          </label>
+          <div class="flex items-center justify-between gap-2">
+            <label class="text-xs text-neutral-300" for="repeat-delay">{locale.t('generation.repeat.delay')}</label>
+            <input
+              id="repeat-delay"
+              type="number"
+              min="0"
+              max="3600"
+              step="1"
+              value={generation.repeatDelaySec}
+              onchange={(e) => {
+                const v = Number((e.target as HTMLInputElement).value);
+                generation.repeatDelaySec = Number.isFinite(v) ? Math.max(0, Math.min(3600, v)) : 0;
+                generation.saveSettings();
+              }}
+              class="w-20 rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-right text-xs text-neutral-100"
+            />
+          </div>
+          <label class="flex cursor-pointer select-none items-center gap-2 text-xs text-neutral-300" title={locale.t('generation.repeat.stop_on_error_tip')}>
+            <input
+              type="checkbox"
+              class="h-3.5 w-3.5 rounded accent-indigo-500"
+              checked={generation.repeatStopOnError}
+              onchange={(e) => {
+                generation.repeatStopOnError = (e.target as HTMLInputElement).checked;
+                generation.saveSettings();
+              }}
+            />
+            {locale.t('generation.repeat.stop_on_error')}
+          </label>
+          {#if repeatActive}
+            <button
+              type="button"
+              class="text-[11px] text-neutral-400 underline underline-offset-2 hover:text-neutral-100"
+              onclick={() => setRepeatCount(1)}
+            >
+              {locale.t('generation.repeat.off')}
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if !compact && (progress.isGenerating || repeatRunning)}
+    <!-- Stop: click skips the current image, right-click cancels everything. -->
+    <button
+      onclick={handleCancelCurrent}
+      oncontextmenu={handleCancelAll}
+      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-700 text-white shadow-lg shadow-red-700/20 transition-colors hover:bg-red-600"
+      title={locale.t('generation.cancel_hint')}
+      aria-label={locale.t('generation.cancel_hint')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+    </button>
+  {/if}
+
   <button
     onclick={handleGenerate}
     disabled={!canGenerate}
     title={generateButtonTitle}
-    class="flex-1 py-3 rounded-xl font-semibold text-sm transition-colors
+    class="min-w-0 flex-1 rounded-xl transition-colors {compact ? 'py-3 px-2 truncate font-semibold text-sm' : 'h-11 px-3 font-bold text-[15px]'}
       {canGenerate
         ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'
         : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'}"
   >
-    {#if progress.queueCount > 0}
+    {#if repeatRunning}
+      {locale.t('generation.repeat.running', {
+        current: String(Math.min(repeatDone + 1, repeatTotal || Infinity)),
+        total: repeatTotal === 0 ? "∞" : String(repeatTotal),
+      })}
+    {:else if progress.queueCount > 0}
       {locale.t('generation.generate_queue', { count: progress.queueCount })}
     {:else if generation.resumeAppliesToMode && generation.isPaused && generation.mode === "txt2img"}
       {locale.t('generation.pause.continue', { step: String(generation.pausedEndStep), total: String(generation.steps) })}
@@ -698,7 +1001,7 @@
       {locale.t('generation.generate')}
     {/if}
     {#if anlasEstimate !== null}
-      <span class="ml-2 text-[11px] font-normal opacity-80" title={locale.t('generation.novelai.cost_tip')}>
+      <span class="ml-2 rounded-md bg-black/15 px-1.5 py-0.5 align-middle text-[11px] font-semibold" title={locale.t('generation.novelai.cost_tip')}>
         {locale.t('generation.novelai.cost_badge', { anlas: anlasEstimate })}
       </span>
     {/if}
@@ -709,7 +1012,7 @@
       onclick={() => queue.togglePanel()}
       title={locale.t("queue.panel.title")}
       aria-label={locale.t("queue.panel.title")}
-      class="px-3 py-3 rounded-xl font-semibold text-sm bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors relative"
+      class="{compact ? 'py-3' : 'h-11'} px-3 rounded-xl font-semibold text-sm bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors relative"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
@@ -721,32 +1024,33 @@
         </span>
       {/if}
     </button>
-    <QueuePanel />
   {/if}
 
-  {#if progress.isGenerating}
-    <button
-      onclick={handleCancelCurrent}
-      oncontextmenu={handleCancelAll}
-      class="px-5 py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
-      title={locale.t('generation.cancel_hint')}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
-  {:else}
-    <button
-      disabled
-      title={locale.t('generation.cancel_hint')}
-      class="px-5 py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
+  {#if compact}
+    {#if progress.isGenerating || repeatRunning}
+      <button
+        onclick={handleCancelCurrent}
+        oncontextmenu={handleCancelAll}
+        class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
+        title={locale.t('generation.cancel_hint')}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    {:else}
+      <button
+        disabled
+        title={locale.t('generation.cancel_hint')}
+        class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    {/if}
   {/if}
 </div>
 
@@ -781,6 +1085,10 @@
       </button>
     </div>
   </div>
+{/if}
+
+{#if duplicateWarning}
+  <p class="text-xs text-amber-300 text-center mt-1">{locale.t('generation.duplicate_warning')}</p>
 {/if}
 
 {#if errorMsg}

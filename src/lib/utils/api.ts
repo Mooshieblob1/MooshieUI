@@ -1,9 +1,11 @@
-import { getAuthToken, ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
+import { authHeaders, getAuthToken, ipcInvoke, ipcListen, isBrowserMode, isTauri, responseErrorText } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
 import type { ExportFormat } from "./videoExport.js";
+import type { ArchitectureSpec } from "./architectures.js";
 import type { ChatMessage } from "./enhancerSession.js";
 import { locale } from "../stores/locale.svelte.js";
 import type { CoverTranscriptionStatus, MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
+import type { MeshCapabilities, MeshParams, SplatCapabilities, SplatJob, SplatParams, SplatStatus } from "../types/model3d.js";
 import type { MusicTranscript } from "./musicReview.js";
 import type { MusicLinkCapabilities, MusicLinkImport } from "./musicLink.js";
 import type { ReferenceSong, MusicReferenceContext } from "../types/music.js";
@@ -104,6 +106,50 @@ export async function saveMusicAudio(audioBase64: string, path: string): Promise
   return ipcInvoke("save_music_audio", { audioBase64, path });
 }
 
+export async function getSplatCapabilities(): Promise<SplatCapabilities> {
+  return ipcInvoke("get_splat_capabilities");
+}
+
+export async function generateSplat(params: SplatParams, imageBase64: string): Promise<SplatJob> {
+  return ipcInvoke("generate_splat", { params, imageBase64 });
+}
+
+export async function getSplatStatus(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<SplatStatus> {
+  return ipcInvoke("get_splat_status", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** The finished splat as a base64 binary PLY. */
+export async function loadSplatPly(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<string> {
+  return ipcInvoke("load_splat_ply", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** Desktop only: the path comes from the native Save dialog. */
+export async function saveSplatFile(dataBase64: string, path: string): Promise<void> {
+  return ipcInvoke("save_splat_file", { dataBase64, path });
+}
+
+export async function getMeshCapabilities(): Promise<MeshCapabilities> {
+  return ipcInvoke("get_mesh_capabilities");
+}
+
+export async function generateMesh(params: MeshParams, imageBase64: string): Promise<SplatJob> {
+  return ipcInvoke("generate_mesh", { params, imageBase64 });
+}
+
+export async function getMeshStatus(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<SplatStatus> {
+  return ipcInvoke("get_mesh_status", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** The finished Pixal3D mesh as a base64 binary glTF (.glb). */
+export async function loadMeshGlb(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<string> {
+  return ipcInvoke("load_mesh_glb", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** Desktop only: write an exported .glb to a path from the native Save dialog. */
+export async function saveMeshFile(dataBase64: string, path: string): Promise<void> {
+  return ipcInvoke("save_mesh_file", { dataBase64, path });
+}
+
 export async function saveMusicFile(dataBase64: string, path: string): Promise<void> {
   return ipcInvoke("save_music_file", { dataBase64, path });
 }
@@ -122,6 +168,7 @@ import type {
   LlmHardware,
   LlmProviderState,
   LlmStatus,
+  McpStatus,
   NovelAiSubscription,
   OutputImage,
   PromptAssistantOpts,
@@ -132,6 +179,11 @@ import type {
 
 export async function getModels(category: string): Promise<string[]> {
   return ipcInvoke("get_models", { category });
+}
+
+/** Registered model architectures (src-tauri/src/architectures). */
+export async function listModelArchitectures(): Promise<ArchitectureSpec[]> {
+  return ipcInvoke("list_model_architectures");
 }
 
 export async function getSamplers(): Promise<SamplerInfo> {
@@ -235,6 +287,31 @@ export async function novelaiSubscription(): Promise<NovelAiSubscription> {
  */
 export async function setNovelaiApiKey(apiKey: string): Promise<boolean> {
   return ipcInvoke("set_novelai_api_key", { apiKey });
+}
+
+/** A saved NovelAI key as the UI sees it: a name and a hint, never the key. */
+export interface NovelAiSavedKey {
+  label: string;
+  /** `…abcd`, or `env:NAME` for a variable reference. */
+  hint: string;
+  /** This is the key in use. */
+  active: boolean;
+}
+
+export async function listNovelaiKeys(): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("list_novelai_keys");
+}
+
+export async function saveNovelaiKey(label: string, apiKey: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("save_novelai_key", { label, apiKey });
+}
+
+export async function deleteNovelaiKey(label: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("delete_novelai_key", { label });
+}
+
+export async function useNovelaiKey(label: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("use_novelai_key", { label });
 }
 
 /**
@@ -686,6 +763,8 @@ export interface CivitaiModel {
   name: string;
   type: string;
   nsfw: boolean;
+  /** Bitmask rating: 1 PG, 2 PG-13, 4 R, 8 X, 16 XXX. */
+  nsfwLevel?: number;
   tags?: string[];
   creator?: { username: string; image?: string };
   stats?: { downloadCount?: number; thumbsUpCount?: number; commentCount?: number; rating?: number; ratingCount?: number };
@@ -772,8 +851,39 @@ export async function saveToGallery(
   mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
+  watermark?: boolean,
 ): Promise<string> {
-  return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode, watermark });
+}
+
+/** One related tag: Danbooru category, and cosine similarity or times used together. */
+export interface RelatedTag {
+  name: string;
+  category: number;
+  score: number;
+}
+
+export interface RelatedTags {
+  tag: string;
+  danbooru: RelatedTag[];
+  danbooru_error: string | null;
+  gallery: RelatedTag[];
+  gallery_images: number;
+}
+
+/** Tags related to one prompt tag, from Danbooru and from the gallery. */
+export async function relatedTags(tag: string): Promise<RelatedTags> {
+  return ipcInvoke("related_tags", { tag });
+}
+
+/** Eagle's version when it is running on this machine; rejects otherwise. */
+export async function eagleStatus(): Promise<string> {
+  return ipcInvoke("eagle_status");
+}
+
+/** Send gallery images to Eagle by file name. Resolves to how many Eagle added. */
+export async function sendToEagle(filenames: string[]): Promise<number> {
+  return ipcInvoke("send_to_eagle", { filenames });
 }
 
 export async function saveToGalleryBytes(
@@ -783,8 +893,25 @@ export async function saveToGalleryBytes(
   mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
+  watermark?: boolean,
 ): Promise<string> {
-  return ipcInvoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode, watermark });
+}
+
+export async function getMcpStatus(): Promise<McpStatus> {
+  return ipcInvoke("get_mcp_status");
+}
+
+export async function setMcpSettings(
+  enabled: boolean,
+  port: number,
+  extra: { tunnel?: boolean; publicUrl?: string } = {},
+): Promise<McpStatus> {
+  return ipcInvoke("set_mcp_settings", { enabled, port, ...extra });
+}
+
+export async function regenerateMcpToken(): Promise<McpStatus> {
+  return ipcInvoke("regenerate_mcp_token");
 }
 
 export async function saveToGalleryTemp(
@@ -794,8 +921,19 @@ export async function saveToGalleryTemp(
   mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
+  watermark?: boolean,
 ): Promise<string> {
-  return ipcInvoke("save_to_gallery_temp", { tempFilename, filename, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery_temp", { tempFilename, filename, promptId, mode, metadata, metadataMode, watermark });
+}
+
+/** Whether the invisible watermark's models are downloaded. */
+export async function getWatermarkStatus(): Promise<boolean> {
+  return ipcInvoke("get_watermark_status");
+}
+
+/** Download (about 65 MB, once) and load the invisible watermark's models. */
+export async function prepareWatermark(): Promise<boolean> {
+  return ipcInvoke("prepare_watermark");
 }
 
 export async function readImageMetadata(
@@ -832,6 +970,20 @@ export async function listGalleryImages(): Promise<string[]> {
 
 export async function listGalleryImageEntries(): Promise<GalleryImageEntry[]> {
   return ipcInvoke("list_gallery_image_entries");
+}
+
+export interface VisualDuplicateGroup {
+  filenames: string[];
+  max_distance: number;
+}
+
+export async function findGalleryVisualDuplicates(
+  maxDistance?: number
+): Promise<VisualDuplicateGroup[]> {
+  return ipcInvoke(
+    "find_gallery_visual_duplicates",
+    maxDistance !== undefined ? { max_distance: maxDistance } : {}
+  );
 }
 
 export interface ImportResult {
@@ -938,17 +1090,51 @@ export async function getStorageInfo(): Promise<StorageInfo> {
 }
 
 export async function setStorageLimit(username: string, limitBytes: number): Promise<void> {
-  const { isBrowserMode, authHeaders } = await import("./ipc.js");
-  if (!isBrowserMode) return;
-  const resp = await fetch("/internal-api/_storage/set_limit", {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ username, limit_bytes: limitBytes }),
-  });
+  const resp = await lanRequest("set_storage_limit", { username, limit_bytes: limitBytes });
   if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(data.error || `Failed to set storage limit: ${resp.status}`);
+    throw new Error(resp.data?.error || `Failed to set storage limit: ${resp.status}`);
   }
+}
+
+/** Read-only LAN settings actions; every other action is a POST. */
+const LAN_GET_ACTIONS = new Set(["accounts", "lan_info", "lan_firewall"]);
+
+/** Browser endpoint for a LAN settings action. */
+function lanActionPath(action: string): string {
+  if (action === "set_storage_limit") return "/internal-api/_storage/set_limit";
+  if (action === "lan_firewall_allow") return "/internal-api/_auth/lan_firewall";
+  return `/internal-api/_auth/${action}`;
+}
+
+export interface LanResponse {
+  ok: boolean;
+  status: number;
+  data: any;
+}
+
+/**
+ * A LAN settings call (addresses, firewall, accounts, storage limits). The
+ * browser UI reaches the web server's `/internal-api` endpoints; the desktop
+ * window runs the same handlers in-process through `lan_admin`, so LAN access
+ * can be managed without switching to browser mode.
+ */
+export async function lanRequest(action: string, body?: unknown): Promise<LanResponse> {
+  const { isBrowserMode, authHeaders, ipcInvoke } = await import("./ipc.js");
+  if (!isBrowserMode) {
+    const res = await ipcInvoke<{ status: number; data: unknown }>("lan_admin", {
+      action,
+      body: body ?? null,
+    });
+    return { ok: res.status >= 200 && res.status < 300, status: res.status, data: res.data ?? {} };
+  }
+  const isGet = LAN_GET_ACTIONS.has(action);
+  const resp = await fetch(lanActionPath(action), {
+    method: isGet ? "GET" : "POST",
+    headers: isGet ? authHeaders() : authHeaders({ "Content-Type": "application/json" }),
+    body: isGet ? undefined : JSON.stringify(body ?? {}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  return { ok: resp.ok, status: resp.status, data };
 }
 
 export interface ModelSpec {
@@ -971,6 +1157,8 @@ export interface ModelSpec {
   model_kind?: string;
   /** How `model_kind` was determined: `"tensor_keys"`, `"gguf"`, or `"family"`. */
   model_kind_source?: string;
+  /** `"true"` when the file carries a VAE but no text encoders (Stability's SD3 release files). */
+  baked_vae?: string;
   /** "true" when `architecture` came from tensor-key inference, not the file. */
   architecture_inferred?: string;
   /** Comma-joined names of the `modelspec.*` fields actually declared in the file. */
@@ -1014,6 +1202,15 @@ export async function detectModelKind(category: string, filename: string): Promi
   return ipcInvoke("detect_model_kind", { category, filename });
 }
 
+/**
+ * Which of these LoRA filenames are MiniMax H3 video LoRAs, from their headers
+ * (names alone with a remote ComfyUI). Never hashed, cheap enough to run on
+ * every model refresh.
+ */
+export async function detectH3VideoLoras(filenames: string[]): Promise<string[]> {
+  return ipcInvoke("detect_h3_video_loras", { filenames });
+}
+
 export interface LoraCivitaiImage {
   url: string;
   width?: number;
@@ -1030,6 +1227,8 @@ export interface LoraCivitaiInfo {
   civitai_name?: string;
   civitai_description?: string;
   civitai_model_id?: number;
+  /** CivitAI rates the model as mature, so its page lives on civitai.red. */
+  civitai_nsfw?: boolean;
   civitai_version_id?: number;
   civitai_base_model?: string;
   civitai_images: LoraCivitaiImage[];
@@ -1054,6 +1253,8 @@ export interface CheckpointCivitaiInfo {
   /** "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or undefined. */
   thumbnail_url?: string;
   civitai_model_id?: number;
+  /** CivitAI rates the model as mature, so its page lives on civitai.red. */
+  civitai_nsfw?: boolean;
   civitai_version_id?: number;
   civitai_description?: string;
   civitai_images: LoraCivitaiImage[];
@@ -1281,6 +1482,15 @@ async function flushPendingConfigWrite(): Promise<void> {
   }
 }
 
+/**
+ * The Linux package manager that owns this desktop install ("apt", "dnf",
+ * "zypper" or "pacman"), or null when the in-app updater handles updates.
+ * Desktop only.
+ */
+export async function getAppPackageManager(): Promise<string | null> {
+  return ipcInvoke<string | null>("app_package_manager");
+}
+
 export async function getConfig(options?: { force?: boolean }): Promise<AppConfig> {
   const force = options?.force ?? false;
   if (!force && configCache) {
@@ -1475,8 +1685,9 @@ export async function llmStatus(): Promise<LlmStatus> {
   return ipcInvoke("llm_status");
 }
 
-export async function downloadLlmModel(id: string, variant: string): Promise<void> {
-  return ipcInvoke("download_llm_model", { id, variant });
+/** `select: false` installs without making it the prompt assistant model. */
+export async function downloadLlmModel(id: string, variant: string, select = true): Promise<void> {
+  return ipcInvoke("download_llm_model", { id, variant, select });
 }
 
 export async function deleteLlmModel(id: string): Promise<void> {
@@ -1488,6 +1699,39 @@ export async function unloadLlm(): Promise<void> {
 }
 
 /**
+ * Thrown by a prompt-assistant call whose `signal` was aborted. The caller asked
+ * for it, so it is never worth a toast: check with `isLlmCancelled`.
+ */
+export class LlmCancelledError extends Error {
+  constructor() {
+    super("prompt_assistant.cancelled");
+    this.name = "LlmCancelledError";
+  }
+}
+
+export function isLlmCancelled(e: unknown): boolean {
+  return e instanceof LlmCancelledError;
+}
+
+function newRequestId(): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+}
+
+/**
+ * Stop the backend request tagged `requestId`. Fire and forget: the caller has
+ * already moved on, and a cancel that fails only means the old request runs to
+ * the end the way every request did before cancelling existed.
+ */
+function cancelLlmRequest(requestId: string): void {
+  ipcInvoke("cancel_llm_request", { requestId }).catch((e) =>
+    console.warn("[prompt-assistant] cancel failed", e),
+  );
+}
+
+/**
  * Run a prompt-assistant command (enhance/compose/raw external call).
  *
  * Desktop (Tauri) calls the command synchronously — there is no proxy in front.
@@ -1496,17 +1740,21 @@ export async function unloadLlm(): Promise<void> {
  * local LLM and generating can easily outlast that, so rather than block on the
  * POST body we fire the request with a correlation id and await the result over
  * the SSE event channel, which keep-alives and isn't bound by the proxy timeout.
+ *
+ * Aborting `signal` rejects at once with `LlmCancelledError` and tells the
+ * backend to drop the request, which closes the provider connection (or kills
+ * the sign-in companion) so the next request does not wait behind it.
  */
 async function runPromptAssistant(
-  command: "enhance_prompt" | "compose_prompt" | "call_external_llm",
+  command: "enhance_prompt" | "compose_prompt" | "call_external_llm" | "describe_image",
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<string> {
-  if (!isBrowserMode) {
+  if (signal?.aborted) throw new LlmCancelledError();
+  if (!isBrowserMode && !signal) {
     return ipcInvoke<string>(command, args);
   }
-  const requestId =
-    globalThis.crypto?.randomUUID?.() ??
-    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const requestId = newRequestId();
   return new Promise<string>((resolve, reject) => {
     let settled = false;
     let unlistenResult: (() => void) | null = null;
@@ -1518,8 +1766,28 @@ async function runPromptAssistant(
       if (timer) clearTimeout(timer);
       unlistenResult?.();
       unlistenError?.();
+      signal?.removeEventListener("abort", onAbort);
       action();
     };
+    function onAbort() {
+      if (settled) return;
+      cancelLlmRequest(requestId);
+      finish(() => reject(new LlmCancelledError()));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    if (!isBrowserMode) {
+      // Desktop: the command answers directly; the id only names it for a cancel.
+      ipcInvoke<string>(command, { ...args, requestId }).then(
+        (text) => finish(() => resolve(text)),
+        (err) =>
+          finish(() =>
+            reject(err instanceof Error ? err : new Error(String(err))),
+          ),
+      );
+      return;
+    }
+
     Promise.all([
       ipcListen("llm:result", (e: { payload: any }) => {
         if (e.payload?.request_id !== requestId) return;
@@ -1533,7 +1801,8 @@ async function runPromptAssistant(
       }),
     ])
       .then(([ur, ue]) => {
-        // The request settled before listeners attached — clean up immediately.
+        // The request settled (or was cancelled) before listeners attached —
+        // clean up immediately.
         if (settled) {
           ur();
           ue();
@@ -1563,6 +1832,15 @@ async function runPromptAssistant(
 }
 
 /**
+ * Describe an interrogated image in words, as a natural-language prompt.
+ * The external provider answers when one is set up, else an installed bundled
+ * model that sees images; with neither, it fails with `no_vision_model`.
+ */
+export async function describeImage(imageToken: string, length: "short" | "detailed"): Promise<string> {
+  return runPromptAssistant("describe_image", { imageToken, length });
+}
+
+/**
  * `imageData` is bare base64 reference images. Only an external provider sees
  * them; the bundled local model answers from the text alone.
  */
@@ -1572,14 +1850,19 @@ export async function enhancePrompt(
   opts?: PromptAssistantOpts,
   history: ChatMessage[] = [],
   imageData: string[] = [],
+  signal?: AbortSignal,
 ): Promise<string> {
-  return runPromptAssistant("enhance_prompt", {
-    prompt,
-    family,
-    opts,
-    history,
-    imageData: imageData.length > 0 ? imageData : undefined,
-  });
+  return runPromptAssistant(
+    "enhance_prompt",
+    {
+      prompt,
+      family,
+      opts,
+      history,
+      imageData: imageData.length > 0 ? imageData : undefined,
+    },
+    signal,
+  );
 }
 
 export async function composePrompt(
@@ -1588,14 +1871,19 @@ export async function composePrompt(
   opts?: PromptAssistantOpts,
   history: ChatMessage[] = [],
   imageData: string[] = [],
+  signal?: AbortSignal,
 ): Promise<string> {
-  return runPromptAssistant("compose_prompt", {
-    description,
-    family,
-    opts,
-    history,
-    imageData: imageData.length > 0 ? imageData : undefined,
-  });
+  return runPromptAssistant(
+    "compose_prompt",
+    {
+      description,
+      family,
+      opts,
+      history,
+      imageData: imageData.length > 0 ? imageData : undefined,
+    },
+    signal,
+  );
 }
 
 /**
@@ -1618,6 +1906,11 @@ export async function setLlmApiKey(apiKey: string): Promise<LlmProviderState> {
 
 export async function setLlmModel(model: string): Promise<LlmProviderState> {
   return ipcInvoke("set_llm_model", { model });
+}
+
+/** Models tried, in order, when the configured one cannot answer. */
+export async function setLlmFallbackModels(models: string[]): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_fallback_models", { models });
 }
 
 /** Only meaningful for the self-hosted "custom" provider; the rest pin their own. */
@@ -1661,6 +1954,18 @@ export async function setLlmXaiClient(
   return ipcInvoke("set_llm_xai_client", { clientId, scope });
 }
 
+
+/**
+ * Sampling for one `callExternalLlm` request. `temperature` replaces the
+ * usual 0.7 (for jobs that should copy rather than create); `json` holds the
+ * bundled local model to a JSON object reply. External providers only take
+ * the temperature.
+ */
+export interface LlmSampling {
+  temperature?: number;
+  json?: boolean;
+}
+
 /**
  * One system+user turn against whichever backend is configured — the external
  * provider when one is set up, otherwise the bundled local model. Used by the
@@ -1684,15 +1989,25 @@ export async function callExternalLlm(
   imageFilename?: string | null,
   imageData?: string[] | null,
   history: ChatMessage[] = [],
+  signal?: AbortSignal,
+  sampling?: LlmSampling,
+  systemCachePrefix?: string,
 ): Promise<string> {
-  return runPromptAssistant("call_external_llm", {
-    system,
-    prompt,
-    maxTokens,
-    imageFilename: imageFilename || undefined,
-    imageData: imageData && imageData.length > 0 ? imageData : undefined,
-    history,
-  });
+  return runPromptAssistant(
+    "call_external_llm",
+    {
+      system,
+      prompt,
+      maxTokens,
+      imageFilename: imageFilename || undefined,
+      imageData: imageData && imageData.length > 0 ? imageData : undefined,
+      history,
+      temperature: sampling?.temperature,
+      json: sampling?.json,
+      systemCachePrefix: systemCachePrefix || undefined,
+    },
+    signal,
+  );
 }
 
 export async function readClipboardImage(): Promise<number[]> {
@@ -1755,17 +2070,24 @@ export async function getLogs(source: "comfyui" | "app", lines?: number): Promis
   return await ipcInvoke<string[]>("get_logs", { source, lines });
 }
 
+/** Tell the desktop WebView whether the UI is resting, so it can trim memory.
+ *  Browser mode has no native WebView to manage, so this does nothing there. */
+export async function setUiResting(resting: boolean): Promise<void> {
+  if (!isTauri || isBrowserMode) return;
+  await ipcInvoke("set_ui_resting", { resting }).catch(() => {});
+}
+
 export async function getGpuStats(): Promise<GpuStats[]> {
   if (isTauri) {
     return ipcInvoke("get_gpu_stats");
   }
   if (!isBrowserMode) return [];
-  const { getAuthToken } = await import("./ipc.js");
+  const { getAuthToken, responseErrorText } = await import("./ipc.js");
   const headers: Record<string, string> = {};
   const token = getAuthToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const resp = await fetch("/internal-api/_gpu_stats", { headers });
-  if (!resp.ok) throw new Error(await resp.text());
+  if (!resp.ok) throw new Error(await responseErrorText(resp));
   return resp.json();
 }
 export interface H3UpscalerStatus {
@@ -1792,3 +2114,154 @@ export const refineVideoDraft = (filename: string, steps: number, sigma: number)
 /** Regenerate pixel frames [startFrame, endFrame) of a retained draft, keeping its audio. */
 export const retakeVideoDraft = (filename: string, startFrame: number, endFrame: number, steps: number) =>
   ipcInvoke<{ prompt_id: string }>("retake_video_draft", { filename, startFrame, endFrame, steps });
+
+// --- Wildcard files (<app data>/wildcards) ---
+
+export interface WildcardListing {
+  dir: string;
+  files: Array<{ path: string; content: string }>;
+  truncated: boolean;
+}
+
+export async function listWildcards(): Promise<WildcardListing> {
+  return ipcInvoke("list_wildcards");
+}
+
+export async function saveWildcard(path: string, content: string): Promise<void> {
+  return ipcInvoke("save_wildcard", { path, content });
+}
+
+export async function deleteWildcard(path: string): Promise<void> {
+  return ipcInvoke("delete_wildcard", { path });
+}
+
+// --- Single-ZIP Backup & Restore ---
+
+export interface BackupCounts {
+  characters: number;
+  prompt_presets: number;
+  styles: number;
+  lora_presets: number;
+  lora_triggers: number;
+  profiles: number;
+  artist_favourites: number;
+  prompt_history: number;
+  comic_books: number;
+  generation_tabs: number;
+  wildcards: number;
+}
+
+export interface BackupManifest {
+  schema_version: number;
+  app_version: string;
+  exported_at: string;
+  username: string;
+  includes_config: boolean;
+  counts: BackupCounts;
+}
+
+export interface BackupBundleInput {
+  user_prefs: Record<string, unknown>;
+  local_extras: Record<string, unknown>;
+}
+
+export interface BackupInspection {
+  manifest: BackupManifest;
+  user_prefs: Record<string, unknown>;
+  local_extras: Record<string, unknown>;
+  has_app_config: boolean;
+  machine_local_paths: string[];
+  wildcard_paths: string[];
+}
+
+export interface ApplyBackupAdminOptions {
+  apply_app_config: boolean;
+  include_machine_local_paths: boolean;
+  apply_wildcards: boolean;
+  replace_wildcards: boolean;
+}
+
+export interface ApplyBackupAdminResult {
+  config_applied: boolean;
+  wildcards_written: number;
+}
+
+async function parseBackupApiError(resp: Response): Promise<string> {
+  const raw = await responseErrorText(resp);
+  try {
+    const parsed = JSON.parse(raw) as { error?: unknown };
+    if (typeof parsed?.error === "string" && parsed.error) return parsed.error;
+  } catch {
+    // Plain text / sanitized HTML error message.
+  }
+  return raw;
+}
+
+export async function exportBackupZip(
+  destPath: string,
+  bundle: BackupBundleInput,
+  includeAdminData: boolean,
+): Promise<BackupManifest> {
+  return ipcInvoke<BackupManifest>("export_backup_zip", {
+    destPath,
+    bundle,
+    includeAdminData,
+  });
+}
+
+export async function exportBackupZipBlob(
+  bundle: BackupBundleInput,
+  includeAdminData: boolean,
+): Promise<{ blob: Blob; filename: string }> {
+  const resp = await fetch("/internal-api/_backup/export", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ bundle, include_admin_data: includeAdminData }),
+  });
+  if (!resp.ok) throw new Error(await parseBackupApiError(resp));
+  const cd = resp.headers.get("content-disposition") ?? "";
+  const match = cd.match(/filename="([^"]+)"/i);
+  const date = new Date().toISOString().slice(0, 10);
+  const filename = match?.[1] || `mooshieui-backup-${date}.zip`;
+  return { blob: await resp.blob(), filename };
+}
+
+export async function inspectBackupZip(srcPath: string): Promise<BackupInspection> {
+  return ipcInvoke<BackupInspection>("inspect_backup_zip", { srcPath });
+}
+
+export async function inspectBackupZipFile(file: File): Promise<BackupInspection> {
+  const resp = await fetch("/internal-api/_backup/inspect", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/zip" }),
+    body: file,
+  });
+  if (!resp.ok) throw new Error(await parseBackupApiError(resp));
+  return resp.json();
+}
+
+export async function applyBackupAdminData(
+  srcPath: string,
+  opts: ApplyBackupAdminOptions,
+): Promise<ApplyBackupAdminResult> {
+  return ipcInvoke<ApplyBackupAdminResult>("apply_backup_admin_data", { srcPath, opts });
+}
+
+export async function applyBackupAdminDataFile(
+  file: File,
+  opts: ApplyBackupAdminOptions,
+): Promise<ApplyBackupAdminResult> {
+  const params = new URLSearchParams({
+    apply_app_config: String(opts.apply_app_config),
+    include_machine_local_paths: String(opts.include_machine_local_paths),
+    apply_wildcards: String(opts.apply_wildcards),
+    replace_wildcards: String(opts.replace_wildcards),
+  });
+  const resp = await fetch(`/internal-api/_backup/apply_admin?${params.toString()}`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/zip" }),
+    body: file,
+  });
+  if (!resp.ok) throw new Error(await parseBackupApiError(resp));
+  return resp.json();
+}

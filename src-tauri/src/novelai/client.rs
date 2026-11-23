@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -12,6 +13,7 @@ use serde_json::Value;
 
 use crate::error::AppError;
 
+use super::gate::{self, AccountGate, GatePass};
 use super::response::{self, StreamDecoder, StreamEvent, Subscription};
 
 // Two hosts, and the split is not cosmetic.
@@ -28,6 +30,9 @@ use super::response::{self, StreamDecoder, StreamEvent, Subscription};
 // generation schema, which is why the old {image, width, height, scale} body
 // failed there with "model doesn't exist". See `upscale` for the current body.
 const IMAGE_BASE: &str = "https://image.novelai.net";
+
+/// Sent on every NovelAI request. See `NovelAiClient::request`.
+const USER_AGENT: &str = concat!("MooshieUI/", env!("CARGO_PKG_VERSION"));
 
 /// Model the upscale endpoint runs, as NovelAI's web client sends it.
 const UPSCALE_MODEL: &str = "nai-diffusion-5-curated";
@@ -49,9 +54,34 @@ const GENERATION_TIMEOUT: Duration = Duration::from_secs(600);
 /// NovelAI sends a preview every step, so this is many steps' worth.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// How many times a rate-limited request is sent again before the 429 is
+/// reported. With the backoff below that is about a minute and a half of
+/// waiting, which outlasts a generation running elsewhere on the account
+/// (NovelAI's own site, another app).
+const MAX_RATE_LIMIT_RETRIES: u32 = 6;
+/// First wait after a 429 without a usable `Retry-After`; doubles each time.
+const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(2);
+/// Ceiling for any single wait, including one NovelAI asks for.
+const RATE_LIMIT_MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// What a request reports when its generation was cancelled while it waited
+/// for the account. Nothing was sent, so nothing was billed.
+pub const CANCELLED_MESSAGE: &str = "NovelAI request cancelled before it was sent";
+
 pub struct NovelAiClient<'a> {
     http: &'a reqwest::Client,
     api_key: &'a str,
+    /// One generation at a time on this account. See `super::gate`.
+    gate: AccountGate,
+    /// The account's turn, once a request has taken it. Kept across the
+    /// requests of one job (vibe encodes, the image, face crops) so another
+    /// queued generation cannot slip in between them, and handed on by
+    /// `release` or when the client is dropped.
+    turn: Mutex<Option<GatePass>>,
+    /// Whether the job this client works for has been cancelled. Checked while
+    /// it waits for its turn or backs off, so a cancelled generation in the
+    /// queue never reaches NovelAI.
+    cancelled: Box<dyn Fn() -> bool + Send + Sync + 'a>,
 }
 
 impl<'a> NovelAiClient<'a> {
@@ -61,21 +91,105 @@ impl<'a> NovelAiClient<'a> {
                 "No NovelAI API key configured. Add one in Settings.".into(),
             ));
         }
-        Ok(Self { http, api_key })
+        Ok(Self {
+            http,
+            api_key,
+            gate: AccountGate::for_key(api_key),
+            turn: Mutex::new(None),
+            cancelled: Box::new(|| false),
+        })
+    }
+
+    /// Give up waiting for the account as soon as `cancelled` returns true.
+    pub fn cancel_when(mut self, cancelled: impl Fn() -> bool + Send + Sync + 'a) -> Self {
+        self.cancelled = Box::new(cancelled);
+        self
+    }
+
+    /// Hand the account to the next queued generation. Call once this job has
+    /// sent its last NovelAI request, so local work that follows (a ComfyUI
+    /// upscale, saving) does not hold up the queue.
+    pub fn release(&self) {
+        drop(self.turn.lock().unwrap_or_else(|e| e.into_inner()).take());
+    }
+
+    /// Wait for this account's turn, unless this job already has it.
+    async fn take_turn(&self) -> Result<(), AppError> {
+        if self
+            .turn
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
+            return Ok(());
+        }
+        let pass = self
+            .gate
+            .enter(&*self.cancelled)
+            .await
+            .map_err(|_| AppError::Other(CANCELLED_MESSAGE.into()))?;
+        *self.turn.lock().unwrap_or_else(|e| e.into_inner()) = Some(pass);
+        Ok(())
+    }
+
+    /// Send a request that runs a model: wait for the account, then send,
+    /// backing off and sending again while NovelAI answers 429.
+    ///
+    /// `build` is called once per attempt because a sent `RequestBuilder` is
+    /// spent.
+    async fn send_queued(
+        &self,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, AppError> {
+        self.take_turn().await?;
+        let mut retries = 0;
+        loop {
+            let res = build().send().await?;
+            if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+                && retries < MAX_RATE_LIMIT_RETRIES
+            {
+                let retry_after = res
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok());
+                let wait = rate_limit_wait(retries, retry_after);
+                retries += 1;
+                log::warn!(
+                    "NovelAI is rate limiting this account; retry {retries}/{MAX_RATE_LIMIT_RETRIES} in {:.1}s",
+                    wait.as_secs_f32()
+                );
+                gate::sleep_unless(wait, &*self.cancelled)
+                    .await
+                    .map_err(|_| AppError::Other(CANCELLED_MESSAGE.into()))?;
+                continue;
+            }
+            return check_status(res).await;
+        }
+    }
+
+    /// Every NovelAI call starts here, so each carries the key and a real
+    /// User-Agent. reqwest sends no User-Agent by default, and Cloudflare in
+    /// front of image.novelai.net is far more likely to turn away a request
+    /// that has none (a 403 with an HTML block page instead of JSON).
+    fn request(&self, method: reqwest::Method, url: String) -> reqwest::RequestBuilder {
+        self.http
+            .request(method, url)
+            .bearer_auth(self.api_key)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
     }
 
     /// Generate images and return the decoded PNG bytes, one entry per sample.
     pub async fn generate(&self, body: &Value) -> Result<Vec<Vec<u8>>, AppError> {
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/generate-image"))
-            .bearer_auth(self.api_key)
-            .timeout(GENERATION_TIMEOUT)
-            .json(body)
-            .send()
+            .send_queued(|| {
+                self.request(
+                    reqwest::Method::POST,
+                    format!("{IMAGE_BASE}/ai/generate-image"),
+                )
+                .timeout(GENERATION_TIMEOUT)
+                .json(body)
+            })
             .await?;
-
-        let res = check_status(res).await?;
         let bytes = res.bytes().await?;
         response::unpack_images(&bytes).map_err(AppError::Other)
     }
@@ -89,16 +203,14 @@ impl<'a> NovelAiClient<'a> {
     /// response is the same zip-of-PNGs `generate` returns, so it unpacks
     /// identically.
     pub async fn upscale(&self, image: &str) -> Result<Vec<Vec<u8>>, AppError> {
+        let body = upscale_body(image);
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/upscale"))
-            .bearer_auth(self.api_key)
-            .timeout(GENERATION_TIMEOUT)
-            .json(&upscale_body(image))
-            .send()
+            .send_queued(|| {
+                self.request(reqwest::Method::POST, format!("{IMAGE_BASE}/ai/upscale"))
+                    .timeout(GENERATION_TIMEOUT)
+                    .json(&body)
+            })
             .await?;
-
-        let res = check_status(res).await?;
         let bytes = res.bytes().await?;
         response::unpack_images(&bytes).map_err(AppError::Other)
     }
@@ -125,16 +237,16 @@ impl<'a> NovelAiClient<'a> {
             parameters.insert("stream".into(), Value::String("msgpack".into()));
         }
 
-        let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/generate-image-stream"))
-            .bearer_auth(self.api_key)
-            .timeout(GENERATION_TIMEOUT)
-            .json(&streaming_body)
-            .send()
+        let mut res = self
+            .send_queued(|| {
+                self.request(
+                    reqwest::Method::POST,
+                    format!("{IMAGE_BASE}/ai/generate-image-stream"),
+                )
+                .timeout(GENERATION_TIMEOUT)
+                .json(&streaming_body)
+            })
             .await?;
-
-        let mut res = check_status(res).await?;
         let mut decoder = StreamDecoder::new();
         // Keyed by sample index so an interleaved batch comes back in order.
         let mut finals: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
@@ -207,20 +319,21 @@ impl<'a> NovelAiClient<'a> {
         model_id: &str,
         information_extracted: f64,
     ) -> Result<String, AppError> {
+        let body = serde_json::json!({
+            "image": image,
+            "model": model_id,
+            "information_extracted": information_extracted,
+        });
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/encode-vibe"))
-            .bearer_auth(self.api_key)
-            .timeout(ENCODE_TIMEOUT)
-            .json(&serde_json::json!({
-                "image": image,
-                "model": model_id,
-                "information_extracted": information_extracted,
-            }))
-            .send()
+            .send_queued(|| {
+                self.request(
+                    reqwest::Method::POST,
+                    format!("{IMAGE_BASE}/ai/encode-vibe"),
+                )
+                .timeout(ENCODE_TIMEOUT)
+                .json(&body)
+            })
             .await?;
-
-        let res = check_status(res).await?;
         let bytes = res.bytes().await?;
         if bytes.is_empty() {
             return Err(AppError::Other(
@@ -240,15 +353,15 @@ impl<'a> NovelAiClient<'a> {
     /// is a list even though four of the six tools only ever fill one slot.
     pub async fn augment_image(&self, body: &Value) -> Result<Vec<Vec<u8>>, AppError> {
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/augment-image"))
-            .bearer_auth(self.api_key)
-            .timeout(GENERATION_TIMEOUT)
-            .json(body)
-            .send()
+            .send_queued(|| {
+                self.request(
+                    reqwest::Method::POST,
+                    format!("{IMAGE_BASE}/ai/augment-image"),
+                )
+                .timeout(GENERATION_TIMEOUT)
+                .json(body)
+            })
             .await?;
-
-        let res = check_status(res).await?;
         let bytes = res.bytes().await?;
         let images = response::unpack_images(&bytes).map_err(AppError::Other)?;
         if images.is_empty() {
@@ -262,9 +375,10 @@ impl<'a> NovelAiClient<'a> {
     /// Fetch the subscription record backing the Anlas and Opus readouts.
     pub async fn subscription(&self) -> Result<Subscription, AppError> {
         let res = self
-            .http
-            .get(format!("{IMAGE_BASE}/user/subscription"))
-            .bearer_auth(self.api_key)
+            .request(
+                reqwest::Method::GET,
+                format!("{IMAGE_BASE}/user/subscription"),
+            )
             .timeout(ACCOUNT_TIMEOUT)
             .send()
             .await?;
@@ -299,6 +413,19 @@ async fn next_chunk<T>(
     }
 }
 
+/// How long to wait before sending a rate-limited request again.
+///
+/// NovelAI's `Retry-After`, in whole seconds, wins when it sends one; otherwise
+/// the wait doubles from `RATE_LIMIT_BACKOFF`. Either way it is capped, so a
+/// bad header cannot park a queued generation for an hour.
+fn rate_limit_wait(retries: u32, retry_after: Option<&str>) -> Duration {
+    let asked = retry_after
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs);
+    let backoff = RATE_LIMIT_BACKOFF.saturating_mul(1u32 << retries.min(16));
+    asked.unwrap_or(backoff).min(RATE_LIMIT_MAX_WAIT)
+}
+
 /// The `/ai/upscale` request body, field for field what NovelAI's web client
 /// sends. Size and factor are deliberately absent: the endpoint takes neither.
 fn upscale_body(image: &str) -> Value {
@@ -319,24 +446,19 @@ async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, AppEr
         return Ok(res);
     }
 
+    let content_type = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     let body = res.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<Value>(&body)
-        .ok()
-        .and_then(|v| {
-            v.get("message")
-                .or_else(|| v.get("error"))
-                .and_then(|m| m.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| body.chars().take(200).collect());
-
-    let message = match status.as_u16() {
-        401 => "NovelAI rejected the API key. Check it in Settings.".to_string(),
-        402 => "Not enough Anlas for this generation.".to_string(),
-        429 => "NovelAI is rate limiting this account. Try again shortly.".to_string(),
-        _ if detail.is_empty() => "NovelAI request failed.".to_string(),
-        _ => detail,
-    };
+    let message = error_message(status.as_u16(), &content_type, &body);
+    if looks_like_html(&content_type, &body) {
+        // The page itself is useless on screen but says who answered (a
+        // Cloudflare ray ID, a challenge), so the log keeps the start of it.
+        crate::http_error::readable_body("NovelAI", status.as_u16(), &body);
+    }
 
     Err(AppError::ApiError {
         status: status.as_u16(),
@@ -344,9 +466,104 @@ async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, AppEr
     })
 }
 
+/// A web page rather than an API answer: Cloudflare's block, challenge and
+/// 5xx pages, or a proxy's. NovelAI's API itself only ever answers in JSON.
+fn looks_like_html(content_type: &str, body: &str) -> bool {
+    content_type.to_ascii_lowercase().contains("text/html") || crate::http_error::is_web_page(body)
+}
+
+/// What the user reads for a failed NovelAI call. Pure, for the tests.
+fn error_message(status: u16, content_type: &str, body: &str) -> String {
+    match status {
+        401 => return "NovelAI rejected the API key. Check it in Settings.".to_string(),
+        402 => return "Not enough Anlas for this generation.".to_string(),
+        429 => return "NovelAI is rate limiting this account. Try again shortly.".to_string(),
+        _ => {}
+    }
+
+    // Never put a web page on screen. A 403 page is Cloudflare refusing the
+    // connection (it comes and goes, often on a VPN or a shared IP); anything
+    // else is NovelAI or Cloudflare being down.
+    if looks_like_html(content_type, body) {
+        return crate::http_error::web_page_message("NovelAI", status);
+    }
+
+    let detail = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("message")
+                .or_else(|| v.get("error"))
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| body.trim().chars().take(200).collect());
+
+    if detail.is_empty() {
+        "NovelAI request failed.".to_string()
+    } else {
+        detail
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The start of the page Blob's Anlas row printed verbatim.
+    const CLOUDFLARE_PAGE: &str = "<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->";
+
+    #[test]
+    fn a_rate_limit_backs_off_doubling_up_to_the_cap() {
+        let waits: Vec<u64> = (0..6).map(|n| rate_limit_wait(n, None).as_secs()).collect();
+        assert_eq!(waits, vec![2, 4, 8, 16, 30, 30]);
+        assert_eq!(rate_limit_wait(40, None), RATE_LIMIT_MAX_WAIT);
+    }
+
+    #[test]
+    fn a_rate_limit_honours_retry_after_within_the_cap() {
+        assert_eq!(rate_limit_wait(3, Some("5")), Duration::from_secs(5));
+        assert_eq!(rate_limit_wait(0, Some(" 1 ")), Duration::from_secs(1));
+        assert_eq!(rate_limit_wait(0, Some("3600")), RATE_LIMIT_MAX_WAIT);
+        // An HTTP date, or junk, falls back to the backoff.
+        assert_eq!(
+            rate_limit_wait(1, Some("Wed, 21 Oct 2026 07:28:00 GMT")),
+            Duration::from_secs(4)
+        );
+    }
+
+    #[test]
+    fn a_cloudflare_block_page_never_reaches_the_screen() {
+        for content_type in ["text/html; charset=UTF-8", ""] {
+            let message = error_message(403, content_type, CLOUDFLARE_PAGE);
+            assert!(!message.contains('<'), "{message}");
+            assert!(message.contains("Cloudflare"), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_5xx_page_reads_as_novelai_being_down() {
+        let message = error_message(502, "text/html", "<html><body>Bad gateway</body></html>");
+        assert_eq!(
+            message,
+            "NovelAI is not responding right now (HTTP 502). Try again shortly."
+        );
+    }
+
+    #[test]
+    fn json_errors_keep_novelai_s_own_message() {
+        let body = r#"{"statusCode":403,"message":"Subscription required"}"#;
+        assert_eq!(
+            error_message(403, "application/json", body),
+            "Subscription required"
+        );
+        assert_eq!(error_message(500, "", ""), "NovelAI request failed.");
+    }
+
+    #[test]
+    fn known_statuses_get_fixed_wording_even_as_html() {
+        assert!(error_message(429, "text/html", CLOUDFLARE_PAGE).contains("rate limiting"));
+        assert!(error_message(401, "", "").contains("API key"));
+    }
 
     #[test]
     fn a_blank_key_fails_before_any_request() {

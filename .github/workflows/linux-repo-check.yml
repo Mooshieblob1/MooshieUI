@@ -1,0 +1,35 @@
+name: Linux repo check
+
+# Builds signed apt + rpm metadata for the latest release with a throwaway key,
+# then has apt and dnf install from it, whenever the repo scripts change.
+on:
+  pull_request:
+    paths:
+      - "scripts/linux-repo.sh"
+      - "scripts/linux-repo-check.sh"
+      - ".github/workflows/linux-repo-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-repo:
+    name: apt and dnf accept the repo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install repo tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils createrepo-c
+
+      - name: Check against the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName)
+          bash scripts/linux-repo-check.sh "$tag"

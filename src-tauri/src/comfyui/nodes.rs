@@ -20,6 +20,7 @@ struct RequiredCustomNodePackage {
     /// reviewing upstream changes, and keep the Dockerfile's copy in step
     /// (checked by `dockerfile_node_pins_match`).
     git_rev: &'static str,
+    source_subdir: Option<&'static str>,
     verify_nodes: &'static [&'static str],
     /// Requirements file to pip-install from, relative to the package root.
     /// Almost every pack ships `requirements.txt`, but not all
@@ -28,11 +29,23 @@ struct RequiredCustomNodePackage {
     requirements_file: &'static str,
 }
 
+/// comfyui-krea2edit v2.0.0 (Krea 2 Identity / General Edit).
+pub const KREA2_EDIT_PACK_REV: &str = "13ef60f20828949becada815d3cbc371eb5ccaab";
+
 const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
+    RequiredCustomNodePackage {
+        name: "snapref",
+        git_url: "https://github.com/ArcAnima/SnapRef.git",
+        git_rev: "1f7e606621052c11486c7aa5ccf6c2c12c2c5a3a",
+        source_subdir: Some("comfyui_nodes/snapref"),
+        verify_nodes: &["SnapRefSimple"],
+        requirements_file: "requirements.txt",
+    },
     RequiredCustomNodePackage {
         name: "ComfyUi-Untwisting-RoPE",
         git_url: "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
         git_rev: "b62f39cd22c0d72c83af4b1da7d6c95b6f1e26f3",
+        source_subdir: None,
         verify_nodes: &["RFInversion", "UntwistingRoPE"],
         requirements_file: "requirements.txt",
     },
@@ -40,6 +53,7 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         name: "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
         git_url: "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
         git_rev: "79e831097bb7a76ade3a28359300e62332086c42",
+        source_subdir: None,
         verify_nodes: &["ImageScaleToTotalPixelsX"],
         requirements_file: "requirements.txt",
     },
@@ -50,10 +64,40 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         name: "ComfyUI-Cosmos-Reference",
         git_url: "https://github.com/Mirumo0u0/ComfyUI-Cosmos-Reference.git",
         git_rev: "6fd6b27e7c72847d69ad74f4c9cb68ce91b319df",
+        source_subdir: None,
         verify_nodes: &["ApplyCosmosReferenceLatent"],
         requirements_file: "requirements.txt",
     },
+    // Anima character reference (Style Reference panel): one node that patches
+    // the model with the reference adapter LoRA and reference guidance, for a
+    // plain KSampler. Pure-Python, ships no requirements.txt.
+    RequiredCustomNodePackage {
+        name: "ComfyUI-Anima-Ref-Adapter",
+        git_url: "https://github.com/ElectronGirl/ComfyUI-Anima-Ref-Adapter.git",
+        git_rev: "bd1e094a2592f40b085e423a1a507b4c288ba9f1",
+        source_subdir: None,
+        verify_nodes: &["AnimaRefAdapter"],
+        requirements_file: "requirements.txt",
+    },
+    // Krea 2 Identity Edit / General Edit (image_edit mode): a model patch
+    // that adds the reference as clean in-context tokens, and an encoder that
+    // shows Qwen3-VL the reference with the instruction. Apache-2.0,
+    // pure Python, no requirements file. v2.0.0 (reference placement).
+    RequiredCustomNodePackage {
+        name: "comfyui-krea2edit",
+        git_url: "https://github.com/lbouaraba/comfyui-krea2edit.git",
+        git_rev: KREA2_EDIT_PACK_REV,
+        source_subdir: None,
+        verify_nodes: &["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
+        requirements_file: "requirements.txt",
+    },
 ];
+
+/// Anima Reference Adapter v2 LoRA. `AnimaRefAdapter` loads it by this exact
+/// filename from `models/loras/` (and downloads it there itself when it is
+/// missing); the Style Reference panel's download button saves it under the
+/// same name (see StyleReferenceSection.svelte).
+pub const ANIMA_REF_ADAPTER_LORA_FILENAME: &str = "anima_ref_adapter_v2_r64.safetensors";
 
 /// Anima Edit LoRA used by the ReStyler image_edit workflow. The template loads
 /// it by this exact filename; the frontend download button must save it under
@@ -69,6 +113,7 @@ const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
     name: "ComfyUI-GGUF",
     git_url: "https://github.com/city96/ComfyUI-GGUF.git",
     git_rev: "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
+    source_subdir: None,
     verify_nodes: &["UnetLoaderGGUF", "CLIPLoaderGGUF"],
     requirements_file: "requirements.txt",
 }];
@@ -82,6 +127,7 @@ const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCus
     name: "comfyui_controlnet_aux",
     git_url: "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
     git_rev: "59b1fc411ede8623b2997855b8018f0b3b6cf49f",
+    source_subdir: None,
     verify_nodes: &[
         "CannyEdgePreprocessor",
         "DepthAnythingV2Preprocessor",
@@ -103,6 +149,7 @@ const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
     name: RIFE_PACKAGE_DIR,
     git_url: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git",
     git_rev: "26545cc2dd95bc3d27f056016300673bdeee78f5",
+    source_subdir: None,
     verify_nodes: &["RIFE VFI", "GMFSS Fortuna VFI"],
     // The pack ships no requirements.txt. `requirements-with-cupy.txt` pulls a
     // multi-hundred-MB CUDA-version-specific cupy wheel; the no-cupy file
@@ -157,6 +204,7 @@ const H3_TURBO_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePack
     name: H3_TURBO_PACKAGE_DIR,
     git_url: "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git",
     git_rev: "4274783a23afcfdbea3b4876cb79effd6c510785",
+    source_subdir: None,
     verify_nodes: &["MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"],
     // The pack ships no requirements file at all — it imports torch and comfy's
     // own modules only, so the clone is the entire install.
@@ -184,6 +232,7 @@ const H3_TEACACHE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodeP
     name: H3_TEACACHE_PACKAGE_DIR,
     git_url: "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
     git_rev: "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f",
+    source_subdir: None,
     verify_nodes: &["MiniMaxH3TeaCache"],
     // The pack's pyproject.toml declares no dependencies beyond ComfyUI itself
     // (pure torch, already provided by the host), and it ships no
@@ -232,6 +281,7 @@ const INT8_FAST_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePac
     name: "ComfyUI-INT8-Fast",
     git_url: "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
     git_rev: "48a88b2fde88e986c6444fa1f51589b6089d04f3",
+    source_subdir: None,
     verify_nodes: &["OTUNetLoaderW8A8"],
     requirements_file: "requirements.txt",
 }];
@@ -247,6 +297,7 @@ const IPADAPTER_PLUS_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNo
     name: IPADAPTER_PLUS_PACKAGE_DIR,
     git_url: "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
     git_rev: "a0f451a5113cf9becb0847b92884cb10cbdec0ef",
+    source_subdir: None,
     verify_nodes: &["IPAdapterUnifiedLoader", "IPAdapterAdvanced"],
     requirements_file: "requirements.txt",
 }];
@@ -267,18 +318,25 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieFaceDetailer",
     "MooshieFaceDetect",
     "MooshieSegmentDetailer",
+    "MooshieMaskDetailer",
+    "MooshieSkinContrast",
     "MooshieSoftGuidance",
     "MooshieSmartGuidance",
     "MooshieCheckpointLoaderPath",
     "MooshieDiffusionLoaderPath",
     "NanoSaurLoader",
+    "MooshieKolorsLoader",
     "ApplyTiledDiffusion",
     "MooshieAnimaTeaCache",
     "MooshieSigmaTail",
     "MooshieResumeEdit",
+    "MooshieAnimaArtStyle",
 ];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
+/// 1x skin contrast model for the Moody Moss workflow's skin pass (175 KB).
+const SKIN_CONTRAST_WEIGHTS: &[u8] =
+    include_bytes!("../../../comfyui-nodes/skin_contrast_1x.safetensors");
 // Python deps the mooshie-nodes package imports but ComfyUI does not ship.
 // `ultralytics` (YOLOv8) backs the face-detailer node. torch/torchvision are
 // already provided by ComfyUI's own requirements, so they are not repeated.
@@ -302,6 +360,17 @@ const NANOSAUR_MODEL_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_su
 const NANOSAUR_TEXT_ENCODER_PY: &str =
     include_str!("../../../comfyui-nodes/nanosaur_support/text_encoder.py");
 const NANOSAUR_VAE_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_support/vae.py");
+
+// ── Kolors custom node package (MooshieKolorsLoader) ─────────────────────────
+// Kolors' UNet and its ChatGLM3-6B text encoder, built on ComfyUI's own model
+// classes and ops so core CLIPTextEncode, KSampler and LoraLoader drive them.
+// The ChatGLM3 tokenizer is part of the Kolors release, so the node fetches it
+// (pinned, SHA-256 checked) beside the encoder instead of it being bundled.
+const KOLORS_INIT_PY: &str = include_str!("../../../comfyui-nodes/kolors_support/__init__.py");
+const KOLORS_NODES_PY: &str = include_str!("../../../comfyui-nodes/kolors_support/nodes.py");
+const KOLORS_MODEL_PY: &str = include_str!("../../../comfyui-nodes/kolors_support/model.py");
+const KOLORS_TEXT_ENCODER_PY: &str =
+    include_str!("../../../comfyui-nodes/kolors_support/text_encoder.py");
 
 // ── MiniMax H3 Director package (video mode) ─────────────────────────────────
 // Vendored from ComfyUI-MiniMaxH3-Director v0.1.5 (GPL-3.0); see
@@ -367,8 +436,26 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
             include_str!("../../../comfyui-nodes/h3_upscaler.LICENSE"),
         ),
         (
+            "anima_art_style.py",
+            include_str!("../../../comfyui-nodes/anima_art_style.py"),
+        ),
+        (
+            "anima_art_style.LICENSE",
+            include_str!("../../../comfyui-nodes/anima_art_style.LICENSE"),
+        ),
+        (
             "gguf_compat.py",
             include_str!("../../../comfyui-nodes/gguf_compat.py"),
+        ),
+    ] {
+        std::fs::write(mooshie_dir.join(name), content).map_err(|e| e.to_string())?;
+    }
+    // Weights MooshieSkinContrast loads from its own folder (CC0-1.0).
+    for (name, content) in [
+        ("skin_contrast_1x.safetensors", SKIN_CONTRAST_WEIGHTS),
+        (
+            "skin_contrast_1x.LICENSE",
+            include_bytes!("../../../comfyui-nodes/skin_contrast_1x.LICENSE").as_slice(),
         ),
     ] {
         std::fs::write(mooshie_dir.join(name), content).map_err(|e| e.to_string())?;
@@ -470,6 +557,32 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         std::fs::write(&path, content).map_err(|e| {
             format!(
                 "Failed to write nanosaur_support/{} at '{}': {}",
+                name,
+                path.display(),
+                e
+            )
+        })?;
+    }
+
+    // ── Kolors custom node package (MooshieKolorsLoader) ─────────────────────
+    let kolors_dir = custom_nodes.join("kolors_support");
+    std::fs::create_dir_all(&kolors_dir).map_err(|e| {
+        format!(
+            "Failed to create kolors_support directory at '{}': {}",
+            kolors_dir.display(),
+            e
+        )
+    })?;
+    for (name, content) in [
+        ("__init__.py", KOLORS_INIT_PY),
+        ("nodes.py", KOLORS_NODES_PY),
+        ("model.py", KOLORS_MODEL_PY),
+        ("text_encoder.py", KOLORS_TEXT_ENCODER_PY),
+    ] {
+        let path = kolors_dir.join(name);
+        std::fs::write(&path, content).map_err(|e| {
+            format!(
+                "Failed to write kolors_support/{} at '{}': {}",
                 name,
                 path.display(),
                 e
@@ -649,7 +762,7 @@ pub async fn ensure_required_style_transfer_nodes(
     } else {
         log::warn!(
             "Some style transfer custom node packages could not be installed ({}). \
-             Anima Untwisting RoPE style transfer and/or the Anima ReStyler are \
+             Anima style transfer, the Anima ReStyler and/or Krea 2 Identity/General Edit are \
              unavailable until these install.",
             failures.join("; ")
         );
@@ -703,6 +816,97 @@ pub async fn ensure_required_gguf_nodes(
              GGUF (.gguf) models are unavailable until these install.",
             failures.join("; ")
         );
+    }
+    Ok(())
+}
+
+/// Node packs the registered model architectures need
+/// (`crate::architectures`), in the install shape of the hand-written lists.
+fn architecture_packages() -> Vec<RequiredCustomNodePackage> {
+    crate::architectures::node_packs()
+        .into_iter()
+        .map(|pack| RequiredCustomNodePackage {
+            name: pack.name,
+            git_url: pack.git_url,
+            git_rev: pack.git_rev,
+            source_subdir: pack.source_subdir,
+            verify_nodes: pack.verify_nodes,
+            requirements_file: pack.requirements_file,
+        })
+        .collect()
+}
+
+/// Ensure the custom node packs of every registered model architecture are
+/// installed at their pinned commits. Failures are logged as warnings and do
+/// not block startup: only that architecture is unavailable until they
+/// install, and generating with it says so (`verify_architecture_nodes_for_generation`).
+pub async fn ensure_required_architecture_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let packages = architecture_packages();
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    let mut failures = Vec::new();
+    for package in packages {
+        if let Err(e) = ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            package,
+        )
+        .await
+        {
+            log::warn!(
+                "Model architecture custom node '{}' setup failed (optional): {}",
+                package.name,
+                e
+            );
+            failures.push(format!("{}: {}", package.name, e));
+        }
+    }
+
+    if failures.is_empty() {
+        log::info!("Ensured model architecture custom node packages");
+    } else {
+        log::warn!(
+            "Some model architecture custom node packages could not be installed ({}). \
+             The models that need them are unavailable until these install.",
+            failures.join("; ")
+        );
+    }
+    Ok(())
+}
+
+/// Before generating with a registered architecture, check that ComfyUI has
+/// the node classes its graph uses (its custom packs and the core nodes that
+/// need a minimum ComfyUI version), so a missing one is reported with the fix
+/// instead of ComfyUI's raw prompt-validation error.
+pub async fn verify_architecture_nodes_for_generation(
+    client: &reqwest::Client,
+    base_url: &str,
+    params: &GenerationParams,
+) -> Result<(), String> {
+    let required = crate::architectures::required_node_classes(params)
+        .into_iter()
+        .chain(crate::templates::krea2_edit::required_node_classes(params));
+    for (class, fix) in required {
+        if !object_info_has_node_class(client, base_url, class).await? {
+            return Err(fix);
+        }
     }
     Ok(())
 }
@@ -1666,7 +1870,14 @@ async fn ensure_custom_node_package(
             package.git_url,
             package.git_rev
         );
-        clone_custom_node(package.git_url, package.git_rev, &target_dir, network_proxy).await?;
+        clone_custom_node(
+            package.git_url,
+            package.git_rev,
+            &target_dir,
+            network_proxy,
+            package.source_subdir,
+        )
+        .await?;
     }
 
     let requirements = target_dir.join(package.requirements_file);
@@ -1764,6 +1975,7 @@ async fn clone_custom_node(
     git_rev: &str,
     target_dir: &Path,
     network_proxy: Option<&str>,
+    source_subdir: Option<&str>,
 ) -> Result<(), String> {
     let parent = target_dir
         .parent()
@@ -1796,7 +2008,12 @@ async fn clone_custom_node(
         if !head.eq_ignore_ascii_case(git_rev) {
             return Err(format!("checked out {head}, expected {git_rev}"));
         }
-        std::fs::rename(&staging, target_dir).map_err(|e| {
+        let source = source_subdir.map_or_else(|| staging.clone(), |subdir| staging.join(subdir));
+        if source_subdir.is_some() {
+            std::fs::copy(staging.join("LICENSE"), source.join("LICENSE"))
+                .map_err(|e| format!("cannot preserve node package license: {e}"))?;
+        }
+        std::fs::rename(&source, target_dir).map_err(|e| {
             format!(
                 "cannot move the checkout into '{}': {e}",
                 target_dir.display()
@@ -2209,6 +2426,7 @@ mod tests {
             H3_TEACACHE_PACKAGES,
             INT8_FAST_PACKAGES,
             IPADAPTER_PLUS_PACKAGES,
+            &architecture_packages(),
         ]
         .concat()
     }
@@ -2340,9 +2558,50 @@ mod tests {
         }
         let (root, url, sha) = local_upstream();
         let target = root.join("custom_nodes").join("Pack");
-        clone_custom_node(&url, &sha, &target, None).await.unwrap();
+        clone_custom_node(&url, &sha, &target, None, None)
+            .await
+            .unwrap();
         assert!(target.join("__init__.py").is_file());
         assert_eq!(git_in(&target, &["rev-parse", "HEAD"]), sha);
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn subtree_install_keeps_node_files_and_license_without_training_dependencies() {
+        if !git_available() {
+            return;
+        }
+        let (root, url, _) = local_upstream();
+        let upstream = root.join("upstream");
+        let nested = upstream.join("comfyui_nodes/snapref");
+        std::fs::create_dir_all(nested.join("web")).unwrap();
+        std::fs::write(nested.join("__init__.py"), "NODE_CLASS_MAPPINGS = {}\n").unwrap();
+        std::fs::write(nested.join("web/snapref.js"), "// UI").unwrap();
+        std::fs::write(upstream.join("LICENSE"), "upstream license").unwrap();
+        std::fs::write(upstream.join("requirements.txt"), "training-only").unwrap();
+        git_in(&upstream, &["add", "."]);
+        git_in(&upstream, &["commit", "-q", "-m", "node subtree"]);
+        let sha = git_in(&upstream, &["rev-parse", "HEAD"]);
+        let target = root.join("custom_nodes/snapref");
+        clone_custom_node(&url, &sha, &target, None, Some("comfyui_nodes/snapref"))
+            .await
+            .unwrap();
+        assert!(target.join("__init__.py").is_file());
+        assert!(target.join("web/snapref.js").is_file());
+        assert_eq!(
+            std::fs::read_to_string(target.join("LICENSE")).unwrap(),
+            "upstream license"
+        );
+        assert!(!target.join("requirements.txt").exists());
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let missing = root.join("custom_nodes/missing");
+        assert!(
+            clone_custom_node(&url, &sha, &missing, None, Some("missing"))
+                .await
+                .is_err()
+        );
+        assert!(!missing.exists());
         assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2354,7 +2613,7 @@ mod tests {
         }
         let (root, url, _) = local_upstream();
         let target = root.join("custom_nodes").join("Pack");
-        let err = clone_custom_node(&url, &"0".repeat(40), &target, None)
+        let err = clone_custom_node(&url, &"0".repeat(40), &target, None, None)
             .await
             .unwrap_err();
         assert!(err.contains("git install failed"), "{err}");
@@ -2449,6 +2708,14 @@ mod rife_pin_tests {
         assert!(!dest.exists() && !dest.with_extension("part").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn mooshie_nodes_detailers_use_resolution_preserving_resize() {
+        assert!(super::MOOSHIE_NODES_INIT.contains("def _detailer_target_size("));
+        assert!(super::MOOSHIE_NODES_INIT.contains("def _resize_bhwc("));
+        assert!(super::MOOSHIE_NODES_INIT.contains("mode=\"area\""));
+        assert!(super::MOOSHIE_NODES_INIT.contains("mode=\"bicubic\""));
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -2517,4 +2784,38 @@ mod install_script_tests {
         }
         let _ = std::fs::remove_dir_all(&base);
     }
+}
+
+/// Check the simple-node signature as older SnapRef releases only accept two pictures.
+pub async fn verify_snapref_for_generation(
+    client: &reqwest::Client,
+    base_url: &str,
+    params: &GenerationParams,
+) -> Result<(), String> {
+    if !crate::templates::style_ref::snapref_active(params) {
+        return Ok(());
+    }
+    let info: serde_json::Value = client
+        .get(format!("{base_url}/object_info/SnapRefSimple"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let inputs = [
+        "reference",
+        "strength",
+        "mode",
+        "fidelity",
+        "reference_8",
+        "strength_8",
+    ]
+    .map(String::from);
+    if crate::commands::api::node_info_matches(&info, "SnapRefSimple", Some(&inputs)) {
+        return Ok(());
+    }
+    Err("SnapRef needs the current SnapRefSimple node with eight-reference support. Restart managed ComfyUI, or update custom_nodes/snapref on the remote server and restart it.".into())
 }

@@ -3,50 +3,52 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { canvasHistory } from "../../stores/canvasHistory.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
+  import { formatCombo, isTypingTarget, matchesCombo } from "../../utils/shortcuts.js";
   import BrushSettings from "./controls/BrushSettings.svelte";
   import ColorPicker from "./controls/ColorPicker.svelte";
 
-  const tools: { id: ToolType; labelKey: string; hotkey: string; icon: string }[] = [
+  const tools: { id: ToolType; labelKey: string; shortcutId: string; icon: string }[] = [
     {
       id: "brush",
       labelKey: "canvas.brush",
-      hotkey: "B",
+      shortcutId: "canvas.tool_brush",
       icon: `<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>`,
     },
     {
       id: "eraser",
       labelKey: "canvas.eraser",
-      hotkey: "E",
+      shortcutId: "canvas.tool_eraser",
       icon: `<path d="M20 20H7L3 16c-.8-.8-.8-2 0-2.8L13.8 2.4c.8-.8 2-.8 2.8 0L21 6.8c.8.8.8 2 0 2.8L12 18"/>`,
     },
     {
       id: "rectFill",
       labelKey: "canvas.rectangle",
-      hotkey: "U",
+      shortcutId: "canvas.tool_rect",
       icon: `<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>`,
     },
     {
       id: "lasso",
       labelKey: "canvas.lasso",
-      hotkey: "Q",
+      shortcutId: "canvas.tool_lasso",
       icon: `<path d="M3 14.5A6.5 6.5 0 0 1 2 11c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12.6 12.6 0 0 1-4.7-.9"/><path d="M7 21.5a5 5 0 0 1-2-4"/><circle cx="5" cy="16" r="2"/>`,
     },
     {
       id: "eyedropper",
       labelKey: "canvas.eyedropper",
-      hotkey: "I",
+      shortcutId: "canvas.tool_eyedropper",
       icon: `<path d="M2 22l1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="M14.5 5.5l4-4a1.4 1.4 0 0 1 2 2l-4 4"/>`,
     },
     {
       id: "move",
       labelKey: "canvas.move",
-      hotkey: "V",
+      shortcutId: "canvas.tool_move",
       icon: `<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>`,
     },
     {
       id: "view",
       labelKey: "canvas.pan",
-      hotkey: "H",
+      shortcutId: "canvas.tool_pan",
       icon: `<path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-5.7-2.4L3.4 16a2 2 0 0 1 3.2-2.4L8 15"/>`,
     },
   ];
@@ -57,48 +59,57 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     if (!canvas.isPointerOverStage) return;
+    if (e.defaultPrevented || document.querySelector("[data-modal-open]")) return;
 
     // Don't trigger if typing in an input
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+    if (isTypingTarget(e.target)) return;
 
     // Undo/Redo
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+    if (shortcuts.matches("canvas.undo", e)) {
       e.preventDefault();
-      if (e.shiftKey) {
-        canvasHistory.redo();
-      } else {
-        canvasHistory.undo();
-      }
+      canvasHistory.undo();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+    if (
+      shortcuts.matches("canvas.redo", e) ||
+      (!shortcuts.isCustomized("canvas.redo") && matchesCombo(e, "Ctrl+Shift+Z"))
+    ) {
       e.preventDefault();
       canvasHistory.redo();
       return;
     }
 
     // Delete key — clear active layer
-    if (e.key === "Delete") {
+    if (shortcuts.matches("canvas.clear_layer", e)) {
       const layer = canvas.activeLayer;
       if (layer && !layer.locked && canvas.activeLayerId) {
+        e.preventDefault();
         canvasHistory.snapshot(layer.id);
         canvas.clearLayer(layer.id);
       }
       return;
     }
 
-    switch (e.key.toLowerCase()) {
-      case "b": canvas.setTool("brush"); break;
-      case "e": canvas.setTool("eraser"); break;
-      case "u": canvas.setTool("rectFill"); break;
-      case "q": canvas.setTool("lasso"); break;
-      case "i": canvas.setTool("eyedropper"); break;
-      case "v": canvas.setTool("move"); break;
-      case "h": canvas.setTool("view"); break;
-      case "x": canvas.swapColors(); break;
-      case "d": canvas.resetColors(); break;
-      case "[": canvas.adjustBrushSize(-5); break;
-      case "]": canvas.adjustBrushSize(5); break;
+    for (const tool of tools) {
+      if (shortcuts.matches(tool.shortcutId, e)) {
+        e.preventDefault();
+        canvas.setTool(tool.id);
+        return;
+      }
+    }
+
+    if (shortcuts.matches("canvas.swap_colors", e)) {
+      e.preventDefault();
+      canvas.swapColors();
+    } else if (shortcuts.matches("canvas.reset_colors", e)) {
+      e.preventDefault();
+      canvas.resetColors();
+    } else if (shortcuts.matches("canvas.brush_smaller", e)) {
+      e.preventDefault();
+      canvas.adjustBrushSize(-5);
+    } else if (shortcuts.matches("canvas.brush_larger", e)) {
+      e.preventDefault();
+      canvas.adjustBrushSize(5);
     }
   }
 </script>
@@ -139,7 +150,7 @@
         class="relative w-8 h-8 flex items-center justify-center rounded-md transition-colors {canvas.activeTool === tool.id
           ? 'bg-indigo-600 text-white'
           : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'}"
-        title="{locale.t(tool.labelKey)} ({tool.hotkey})"
+        title="{locale.t(tool.labelKey)} ({formatCombo(shortcuts.effectiveCombo(tool.shortcutId))})"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           {@html tool.icon}
@@ -165,7 +176,7 @@
       class="px-2 py-1 text-[10px] rounded border transition-colors {canvasHistory.canUndo
         ? 'border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300'
         : 'border-neutral-800 text-neutral-600 cursor-not-allowed'}"
-      title={locale.t('canvas.undo') + ' (Ctrl+Z)'}
+      title="{locale.t('canvas.undo')} ({formatCombo(shortcuts.effectiveCombo('canvas.undo'))})"
     >
       {locale.t('canvas.undo')}
     </button>
@@ -175,7 +186,7 @@
       class="px-2 py-1 text-[10px] rounded border transition-colors {canvasHistory.canRedo
         ? 'border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300'
         : 'border-neutral-800 text-neutral-600 cursor-not-allowed'}"
-      title={locale.t('canvas.redo') + ' (Ctrl+Shift+Z / Ctrl+Y)'}
+      title="{locale.t('canvas.redo')} ({formatCombo(shortcuts.effectiveCombo('canvas.redo'))})"
     >
       {locale.t('canvas.redo')}
     </button>

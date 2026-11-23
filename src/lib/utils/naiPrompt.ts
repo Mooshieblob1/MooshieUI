@@ -42,6 +42,8 @@ export interface NaiExistingPrompt {
   uc: string;
   /** One entry per open character box, in slot order. */
   characters: string[];
+  /** Each box's own undesired content, aligned with `characters`. */
+  characterUcs?: string[];
 }
 
 export interface NaiPromptContext {
@@ -106,6 +108,11 @@ export interface NaiPromptContext {
    * A `blocked` request never gets this far.
    */
   rating?: ContentRating;
+  /**
+   * Whether a `minor` request carries the rule that keeps a child non-sexual.
+   * The user's NAI Enhance toggle; absent is on.
+   */
+  minorRule?: boolean;
 }
 
 /**
@@ -230,6 +237,7 @@ These are trained V5 tokens and are available to you: depthness, attractive male
 - Default complexity is high complexity. That is the pretty default, not a quality stack.
 - Add depthness when the scene needs volume or deeper shading.
 - Strengthen a weak alpha with 2.1::transparent background:: rather than repeating the tag.
+- transparent background, has alpha and alpha transparency are for a cut-out on an empty background, and only when the user asks for one. Never use them, or any other transparency word, in a scene.
 
 DATASET PREFIXES
 - Furry and kemono work starts the base tag line with fur dataset.
@@ -238,14 +246,21 @@ DATASET PREFIXES
 
 INTERACTION TAGS
 - For an action between two characters, tag the actor source#action in their box and the recipient target#action in theirs, or give both mutual#action when it is shared. So source#hug and target#hug, one in each box.
-- The same pattern covers kiss, pointing, holding hands and the rest.
+- The same pattern covers kiss, pointing, holding hands, headpat, carrying, feeding and the rest.
+- When the idea has a clear interaction between characters, these tags are required. Describing the action only in prose is a failed rewrite, because prose alone does not tell V5 which box does it and which box receives it.
 - Always back the pair up in the natural language body. The tags settle who is doing what to whom; the prose settles where they are standing.
 
 TEXT AND COMIC TAGS
 - Lettering needs the text tag and its language tag, such as english text or japanese text.
 - Add speech bubble or thought bubble when the words sit in one, and border when the page is panelled.
 - Sound effects are ordinary tags or prose. They do not go in the Text: block unless you want them rendered as lettering.
-- If short lettering is the whole point of the image, the quality stack's own no text fights it. Say so in a NOTE: line and suggest turning the quality toggle off for that generation.
+
+DIALOGUE AND COMICS
+- The Text: block is not a script. Every character in it is drawn into the image, so a speaker label such as Aki: or a heading such as Page 2 or Panel 3 comes out inside a speech bubble. Write only the words the bubble says, exactly as lettered, one string per bubble, a blank line between bubbles, in reading order.
+- Who says what belongs in the natural language body. In the sentence that describes a panel, name the speaker and quote their line there: In the third panel Aki sprints in from the left, shouting "Wait up!". The quote ties the bubble to its speaker and panel, and repeating the words in prose is NovelAI's own advice for reliable lettering. A line the prose never quotes is free to land in anyone's bubble.
+- Keep the quoted words identical to the Text: block, so the two never disagree about what is said.
+- One image is one comic page. When the user asks for several pages, draw one page whose panels carry those beats in order, call them panels in the prose and never pages, and say in a NOTE: line that each page needs its own generation if they want separate pages.
+- Past six panels the panels get small and the lettering cramped. Merge beats rather than adding panels, and keep the lettering inside the variant's character budget.
 
 ARTISTS
 - If the user named artists, put them in the base tag line, grouped by weight as above.
@@ -263,10 +278,59 @@ const TECHNIQUE = `CAST HANDLING
 - Snipe strays with per character undesired content, or with -1::trait:: in the box itself.
 - Order character boxes left to right as they appear in the scene.
 
+OUTFIT ISOLATION
+These rules apply whenever there are two or more CHAR blocks. Clothes jumping from one character to another is the commonest multi-character failure, and these rules exist to stop it.
+- BASE never restates a character's clothing, hair, eyes or body. Its tag line holds only the count, series and character ids, complexity, framing, setting and tags that belong to the whole scene. Its prose holds the shared action, the camera, the lighting and the mood, plus one short sentence that places each character, such as "the girl in the white hoodie stands on the left". That sentence may name one garment to tell the characters apart. It never lists an outfit.
+- Every concrete outfit tag belongs in exactly one CHAR block: the one for the character wearing it. Never write the same garment in two boxes unless the user asked for matching clothes.
+- Give every character a position twice: in the placing sentence in BASE, and as placement tags in their own CHAR block, such as on the left, on the right or in the center. Use the same side in both. Placement in a CHAR block means the side of the frame only, never a position relative to an object; that belongs in BASE, as the layout rules below say. With more than three characters, number them from the left instead: first from left, second from left.
+- When the characters wear different clothes, write a CHAR n UC: line after each CHAR block, listing the other characters' distinctive garments, such as white hoodie, pleated skirt. Leave out any garment this character also wears. This opposite-outfit UC is what stops a box borrowing its neighbour's clothes. Leave the line out when everyone is dressed the same.
+- Body tags the characters share are fine in each box. When their bodies are alike, their outfits and the opposite-outfit UC are all that keeps them apart, so make each outfit distinct and complete.
+
+MULTI-CHARACTER EXAMPLE
+The idea "my two OCs at a bus stop in the rain, the tall one in a white hoodie and jeans patting the head of the short one in a navy school uniform" comes out like this:
+
+BASE:
+2girls, high complexity, medium shot, bus stop, rain, overcast
+
+Two girls wait out the rain under a rural bus stop shelter, with rain streaking past the open front. The tall girl in the white hoodie stands on the left and pats the head of the short girl in the school uniform, who stands on the right and looks up at her with a shy smile. Soft grey daylight, wet asphalt reflecting the shelter.
+
+UC:
+
+CHAR 1:
+girl, short brown hair, green eyes,
+tall,
+smile, looking at another,
+white hoodie, blue jeans, white sneakers,
+source#headpat, standing, on the left
+
+CHAR 1 UC:
+school uniform, sailor collar, red neckerchief, pleated skirt, loafers
+
+CHAR 2:
+girl, long black hair, blue eyes,
+petite,
+shy, blush, looking up,
+navy school uniform, sailor collar, red neckerchief, navy pleated skirt, black loafers,
+target#headpat, standing, on the right
+
+CHAR 2 UC:
+hoodie, jeans, sneakers
+
+BASE carries no hair, no eyes and no garment tags. Each placing sentence names one garment only to tell the two apart, and every outfit tag lives in one box, with the other girl's clothes in that box's UC.
+
+LAYOUT AND OCCLUSION
+These rules apply whenever a character sits at, stands behind or is partly hidden by something in the scene, such as a table, a desk, a counter or a railing. V5 handles occlusion poorly, and writing it badly brings three failures: the character ends up on top of the object, the object disappears, or one of them comes out see-through.
+- Scene objects, and where anyone is relative to them, belong in BASE only. Lock the layout with short tags in the base tag line, such as table, table in foreground, behind table, sitting in chair, and back them with one short present-tense sentence in the prose, such as "She sits in a chair behind the table." Say it once. The rest of the prose carries light, surfaces and mood, never a second, longer account of the same layout.
+- A CHAR block never names a scene object and never places the character relative to one: no table, desk, behind, in front of or at the counter in a box. A box holds the character's own pose (sitting, leaning forward, hands together) and their side of the frame, nothing more. An object named in a box is drawn as part of that character, which is how a character ends up sitting on the table.
+- Leave out what the object hides. When a table hides a seated character from the waist down, their box lists only what shows, so no shoes, legwear or skirt, unless the user asked for those in particular. Asking for hidden clothes pushes the character out from behind the object to show them. Saved and remembered outfits follow this too: the hidden part is simply out of frame in this image.
+- Never assert that something is solid, opaque, not transparent, not see-through, not floating or not on the table, in any field. Naming the failure tokenises it and invites it in. Describe the layout you want and nothing about the layout you do not want.
+- Never put an object the scene contains into UC or a CHAR n UC line, and never give it a weight below 1 or a negative weight. A negated object disappears and a weakened one comes out faint or see-through. That goes for on table too: to keep someone off the table, place them behind it.
+- When the user says the layout came out wrong, write the layout tags and the layout sentence fresh, short and plain, even in a revision that otherwise keeps the wording. Do not patch the earlier wording, and do not add a sentence about what should not happen.
+
 ITERATION
 - When revising an existing prompt, change only what the instruction names. Keep every prior lock unless it was revised.
 - Never redesign wholesale for a one line fix.
-- When a motif is retired, strip it from BASE and the character box, and add it to UC so it does not ghost back in.`;
+- When a motif is retired, strip it from BASE and the character box, and add it to UC so it does not ghost back in. Moving something is not retiring it: an object that stays in the scene never goes into UC.`;
 
 /**
  * What to do with the attached images.
@@ -304,7 +368,9 @@ function sourceFidelity(
 - When the instruction cuts the cast down, return only the characters that remain, renumbered from CHAR 1. Their boxes are resized to match, so returning fewer blocks is how a character is removed. Never keep a dropped character alive by repeating another one to fill the slot, and never return an empty CHAR block as a placeholder.
 - Apply the instruction completely, and nothing beyond it. Do not take the chance to add a location, a time of day, weather, a wardrobe, a mood or a camera angle they did not ask for.
 - If the current prompt is not in V5 shape, put it in V5 shape as you go. That is repair, and it is expected of you; it is not licence to invent.
-- A named character keeps their name, their tags and their canon through the revision. Never generalize one away while editing.`;
+- A named character keeps their name, their tags and their canon through the revision. Never generalize one away while editing.
+- The clothing already in the user's character boxes is authoritative. Keep every outfit tag in its own box, word for word, unless the instruction changes that character's clothes. Do not improve an outfit by re-describing it, and never copy it up into BASE.
+- Keep each box's CHAR n UC line too. Add the other characters' distinctive garments to it when their outfits differ, and drop a garment from it only when that character now wears it.`;
   }
   if (inSession) return SESSION_REVISION_FIDELITY;
   const input = hasReferences
@@ -333,9 +399,9 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
   full: `VARIANT: V5 FULL
 - Prompt budget: about 1471 tokens for the whole prompt, base and character boxes together. That figure is also NovelAI's hard ceiling, so treat it as a wall rather than a target.
 - Rendered lettering has its own budget of about 750 characters, counted separately from the prompt.
-- The natural language body can be rich and run to several paragraphs. Full rewards detail: layout, interactions, panel structure and distinct silhouettes, not repeated aesthetics.
+- The natural language body can be rich and run to several paragraphs. Full rewards detail: interactions, panel structure and distinct silhouettes, not repeated aesthetics. Layout is the exception: state where people and objects are once, in short present-tense sentences, and spend the extra room on light, surfaces and mood.
 - Use high complexity for detailed work, and ultra complexity for ornate illustration and comics.
-- For comics, write full pages: name the speaker in each panel, and include sound effects.
+- For comics, write one full page of up to six panels: describe each panel in the prose, name the speaker of every line and quote it there, and include sound effects.
 - If the idea does not fit the budget, compress it in place. Do not suggest another model.`,
 };
 
@@ -417,9 +483,9 @@ First a tag line: the count, then series and character tags, then the V5 complex
 
 Then the natural language body, describing the scene as prose: who the focus is, what they are doing, the light, the surfaces, the depth. This is the part V5 was trained for, so write it properly rather than reciting the tag line back.
 
-Then, only if the image contains written words, a Text: sub-block: the literal word Text: on its own line, followed by the lettering to be rendered, written exactly as it should appear. A line break inside a string is a line break in the image. A blank line starts a separate string, which is how a second sign or a second speech bubble is written. Everything after Text: is treated as lettering, so it is always the last thing in BASE and nothing may follow it.
+Then, only if the image contains written words, a Text: sub-block: the literal word Text: on its own line, followed by the lettering to be rendered, written exactly as it should appear. Only the words themselves go here: no speaker names, no page or panel headings, no quotation marks around a line. A line break inside a string is a line break in the image. A blank line starts a separate string, which is how a second sign or a second speech bubble is written. Everything after Text: is treated as lettering, so it is always the last thing in BASE and nothing may follow it.
 
-Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe, then pose and placement in frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features: spelled out for an original or little known character, and only where they differ from canon for a character V5 already knows. A section with nothing to say is simply left out.
+Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe as far as the framing and anything in front of them let it show, then pose and side of the frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features: spelled out for an original or little known character, and only where they differ from canon for a character V5 already knows. A section with nothing to say is simply left out.
 
 BASE:
 1girl, solo, <series>, <character>, high complexity, <framing>, <setting tags>
@@ -436,13 +502,19 @@ CHAR 1:
 girl, <name>, <hair>, <eyes>, <features>,
 <body>,
 <expression>, <gaze>,
-<outfit head to toe>,
-<pose>, <placement in frame>
+<outfit head to toe, what shows>,
+<pose>, <side of the frame>
+
+CHAR 1 UC:
+<the other characters' distinctive garments, or leave this line out>
 
 CHAR 2:
 boy, <the same five sections>
 
-Write one CHAR block per distinct character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. BASE is required. Everything else is optional.`;
+CHAR 2 UC:
+<the same, for this box>
+
+Write one CHAR block per distinct character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. A CHAR n UC line goes straight after its own CHAR block and holds that character's own undesired content. UC is the whole image's undesired content and never holds one character's garments. BASE is required. Everything else is optional.`;
 
 /**
  * Source fidelity for a session turn with no pasted prompt.
@@ -460,6 +532,7 @@ const SESSION_REVISION_FIDELITY = `SOURCE FIDELITY
 - A later instruction overrides an earlier detail only where the two actually conflict, and then only that detail. Asking for a smile replaces a frown; asking for rain does not remove a furrowed brow.
 - Carry the untouched parts over word for word wherever the wording still works. The user built them up turn by turn, and quietly rewording or trimming them is the failure this mode exists to avoid.
 - Keep the same characters in the same CHAR order unless the instruction adds, removes or swaps one.
+- Outfits stay in the CHAR blocks they were written in. Never move one up into BASE while revising, and keep each CHAR n UC line unless the outfits it keeps apart changed.
 - Do not invent a location, a time of day, weather, a wardrobe, a mood or a camera angle that neither this message nor an earlier turn asked for.
 - A named character keeps their name, their tags and their canon through every revision.`;
 
@@ -475,16 +548,24 @@ ${current}
 - Every answer is still a complete prompt in the output format, never a diff against an earlier answer.`;
 }
 
-/** The system turn for one rewrite. */
-export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
-  return [
+/**
+ * The V5 system prompt split into its static ~4.7k-token specification prefix
+ * (eligible for prompt caching on Anthropic and OpenRouter Anthropic models)
+ * and the per-request/per-session dynamic suffix.
+ */
+export function naiRewriteSystemPromptParts(ctx: NaiPromptContext): { cached: string; dynamic: string } {
+  const cached = [
     SHARED_RULES,
-    naiVocabularyBlock(ctx.rating ?? "sfw"),
+    naiVocabularyBlock(ctx.rating ?? "sfw", ctx.minorRule ?? true),
     SHARED_RULES_TAIL,
     VARIANT_BLOCKS[ctx.variant],
     QUALITY_TAGS,
     ucPresetDirective(ctx.ucPreset),
     TECHNIQUE,
+  ]
+    .filter((block) => block !== "")
+    .join("\n\n");
+  const dynamic = [
     ctx.recipes ?? "",
     ctx.savedCharacters ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
@@ -496,6 +577,13 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
   ]
     .filter((block) => block !== "")
     .join("\n\n");
+  return { cached, dynamic };
+}
+
+/** The system turn for one rewrite. */
+export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
+  const { cached, dynamic } = naiRewriteSystemPromptParts(ctx);
+  return [cached, dynamic].filter((block) => block !== "").join("\n\n");
 }
 
 /**
@@ -591,7 +679,10 @@ function naiEditUserPrompt(
 ): string {
   const mark = (text: string) => text.trim() || "(empty)";
   const boxes = existing.characters
-    .map((box, i) => `CHAR ${i + 1}:\n${mark(box)}`)
+    .map((box, i) => {
+      const uc = existing.characterUcs?.[i]?.trim();
+      return `CHAR ${i + 1}:\n${mark(box)}${uc ? `\n\nCHAR ${i + 1} UC:\n${uc}` : ""}`;
+    })
     .join("\n\n");
 
   return `This is the user's prompt as it stands now.
@@ -602,7 +693,51 @@ ${mark(existing.base)}
 UC:
 ${mark(existing.uc)}${boxes ? `\n\n${boxes}` : ""}
 
-Apply this instruction to it, and return the whole prompt again in the output format: BASE and UC always, changed or not, then one CHAR block for each character still in the scene. A character the instruction takes out is removed by leaving its block out, not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
+Apply this instruction to it, and return the whole prompt again in the output format: BASE and UC always, changed or not, then one CHAR block for each character still in the scene, each followed by its CHAR n UC line when it has one. A character the instruction takes out is removed by leaving its block out, not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
 
 ${instruction(prompt, references)}${referenceManifest(references)}`;
+}
+
+/**
+ * The comic page builder's panels, written by the same rules as the V5 rewrite.
+ *
+ * Each panel is generated as its own image and the app assembles the page, so
+ * this replaces the rewrite's one-image-is-one-page comic advice, its character
+ * boxes and its labelled output with one panel per entry in JSON. The cast's
+ * looks, the page style and the setting are added to every panel by the app,
+ * and the dialogue becomes the panel's Text: block, so the model writes neither.
+ */
+const COMIC_PANELS = `COMIC PANELS
+This request is not the usual rewrite. You are writing the panels of one comic page, and each panel is generated as its own image. The app draws the borders and assembles the page.
+- One panel is one image. Never write comic, multiple views, border, panel numbers or several panels into a panel's prompt.
+- There are no character boxes here. Counts, who is in the panel and where they stand go in the panel's own prompt, in its tag line and its prose.
+- The app adds the cast's appearance tags, the page style and the page setting to every panel. Do not repeat them. Name the cast by name in the prose so it is clear who does what.
+- A panel prompt is a tag line (count, complexity, shot and framing, pose, action, expression, key objects, background), a blank line, then a short natural language body: camera, who stands where, the action, the light and the mood. Keep it to what this one panel shows.
+- Dialogue goes in the panel's dialogue list, never in the prompt and never as a Text: block: the app letters it. One string per speech bubble, only the words, exactly as lettered, no speaker names and no quotation marks. At most two short bubbles per panel; panels are small.
+- In the prose, name the speaker of each line and quote the line there, word for word, so the bubble lands on the right person. Add speech bubble and the text tag for its language to the tag line when there is dialogue.
+- Keep the story beats in order and keep each panel's beat. Do not invent beats, characters or places the page does not have.
+- Budget per panel: well under a third of the variant's prompt budget, and the dialogue short enough to letter in a small panel.
+
+OUTPUT FORMAT
+Reply with JSON only, no markdown fences and no commentary:
+{"panels":[{"panel":<number>,"prompt":"<tag line>\\n\\n<natural language body>","dialogue":["<bubble>", "..."]}]}
+Use an empty dialogue list for a silent panel. Write a panel only when it has a beat or a prompt to work from.`;
+
+export interface NaiComicContext {
+  variant: NaiVariant;
+  rating?: ContentRating;
+  minorRule?: boolean;
+  language: NaiLanguage;
+}
+
+/** The system turn for writing a comic page's panels for V5. */
+export function naiComicSystemPrompt(ctx: NaiComicContext): string {
+  return [
+    SHARED_RULES,
+    naiVocabularyBlock(ctx.rating ?? "sfw", ctx.minorRule ?? true),
+    SHARED_RULES_TAIL,
+    `MODEL: V5 ${variantLabel(ctx.variant)}`,
+    naiLanguageDirective(ctx.language),
+    COMIC_PANELS,
+  ].join("\n\n");
 }

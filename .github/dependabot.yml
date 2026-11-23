@@ -1,4 +1,7 @@
 version: 2
+# Minor and patch bumps come as one weekly PR per ecosystem, so a main merge
+# rebases three PRs instead of a dozen (each one starts CI). Majors and
+# security updates still arrive as their own PRs.
 updates:
   # Bump pinned GitHub Actions SHAs automatically.
   # Dependabot understands the "@SHA # tag" comment format and updates both together.
@@ -12,6 +15,10 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      github-actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Bump npm dependencies (package-lock.json at repo root).
   - package-ecosystem: "npm"
@@ -24,6 +31,10 @@ updates:
     labels:
       - "dependencies"
       - "npm"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Bump Cargo dependencies (Cargo.toml lives in src-tauri/, not the repo root).
   - package-ecosystem: "cargo"
@@ -36,3 +47,7 @@ updates:
     labels:
       - "dependencies"
       - "rust"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

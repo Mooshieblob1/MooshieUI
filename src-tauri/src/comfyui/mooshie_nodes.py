@@ -26,6 +26,31 @@ os.makedirs(_ultralytics_dir, exist_ok=True)
 folder_paths.add_model_folder_path("ultralytics", _ultralytics_dir)
 
 
+def _detailer_target_size(crop_h, crop_w, guide_size, max_size=1536, align=8):
+    """Compute aligned target size without downscaling crops larger than guide_size."""
+    crop_max = max(crop_h, crop_w)
+    target_max = max(guide_size, min(crop_max, max_size))
+    scale = target_max / crop_max
+    new_h = max(align, round(crop_h * scale / align) * align)
+    new_w = max(align, round(crop_w * scale / align) * align)
+    return new_h, new_w
+
+
+def _resize_bhwc(img, target_h, target_w):
+    """Resize a BHWC image tensor using area for downscaling and clamped bicubic for upscaling."""
+    _, src_h, src_w, _ = img.shape
+    if src_h == target_h and src_w == target_w:
+        return img
+    nchw = img.permute(0, 3, 1, 2)
+    if target_h < src_h or target_w < src_w:
+        out = torch.nn.functional.interpolate(nchw, size=(target_h, target_w), mode="area")
+    else:
+        out = torch.nn.functional.interpolate(
+            nchw, size=(target_h, target_w), mode="bicubic", align_corners=False
+        )
+    return out.permute(0, 2, 3, 1).clamp(0, 1)
+
+
 class MooshieFaceDetailer:
     """Detect faces with YOLOv8, crop each to guide_size, re-denoise, composite back."""
 
@@ -128,17 +153,9 @@ class MooshieFaceDetailer:
                 # Crop from current result
                 crop = result[b : b + 1, cy1:cy2, cx1:cx2, :].clone()
 
-                # Resize to guide_size (maintain aspect, round to 8 for VAE)
-                scale = guide_size / max(crop_h, crop_w)
-                new_h = max(8, round(crop_h * scale / 8) * 8)
-                new_w = max(8, round(crop_w * scale / 8) * 8)
-
-                resized = torch.nn.functional.interpolate(
-                    crop.permute(0, 3, 1, 2),
-                    size=(new_h, new_w),
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
+                # Resize without downscaling crops that already exceed guide_size
+                new_h, new_w = _detailer_target_size(crop_h, crop_w, guide_size, align=8)
+                resized = _resize_bhwc(crop, new_h, new_w)
 
                 # Create feathered mask at original crop resolution for pixel-space blending.
                 # Use a generous feather proportional to the crop size for seamless edges.
@@ -179,12 +196,7 @@ class MooshieFaceDetailer:
                     )
 
                 # Resize back to original crop size
-                back = torch.nn.functional.interpolate(
-                    decoded.permute(0, 3, 1, 2),
-                    size=(crop_h, crop_w),
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
+                back = _resize_bhwc(decoded, crop_h, crop_w)
 
                 # Blend mask is already at original crop resolution
                 blend_mask = mask.unsqueeze(0).unsqueeze(-1)  # [1, H, W, 1]
@@ -329,15 +341,8 @@ class MooshieSegmentDetailer:
 
             crop = result[b : b + 1, cy1:cy2, cx1:cx2, :].clone()
 
-            scale = guide_size / max(crop_h, crop_w)
-            new_h = max(8, round(crop_h * scale / 8) * 8)
-            new_w = max(8, round(crop_w * scale / 8) * 8)
-            resized = torch.nn.functional.interpolate(
-                crop.permute(0, 3, 1, 2),
-                size=(new_h, new_w),
-                mode="bilinear",
-                align_corners=False,
-            ).permute(0, 2, 3, 1)
+            new_h, new_w = _detailer_target_size(crop_h, crop_w, guide_size, align=8)
+            resized = _resize_bhwc(crop, new_h, new_w)
 
             latent = vae.encode(resized[:, :, :, :3])
             latent = comfy.sample.fix_empty_latent_channels(model, latent)
@@ -367,12 +372,7 @@ class MooshieSegmentDetailer:
                     -1, decoded.shape[-3], decoded.shape[-2], decoded.shape[-1]
                 )
 
-            back = torch.nn.functional.interpolate(
-                decoded.permute(0, 3, 1, 2),
-                size=(crop_h, crop_w),
-                mode="bilinear",
-                align_corners=False,
-            ).permute(0, 2, 3, 1)
+            back = _resize_bhwc(decoded, crop_h, crop_w)
 
             # Composite with the blurred detected mask so irregular shapes
             # (eyes, hands) blend cleanly — not a rectangular feather.
@@ -493,6 +493,209 @@ class MooshieSegmentDetailer:
         return m[0, 0].clamp(0, 1)
 
 
+class MooshieMaskDetailer:
+    """Re-detail a painted area: grow the mask, crop around it at crop_factor
+    times its box, detail the crop at guide_size and blend it back through the
+    feathered mask. The Moody Moss workflow's "Detail Anything" pass, without
+    the Impact Pack SEGS nodes it was built with."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "mask": ("MASK",),
+                "model": ("MODEL",),
+                "vae": ("VAE",),
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "steps": ("INT", {"default": 20, "min": 1, "max": 100}),
+                "cfg": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                "denoise": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "guide_size": ("INT", {"default": 1440, "min": 64, "max": 2048, "step": 8}),
+                "crop_factor": ("FLOAT", {"default": 6.1, "min": 1.0, "max": 10.0, "step": 0.1}),
+                "mask_dilation": ("INT", {"default": 8, "min": 0, "max": 256}),
+                "feather": ("INT", {"default": 16, "min": 0, "max": 100}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "process"
+    CATEGORY = "mooshie"
+
+    def process(
+        self,
+        image,
+        mask,
+        model,
+        vae,
+        positive,
+        negative,
+        seed,
+        steps,
+        cfg,
+        sampler_name,
+        scheduler,
+        denoise,
+        guide_size,
+        crop_factor,
+        mask_dilation,
+        feather,
+    ):
+        B, H, W, C = image.shape
+        result = image.clone()
+        if mask.ndim == 2:
+            mask = mask.unsqueeze(0)
+        mask = torch.nn.functional.interpolate(
+            mask[:, None].float(), size=(H, W), mode="bilinear", align_corners=False
+        )[:, 0].to(image.device)
+
+        for b in range(B):
+            area = (mask[min(b, mask.shape[0] - 1)] > 0.5).float()
+            if mask_dilation > 0:
+                area = torch.nn.functional.max_pool2d(
+                    area[None, None],
+                    kernel_size=mask_dilation * 2 + 1,
+                    stride=1,
+                    padding=mask_dilation,
+                )[0, 0]
+            ys, xs = torch.nonzero(area > 0.5, as_tuple=True)
+            if ys.numel() < 16:
+                print(f"[MooshieMaskDetailer] Nothing painted (batch {b})")
+                continue
+
+            # Crop region: the painted box grown crop_factor times around its centre.
+            y1, y2 = int(ys.min().item()), int(ys.max().item()) + 1
+            x1, x2 = int(xs.min().item()), int(xs.max().item()) + 1
+            cy, cx = (y1 + y2) / 2, (x1 + x2) / 2
+            half_h = (y2 - y1) * crop_factor / 2
+            half_w = (x2 - x1) * crop_factor / 2
+            cy1, cy2 = max(0, int(cy - half_h)), min(H, int(cy + half_h))
+            cx1, cx2 = max(0, int(cx - half_w)), min(W, int(cx + half_w))
+            crop_h, crop_w = cy2 - cy1, cx2 - cx1
+            if crop_h < 8 or crop_w < 8:
+                continue
+
+            blend = MooshieSegmentDetailer._blur_mask(area, feather)[cy1:cy2, cx1:cx2]
+            crop = result[b : b + 1, cy1:cy2, cx1:cx2, :].clone()
+
+            new_h, new_w = _detailer_target_size(crop_h, crop_w, guide_size, align=16)
+            resized = _resize_bhwc(crop, new_h, new_w)
+
+            latent = {"samples": vae.encode(resized[:, :, :, :3])}
+            latent["samples"] = comfy.sample.fix_empty_latent_channels(model, latent["samples"])
+            # Only the painted area is re-noised; the crop around it gives context.
+            noise_mask = torch.nn.functional.interpolate(
+                blend[None, None], size=(new_h, new_w), mode="bilinear", align_corners=False
+            )
+
+            noise = comfy.sample.prepare_noise(latent["samples"], seed + b)
+            callback = latent_preview.prepare_callback(model, steps)
+            samples = comfy.sample.sample(
+                model,
+                noise,
+                steps,
+                cfg,
+                sampler_name,
+                scheduler,
+                positive,
+                negative,
+                latent["samples"],
+                denoise=denoise,
+                noise_mask=noise_mask,
+                force_full_denoise=True,
+                callback=callback,
+                disable_pbar=False,
+                seed=seed + b,
+            )
+
+            decoded = vae.decode(samples)
+            if decoded.ndim == 5:
+                decoded = decoded.reshape(-1, decoded.shape[-3], decoded.shape[-2], decoded.shape[-1])
+            back = _resize_bhwc(decoded, crop_h, crop_w).to(result.device)
+
+            weight = blend.unsqueeze(0).unsqueeze(-1)
+            original_crop = result[b : b + 1, cy1:cy2, cx1:cx2, :]
+            result[b : b + 1, cy1:cy2, cx1:cx2, :] = (
+                back[..., : original_crop.shape[-1]] * weight + original_crop * (1 - weight)
+            ).clamp(0, 1)
+
+        return (result,)
+
+
+class MooshieSkinContrast:
+    """Blend a 1x skin contrast model over the image. The weights (brigadeiro's
+    1xSkinContrast-High-SuperUltraCompact, CC0-1.0) ship next to this file, so
+    nothing has to be downloaded."""
+
+    WEIGHTS = "skin_contrast_1x.safetensors"
+    _model = None
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "strength": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "process"
+    CATEGORY = "mooshie"
+
+    @classmethod
+    def _load(cls):
+        if cls._model is None:
+            from spandrel import ModelLoader
+
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), cls.WEIGHTS)
+            state_dict = comfy.utils.load_torch_file(path, safe_load=True)
+            cls._model = ModelLoader().load_from_state_dict(state_dict).eval()
+        return cls._model
+
+    def process(self, image, strength):
+        if strength <= 0:
+            return (image,)
+        descriptor = self._load()
+        device = comfy.model_management.get_torch_device()
+        descriptor.to(device)
+        alpha = image[..., 3:] if image.shape[-1] == 4 else None
+        pixels = image[..., :3].movedim(-1, -3)
+        out = torch.empty_like(pixels)
+        tile = 512
+        try:
+            with torch.no_grad():
+                for b in range(pixels.shape[0]):
+                    while True:
+                        try:
+                            out[b : b + 1] = comfy.utils.tiled_scale(
+                                pixels[b : b + 1].to(device),
+                                lambda a: descriptor(a.float()),
+                                tile_x=tile,
+                                tile_y=tile,
+                                overlap=32,
+                                upscale_amount=descriptor.scale,
+                                output_device=out.device,
+                            ).to(out.dtype)
+                            break
+                        except Exception as e:
+                            comfy.model_management.raise_non_oom(e)
+                            tile //= 2
+                            if tile < 128:
+                                raise
+        finally:
+            descriptor.to("cpu")
+        contrasted = out.clamp(0, 1).movedim(-3, -1)
+        blended = (image[..., :3] * (1 - strength) + contrasted * strength).clamp(0, 1)
+        if alpha is not None:
+            blended = torch.cat((blended, alpha), dim=-1)
+        return (blended,)
+
+
 class MooshieSaveImage:
     """Output node that keeps images in RAM and sends them over WebSocket.
 
@@ -578,15 +781,24 @@ class MooshieSaveImage:
         return {"ui": {"images": []}}
 
     @staticmethod
-    def _encode_png_8bit(frame):
+    def _to_rgba(pixels, opaque):
+        """Pack an HxWxC array (C = 3 or 4) as HxWx4, keeping a 4th channel
+        when the image has one and filling alpha with ``opaque`` otherwise."""
+        h, w, c = pixels.shape
+        if c == 4:
+            return np.ascontiguousarray(pixels)
+        rgba = np.full((h, w, 4), opaque, dtype=pixels.dtype)
+        rgba[:, :, :3] = pixels[:, :, :3]
+        return rgba
+
+    @classmethod
+    def _encode_png_8bit(cls, frame):
         from PIL import Image
 
         img_np = (255.0 * frame).clip(0, 255).astype(np.uint8)
-        # Output RGBA (alpha=255) so the PNG has an alpha channel.
-        h, w, _ = img_np.shape
-        rgba = np.full((h, w, 4), 255, dtype=np.uint8)
-        rgba[:, :, :3] = img_np[:, :, :3]
-        img = Image.fromarray(rgba, "RGBA")
+        # Output RGBA so the PNG has an alpha channel: the model's own alpha
+        # when it made one (Ming-Image, Qwen-Image 2.1), else opaque.
+        img = Image.fromarray(cls._to_rgba(img_np, 255), "RGBA")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
@@ -613,16 +825,12 @@ class MooshieSaveImage:
 
         if bit_depth == "16bit":
             fmt_tag = cls.FMT_RAW_RGBA16
-            rgb_u16 = (65535.0 * frame).clip(0, 65535).astype(np.uint16)
-            rgba = np.full((h, w, 4), 0xFFFF, dtype=np.uint16)
-            rgba[:, :, :3] = rgb_u16[:, :, :3]
+            rgba = cls._to_rgba((65535.0 * frame).clip(0, 65535).astype(np.uint16), 0xFFFF)
             depth = 16
             pixels = rgba.tobytes()  # native endian, matches zune-jpegxl 16-bit input
         else:
             fmt_tag = cls.FMT_RAW_RGBA8
-            rgb_u8 = (255.0 * frame).clip(0, 255).astype(np.uint8)
-            rgba = np.full((h, w, 4), 255, dtype=np.uint8)
-            rgba[:, :, :3] = rgb_u8[:, :, :3]
+            rgba = cls._to_rgba((255.0 * frame).clip(0, 255).astype(np.uint8), 255)
             depth = 8
             pixels = rgba.tobytes()
 
@@ -638,18 +846,23 @@ class MooshieSaveImage:
         """
         arr = np.nan_to_num(image_tensor.cpu().numpy(), nan=0.0)
         arr = (65535.0 * arr).clip(0, 65535).astype(np.uint16)
+        # Keep a model-made alpha channel (RGBA, colour type 6); plain RGB
+        # images stay 16-bit RGB (colour type 2) as before.
+        has_alpha = arr.shape[-1] == 4
+        if not has_alpha:
+            arr = np.ascontiguousarray(arr[:, :, :3])
 
         try:
             import cv2
-            # OpenCV expects BGR; our tensor is RGB
-            bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            # OpenCV expects BGR(A); our tensor is RGB(A)
+            bgr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGRA if has_alpha else cv2.COLOR_RGB2BGR)
             ok, encoded = cv2.imencode(".png", bgr)
             if ok and encoded is not None:
                 return encoded.tobytes()
         except ImportError:
             pass
 
-        # Pure-Python fallback: write a valid 16-bit RGB PNG using zlib.
+        # Pure-Python fallback: write a valid 16-bit RGB(A) PNG using zlib.
         # PIL cannot write 16-bit RGB, so we build the PNG manually.
         import zlib
 
@@ -657,7 +870,7 @@ class MooshieSaveImage:
         # Convert to big-endian (PNG stores 16-bit values as BE)
         arr_be = arr.astype(">u2")
 
-        # Build raw image data: each row = filter_byte(0) + 6 bytes per pixel
+        # Build raw image data: each row = filter_byte(0) + 6 or 8 bytes per pixel
         raw_rows = []
         for y in range(h):
             raw_rows.append(b"\x00")  # filter: none
@@ -672,8 +885,8 @@ class MooshieSaveImage:
 
         buf = io.BytesIO()
         buf.write(b"\x89PNG\r\n\x1a\n")  # PNG signature
-        # IHDR: width, height, bit_depth=16, color_type=2 (RGB)
-        ihdr_data = struct.pack(">IIBBBBB", w, h, 16, 2, 0, 0, 0)
+        # IHDR: width, height, bit_depth=16, color_type=6 (RGBA) or 2 (RGB)
+        ihdr_data = struct.pack(">IIBBBBB", w, h, 16, 6 if has_alpha else 2, 0, 0, 0)
         buf.write(_png_chunk(b"IHDR", ihdr_data))
         buf.write(_png_chunk(b"IDAT", compressed))
         buf.write(_png_chunk(b"IEND", b""))
@@ -1403,6 +1616,8 @@ NODE_CLASS_MAPPINGS = {
     "MooshieFaceDetailer": MooshieFaceDetailer,
     "MooshieFaceDetect": MooshieFaceDetect,
     "MooshieSegmentDetailer": MooshieSegmentDetailer,
+    "MooshieMaskDetailer": MooshieMaskDetailer,
+    "MooshieSkinContrast": MooshieSkinContrast,
     "MooshieSaveImage": MooshieSaveImage,
     "MooshieCheckpointLoaderPath": MooshieCheckpointLoaderPath,
     "MooshieDiffusionLoaderPath": MooshieDiffusionLoaderPath,
@@ -1417,6 +1632,13 @@ register_h3_draft_routes()
 from .h3_preview import NODE_CLASS_MAPPINGS as H3_PREVIEW_NODES
 NODE_CLASS_MAPPINGS.update(H3_PREVIEW_NODES)
 
+# Anima art style reference (vendored, Apache-2.0, see anima_art_style.LICENSE).
+from .anima_art_style import (
+    NODE_CLASS_MAPPINGS as ANIMA_ART_STYLE_NODES,
+    NODE_DISPLAY_NAME_MAPPINGS as ANIMA_ART_STYLE_NAMES,
+)
+NODE_CLASS_MAPPINGS.update(ANIMA_ART_STYLE_NODES)
+
 from .gguf_compat import install as install_gguf_compat
 install_gguf_compat()
 
@@ -1430,9 +1652,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieFaceDetailer": "Mooshie Face Detailer",
     "MooshieFaceDetect": "Mooshie Face Detect",
     "MooshieSegmentDetailer": "Mooshie Segment Detailer",
+    "MooshieMaskDetailer": "Mooshie Mask Detailer",
+    "MooshieSkinContrast": "Mooshie Skin Contrast",
     "MooshieSaveImage": "Mooshie Save Image",
     "MooshieCheckpointLoaderPath": "Mooshie Checkpoint Loader (path)",
     "MooshieDiffusionLoaderPath": "Mooshie Diffusion Model Loader (path)",
     "MooshieSaveVideo": "Mooshie Save Video",
     "MooshieLoadVideoPath": "Mooshie Load Video (Path)",
 }
+NODE_DISPLAY_NAME_MAPPINGS.update(ANIMA_ART_STYLE_NAMES)

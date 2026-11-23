@@ -47,6 +47,11 @@ function tokenize(prompt: string): Array<{ token: string; hadAtPrefix: boolean }
     // — plus \+ / \- , which guard a name whose own trailing character would
     // otherwise read as InvokeAI emphasis (e.g. `neverland\+`).
     t = t.replace(/\\([()\[\]+-])/g, "$1");
+    // NovelAI weights: the `1.2::` opener and `::` closer of a numeric span,
+    // and `{tag}` emphasis. A span over several tags is split by the comma
+    // above, so each half is stripped on its own.
+    t = t.replace(/-?\d*\.?\d+::/g, "").replace(/::/g, "").replace(/^\{+|\}+$/g, "").trim();
+    if (!t) continue;
     // Strip surrounding weight parens/brackets (repeated)
     while (/^[\(\[]/.test(t) && /[\)\]]$/.test(t)) {
       t = t.slice(1, -1).trim();

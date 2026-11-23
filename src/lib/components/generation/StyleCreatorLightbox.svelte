@@ -139,9 +139,11 @@
       {/if}
 
       <!-- Controls: hidden until the pointer is over the frame, so the image
-           is judged on its own. focus-within keeps them up for keyboard use. -->
+           is judged on its own. focus-within keeps them up for keyboard use.
+           A touch screen has no hover, so there they always show: hidden
+           buttons would still take taps. -->
       <div
-        class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100"
+        class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
       >
         <div
           class="pointer-events-auto flex max-w-full flex-col items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/90 p-3 shadow-xl"

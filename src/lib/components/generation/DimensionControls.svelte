@@ -3,15 +3,17 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
-  import { MODEL_FAMILY_LABELS, type ModelFamily } from "../../utils/modelFamily.js";
+  import { modelFamilyLabel, type ModelFamily } from "../../utils/modelFamily.js";
   import { NOVELAI_DIMENSION_STEP, naiV5Variant } from "../../utils/novelaiModels.js";
+  import { BUCKET_DIMENSION_STEP, dimsForAspect as computeDimsForAspect } from "../../utils/aspectDimensions.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
 
   interface Props {
     suggestedAspect?: { w: number; h: number } | null;
+    pixelBudgetOnly?: boolean;
   }
-  let { suggestedAspect = null }: Props = $props();
+  let { suggestedAspect = null, pixelBudgetOnly = false }: Props = $props();
 
   const AR_COLLAPSE_KEY = "mooshieui.generation.aspectRatioCollapsed.v1";
   let arOpen = $state(localStorage.getItem(AR_COLLAPSE_KEY) !== "true");
@@ -32,53 +34,24 @@
   let lastSyncedDimensions = "";
 
   /**
-   * The pixel grid every dimension has to land on.
+   * The pixel grid every dimension preset has to land on.
    *
-   * NovelAI rejects anything that is not a multiple of 64, and its own UI steps
-   * the side length 1024 -> 1088 -> 1152. Local backends accept 8, so the
-   * coarser grid applies in NovelAI mode only.
+   * NovelAI rejects anything that is not a multiple of 64, and SDXL-family
+   * models (sdxl, illustrious, pony, mugen) use the same 64px training buckets
+   * (e.g. 3:2 at 1024 -> 1216x832). Other local backends stay on an 8px grid.
    */
-  const quantum = $derived(generation.isNovelAi ? NOVELAI_DIMENSION_STEP : 8);
+  const useBucketGrid = $derived(generation.isNovelAi || generation.isSdxlLike);
+  const quantum = $derived(
+    generation.isNovelAi
+      ? NOVELAI_DIMENSION_STEP
+      : generation.isSdxlLike
+        ? BUCKET_DIMENSION_STEP
+        : 8
+  );
 
-  /** Try to match persisted width/height back to a preset or simplified ratio. */
-  /**
-   * Largest pair on the pixel grid whose area does not go over `area`.
-   *
-   * NovelAI prices by pixel count and Opus only covers a generation while it
-   * stays at or under one megapixel, so rounding a ratio up past the requested
-   * area is what quietly turns a free 1024 generation into a paid one. That is
-   * what 2:3 did: the area-faithful formula picked 832x1280, 1.06 MP, while
-   * 3:4 happened to round down and stayed free. Walking the width across a few
-   * grid steps and taking the tallest height that still fits lands on
-   * 832x1216, which is NovelAI's own portrait preset.
-   */
-  function dimsUnderArea(aw: number, ah: number, area: number, q: number): { w: number; h: number } {
-    const target = aw / ah;
-    let best: { w: number; h: number; err: number } | null = null;
-    const mid = Math.round(Math.sqrt(area * target) / q);
-    for (let k = Math.max(1, mid - 2); k <= mid + 2; k++) {
-      const w = k * q;
-      const h = Math.floor(area / w / q) * q;
-      if (h < q) continue;
-      // Scored in log space so a result that is too wide and one that is too
-      // tall by the same factor are treated as equally far off.
-      const err = Math.abs(Math.log(w / h / target));
-      if (!best || err < best.err) best = { w, h, err };
-    }
-    return best ? { w: best.w, h: best.h } : { w: q, h: q };
-  }
-
-  /** Compute dimensions for a given aspect ratio using the area-faithful formula. */
+  /** Compute dimensions for a given aspect ratio. */
   function dimsForAspect(aw: number, ah: number, side: number, q = quantum): { w: number; h: number } {
-    const area = side * side;
-    if (generation.isNovelAi) return dimsUnderArea(aw, ah, area, q);
-    const wA = Math.max(q, Math.round(Math.sqrt(area * (aw / ah)) / q) * q);
-    const hA = Math.max(q, Math.round(area / wA / q) * q);
-    const hB = Math.max(q, Math.round(Math.sqrt(area * (ah / aw)) / q) * q);
-    const wB = Math.max(q, Math.round(area / hB / q) * q);
-    return Math.abs(wA * hA - area) <= Math.abs(wB * hB - area)
-      ? { w: wA, h: hA }
-      : { w: wB, h: hB };
+    return computeDimsForAspect(aw, ah, side, q, useBucketGrid);
   }
 
   /**
@@ -163,9 +136,9 @@
     });
   });
 
-  // The same eight shortcuts on every backend. NovelAI accepts any size on its
-  // 64px grid, so the ratio itself is unrestricted there too; only the grid
-  // (`quantum`) and the round-down area rule in `dimsUnderArea` differ.
+  // The same eight shortcuts on every backend. NovelAI and SDXL-family models
+  // snap to the 64px round-down bucket grid (`quantum` + `dimsUnderArea`),
+  // while other local models stay on the 8px area-faithful grid.
   const presets: ReadonlyArray<{ label: string; w: number; h: number }> = [
     { label: "1:1", w: 1, h: 1 },
     { label: "4:3", w: 4, h: 3 },
@@ -310,7 +283,7 @@
         : `${recommended.min}–${recommended.max}`
       : ""
   );
-  const familyLabel = $derived(MODEL_FAMILY_LABELS[generation.modelFamily] ?? "");
+  const familyLabel = $derived(modelFamilyLabel(generation.modelFamily) ?? "");
 
   /** Fit a w:h ratio into a max bounding box for preset preview chips. */
   function aspectPreviewSize(w: number, h: number, boxPx = 12): { w: number; h: number } {
@@ -323,6 +296,7 @@
 </script>
 
 <div class="space-y-3">
+  {#if !pixelBudgetOnly}
   <!-- Aspect Ratio -->
   <div>
     <div class="flex items-center mb-1.5">
@@ -359,8 +333,8 @@
           onclick={() => applyPreset(preset.w, preset.h)}
           class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-colors {activePreset === preset.label
             ? isFree
-              ? 'bg-indigo-600 border-green-400 text-white'
-              : 'bg-indigo-600 border-indigo-600 text-white'
+              ? 'bg-neutral-700 border-green-400 text-neutral-50'
+              : 'bg-neutral-700 border-neutral-500 text-neutral-50'
             : isFree
               ? 'bg-neutral-800 border-green-500/60 text-neutral-400 hover:bg-neutral-700'
               : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
@@ -415,9 +389,9 @@
         </svg>
       </button>
     </div>
-    <p class="text-[10px] text-neutral-500 mt-1">{locale.t('generation.dimensions.ratio_hint')}</p>
     {/if}
   </div>
+  {/if}
 
   <!-- Side Length -->
   <div>
@@ -462,7 +436,7 @@
         <button
           onclick={() => applySideLength(side)}
           class="relative text-xs px-2 py-1 rounded transition-colors {sideLength === side
-            ? 'bg-indigo-600 text-white'
+            ? 'bg-neutral-700 border border-neutral-500 text-neutral-50'
             : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
           title={isRecommended && familyLabel
             ? locale.t('generation.dimensions.recommended', { model: familyLabel, res: recommendedLabel })
@@ -492,8 +466,30 @@
   </div>
 
   <!-- Resulting dimensions -->
-  <div class="flex items-center justify-between text-xs text-neutral-400">
-    <span>{locale.t('generation.dimensions.result')}</span>
-    <span class="text-neutral-200">{generation.width} &times; {generation.height}</span>
-  </div>
+  {#if pixelBudgetOnly}
+    {@const budgetPixels = Math.max(1, generation.width * generation.height)}
+    {@const equivSide = Math.round(Math.sqrt(budgetPixels))}
+    {@const mp = locale.formatDecimal(budgetPixels / 1_000_000, 2)}
+    <div class="flex items-center justify-between text-xs text-neutral-400">
+      <span>{locale.t('generation.dimensions.pixel_budget')}<InfoTip text={locale.t('generation.dimensions.pixel_budget_tip')} /></span>
+      <span class="text-neutral-200">~{equivSide} &times; {equivSide} ({mp} MP)</span>
+    </div>
+  {:else}
+    <div class="flex items-center justify-between text-xs text-neutral-400">
+      <span>{locale.t('generation.dimensions.result')}</span>
+      <span class="text-neutral-200">{generation.width} &times; {generation.height}</span>
+    </div>
+  {/if}
+
+  {#if generation.supportsTransparentBackground}
+    <label class="flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">
+      <input
+        type="checkbox"
+        bind:checked={generation.transparentBackground}
+        onchange={() => generation.saveSettings()}
+        class="accent-indigo-500"
+      />
+      {locale.t('generation.dimensions.transparent')}<InfoTip text={locale.t('generation.dimensions.transparent_tip')} />
+    </label>
+  {/if}
 </div>

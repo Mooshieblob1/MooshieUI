@@ -51,9 +51,10 @@ pub struct PromptQueue {
     owners: std::sync::RwLock<HashMap<String, Option<String>>>,
     /// prompt_id → worker_id that is executing this prompt.
     worker_map: std::sync::RwLock<HashMap<String, u32>>,
-    /// Standalone music jobs are polled by the Music page, not restored into
-    /// the image generation progress store by queue broadcasts.
-    music_prompts: std::sync::RwLock<HashSet<String>>,
+    /// Standalone jobs (music, 3D) are polled by their own page, not restored
+    /// into the image generation progress store by queue broadcasts. The value
+    /// is the queue-update `kind` the frontend routes on.
+    music_prompts: std::sync::RwLock<HashMap<String, &'static str>>,
     /// Ordered list of (prompt_id, username) for queue position tracking
     pub(crate) queue: std::sync::RwLock<Vec<(String, Option<String>)>>,
     /// Prompts waiting to be submitted to ComfyUI (fair queue held prompts).
@@ -113,7 +114,7 @@ impl PromptQueue {
         Self {
             owners: std::sync::RwLock::new(HashMap::new()),
             worker_map: std::sync::RwLock::new(HashMap::new()),
-            music_prompts: std::sync::RwLock::new(HashSet::new()),
+            music_prompts: std::sync::RwLock::new(HashMap::new()),
             queue: std::sync::RwLock::new(Vec::new()),
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
@@ -345,11 +346,33 @@ impl PromptQueue {
         self.music_prompts
             .write()
             .unwrap()
-            .insert(prompt_id.to_string());
+            .insert(prompt_id.to_string(), "music");
+    }
+
+    /// An image-to-3D (Gaussian splat) job, polled by the 3D page.
+    pub fn mark_splat(&self, prompt_id: &str) {
+        self.music_prompts
+            .write()
+            .unwrap()
+            .insert(prompt_id.to_string(), "3d");
     }
 
     pub fn is_music(&self, prompt_id: &str) -> bool {
-        self.music_prompts.read().unwrap().contains(prompt_id)
+        self.music_prompts.read().unwrap().get(prompt_id) == Some(&"music")
+    }
+
+    pub fn is_splat(&self, prompt_id: &str) -> bool {
+        self.music_prompts.read().unwrap().get(prompt_id) == Some(&"3d")
+    }
+
+    /// The `kind` of a `mooshie:queue_update`: "music", "3d" or "generation".
+    pub fn kind(&self, prompt_id: &str) -> &'static str {
+        self.music_prompts
+            .read()
+            .unwrap()
+            .get(prompt_id)
+            .copied()
+            .unwrap_or("generation")
     }
 
     /// Get the worker handling a prompt.
@@ -766,10 +789,16 @@ pub struct AppState {
     /// across a redirect to the CDN). Reuses one client to keep connection
     /// pooling instead of building a fresh client per call.
     pub http_client_no_redirect: reqwest::Client,
+    /// Cached CivitAI proxy clients `(proxy_url, default_client, no_redirect_client)`.
+    civitai_proxy_client_cache:
+        std::sync::Mutex<Option<(String, reqwest::Client, reqwest::Client)>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub interrogator: Arc<RwLock<InterrogatorState>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub prompt_assistant: Arc<PromptAssistant>,
+    /// Interrogated images the prompt assistant can still describe in words.
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub interrogate_frames: crate::prompt_assistant::vision::FrameCache,
     /// Broadcast channel for SSE events in browser mode.
     pub event_tx: broadcast::Sender<BroadcastEvent>,
     /// Timestamp of last heartbeat from browser client.
@@ -782,6 +811,10 @@ pub struct AppState {
     pub app_mode_active: std::sync::atomic::AtomicBool,
     /// True once the embedded web server has been started (prevents double-bind).
     pub web_server_running: std::sync::atomic::AtomicBool,
+    /// LAN accounts and sessions. One instance for the process, shared by the
+    /// web server and the desktop window's LAN settings, so both see the same
+    /// accounts. Created on first use (see [`AppState::web_auth`]).
+    pub web_auth: std::sync::OnceLock<Arc<crate::auth::AuthState>>,
     /// Effective `trust_localhost` (see [`crate::config::local_trust_enabled`]),
     /// kept outside the config lock so the web server's synchronous trust check
     /// can read it. Updated wherever the settings UI replaces the config.
@@ -863,12 +896,15 @@ impl AppState {
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
             #[cfg(any(feature = "desktop", feature = "server"))]
             prompt_assistant: Arc::new(PromptAssistant::new()),
+            #[cfg(any(feature = "desktop", feature = "server"))]
+            interrogate_frames: Default::default(),
             event_tx,
             last_heartbeat: Mutex::new(std::time::Instant::now()),
             #[cfg(feature = "desktop")]
             app_handle: Mutex::new(None),
             app_mode_active: std::sync::atomic::AtomicBool::new(false),
             web_server_running: std::sync::atomic::AtomicBool::new(false),
+            web_auth: std::sync::OnceLock::new(),
             trust_localhost: std::sync::atomic::AtomicBool::new(trust_localhost),
             cleanup_reactors_started: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
@@ -887,7 +923,85 @@ impl AppState {
             notifications: NotificationState::new(),
             download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
             civitai_scan_cancel: std::sync::atomic::AtomicBool::new(false),
+            civitai_proxy_client_cache: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Return a `reqwest::Client` configured with `AppConfig::civitai_proxy`
+    /// when set, otherwise the shared default client. Never logs proxy
+    /// credentials.
+    pub async fn civitai_http_client(&self) -> Result<reqwest::Client, crate::error::AppError> {
+        self.civitai_clients().await.map(|(client, _)| client)
+    }
+
+    /// No-redirect twin of [`Self::civitai_http_client`].
+    pub async fn civitai_http_client_no_redirect(
+        &self,
+    ) -> Result<reqwest::Client, crate::error::AppError> {
+        self.civitai_clients()
+            .await
+            .map(|(_, no_redirect)| no_redirect)
+    }
+
+    /// Return the CivitAI proxy client when `url` targets CivitAI, otherwise
+    /// the shared direct client.
+    pub async fn http_client_for_url(
+        &self,
+        url: &str,
+    ) -> Result<reqwest::Client, crate::error::AppError> {
+        if crate::comfyui::client::is_civitai_url(url) {
+            self.civitai_http_client().await
+        } else {
+            Ok(self.http_client.clone())
+        }
+    }
+
+    async fn civitai_clients(
+        &self,
+    ) -> Result<(reqwest::Client, reqwest::Client), crate::error::AppError> {
+        let proxy = {
+            let cfg = self.config.read().await;
+            cfg.civitai_proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        let Some(proxy_url) = proxy else {
+            return Ok((
+                self.http_client.clone(),
+                self.http_client_no_redirect.clone(),
+            ));
+        };
+        crate::config::validate_civitai_proxy(Some(&proxy_url))
+            .map_err(crate::error::AppError::Other)?;
+        let mut cache = self.civitai_proxy_client_cache.lock().unwrap();
+        if let Some((cached_url, client, no_redirect)) = cache.as_ref() {
+            if cached_url == &proxy_url {
+                return Ok((client.clone(), no_redirect.clone()));
+            }
+        }
+        let proxy_cfg = reqwest::Proxy::all(&proxy_url).map_err(|_| {
+            crate::error::AppError::Other("Invalid CivitAI proxy configuration".into())
+        })?;
+        let no_redirect_proxy = reqwest::Proxy::all(&proxy_url).map_err(|_| {
+            crate::error::AppError::Other("Invalid CivitAI proxy configuration".into())
+        })?;
+        let client = reqwest::Client::builder()
+            .proxy(proxy_cfg)
+            .build()
+            .map_err(|_| {
+                crate::error::AppError::Other("Failed to initialize CivitAI proxy client".into())
+            })?;
+        let no_redirect = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .proxy(no_redirect_proxy)
+            .build()
+            .map_err(|_| {
+                crate::error::AppError::Other("Failed to initialize CivitAI proxy client".into())
+            })?;
+        *cache = Some((proxy_url, client.clone(), no_redirect.clone()));
+        Ok((client, no_redirect))
     }
 
     pub async fn base_url(&self) -> String {
@@ -1014,12 +1128,43 @@ impl AppState {
         );
     }
 
+    /// Hand an image the owner just saved to Eagle in the background. Only
+    /// files in the owner's own gallery folder are sent, so a LAN user's saves
+    /// (kept under `users/`) never land in the owner's Eagle library.
+    fn send_saved_image_to_eagle(&self, payload: &serde_json::Value, folder_id: Option<String>) {
+        let Some(name) = payload.get("filename").and_then(|v| v.as_str()) else {
+            return;
+        };
+        if name.contains(['/', '\\']) || name.contains("..") {
+            return;
+        }
+        let Some(path) = crate::config::gallery_dir().map(|dir| dir.join(name)) else {
+            return;
+        };
+        if !path.is_file() {
+            return;
+        }
+        let metadata = payload.get("metadata").cloned();
+        let client = self.http_client.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                crate::eagle::add_from_path(&client, &path, metadata.as_ref(), folder_id.as_deref())
+                    .await
+            {
+                log::warn!("Eagle export failed for {}: {}", path.display(), e);
+            }
+        });
+    }
+
     pub async fn dispatch_webhook_event(
         &self,
         event: &str,
         mut payload: serde_json::Value,
     ) -> Result<(), String> {
         let cfg = self.config.read().await.clone();
+        if event == "image_saved" && cfg.eagle_enabled && cfg.eagle_auto_send {
+            self.send_saved_image_to_eagle(&payload, cfg.eagle_folder_id.clone());
+        }
         let url = cfg.webhook_url.unwrap_or_default();
         if url.trim().is_empty() {
             return Ok(());
@@ -1315,6 +1460,13 @@ impl AppState {
         });
     }
 
+    /// The process-wide LAN account store, loaded from disk on first use.
+    pub fn web_auth(&self) -> Arc<crate::auth::AuthState> {
+        self.web_auth
+            .get_or_init(|| Arc::new(crate::auth::AuthState::new()))
+            .clone()
+    }
+
     /// Broadcast queue position updates to all SSE clients.
     pub fn broadcast_queue_positions(&self) {
         let queue = self.prompt_queue.queue.read().unwrap();
@@ -1333,7 +1485,7 @@ impl AppState {
                     "prompt_id": prompt_id,
                     "position": pos,
                     "total": total,
-                    "kind": if self.prompt_queue.is_music(prompt_id) { "music" } else { "generation" },
+                    "kind": self.prompt_queue.kind(prompt_id),
                 }),
             );
         }

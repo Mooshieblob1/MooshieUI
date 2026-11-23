@@ -22,7 +22,7 @@ Invoke by name or slash-style request (`/push`, `/release`, etc.):
 
 | Rule | When |
 |------|------|
-| [mooshie-core](rules/mooshie-core.md) | **Always** — build, IPC, git/release |
+| [AGENTS.md](../AGENTS.md) | **Always** (repo root) — build, dual-mode IPC, MCP, architectures, git/release |
 | [mooshie-architect](rules/mooshie-architect.md) | System design, dual-mode, workflows |
 | [mooshie-code-frontend](rules/mooshie-code-frontend.md) | Files under `src/` |
 | [mooshie-code-rust](rules/mooshie-code-rust.md) | Files under `src-tauri/` |

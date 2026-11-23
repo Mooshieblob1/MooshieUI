@@ -10,29 +10,50 @@ import {
 import { parseSegmentDetailPrompt } from "../utils/promptSegmentDetail.js";
 import {
   joinPromptBoxes,
+  mergeComfyTags,
   mergeNovelAiTags,
   sanitizePromptForSend,
 } from "../utils/promptSanitize.js";
 import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
+import { stripPromptComments } from "../utils/promptComments.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
-  MODEL_FAMILIES,
   TURBO_MODEL_VARIANTS,
+  familyUsesTagPrompts,
   signalsIndicateVPred,
   familyRequiresSeparateClip,
   familyIsSdxlLike,
+  familySupportsBreakChunking,
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { detectModelKind, readModelSpec, type ModelKind, type ModelSpec } from "../utils/api.js";
+import { findFamily, registeredMode, registeredSampling, slotMatches } from "../utils/architectures.js";
 import { locale } from "./locale.svelte.js";
 import {
   BETA57_SCHEDULER,
   GENERIC_SAMPLING,
+  MOODY_MOSS_BASE_SIZE,
+  MOODY_MOSS_NEGATIVE,
+  MOODY_MOSS_SAMPLING,
+  isMoodyMossFilename,
   recommendedSamplingFor,
   type SamplingRecommendation,
 } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
+import {
+  MOODY_MOSS_FINISH_DEFAULTS,
+  moodyMossFinishPayload,
+  restoreMoodyMossSettings,
+  type MoodyMossSettings,
+} from "../utils/moodyMoss.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
+import {
+  KREA2_EDIT_LORAS,
+  KREA2_EDIT_MAX_REFERENCES,
+  installedKrea2EditLora,
+  parseKrea2EditMethod,
+  type Krea2EditMethod,
+} from "../utils/krea2Edit.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
   MULTI_ANGLE_LORA,
@@ -58,6 +79,7 @@ import {
   NOVELAI_MAX_VIBES,
   NOVELAI_MAX_DIRECTOR_REFERENCES,
 } from "../utils/novelaiModels.js";
+import { translatePromptWeightSyntax } from "../utils/promptWeightSyntax.js";
 import {
   H3_DIFFUSION_MARKERS,
   H3_MAX_REF_IMAGES,
@@ -77,6 +99,8 @@ import {
   type EnhanceScaleChoice,
 } from "../utils/novelaiEnhance.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
+import { shouldKeepSplitVae } from "../utils/splitVae.js";
+import { findWanLowNoisePartner, WAN_LOW_NOISE_SLOT, wanVariant } from "../utils/wanModels.js";
 import type {
   ExtraPromptBox,
   GenerationMode,
@@ -100,6 +124,9 @@ import type {
 import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
+import { wildcards } from "./wildcards.svelte.js";
+import { loraTriggers } from "./loraTriggers.svelte.js";
+import { insertTrigger, removeTrigger } from "../utils/loraTriggerText.js";
 
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
@@ -192,6 +219,7 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     local_clip_model: null,
     local_clip_type: null,
     local_vae: null,
+    local_architecture_files: {},
     local_sampler: null,
     local_scheduler: null,
     local_cfg: null,
@@ -276,8 +304,22 @@ export interface GenerationToParamsOptions {
    * Creator passes a fragment for an unsaved artist combination here.
    */
   extraPositive?: string;
-  /** Skip the active Artist Styles fragment (the Style Creator supplies its own). */
+  /**
+   * Extra negative tags merged after the UC of active styles and chunks: the
+   * UC of a style or chunk a caller applies itself (a style's thumbnail, a
+   * portrait's picked styles and chunks).
+   */
+  extraNegative?: string;
+  /** Skip the active Artist Styles fragment and its UC (the Style Creator supplies its own). */
   skipActiveStyles?: boolean;
+  /**
+   * Prompts for a picture of its own (a saved character's portrait), used
+   * instead of everything the prompt area would send: the prompt boxes, the
+   * extra boxes, the NovelAI character boxes, active chunks and the camera
+   * angle phrase. Inline chunk tokens in them still resolve, and quality tags
+   * and the style preset are still added as for any generation.
+   */
+  prompts?: { positive: string; negative: string };
   /**
    * Seed to use instead of the store's seed, as the same string form the
    * store holds. Lets a caller pin one seed across several submissions
@@ -320,104 +362,6 @@ interface ModelPreset {
   samplerFallback?: string;
 }
 
-function isModelFamily(value: unknown): value is ModelFamily {
-  return typeof value === "string" && MODEL_FAMILIES.includes(value as ModelFamily);
-}
-
-/**
- * Translate NAI-style weight brackets to ComfyUI (tag:weight) syntax.
- * - {text} → (text:1.05)   — each layer multiplies by 1.05
- * - [text] → (text:0.9524)  — each layer divides by 1.05
- * - 1.1::text:: → (text:1.1) — A1111-style weight prefix
- * Processes innermost brackets first, so nesting works: {{tag}} → ((tag:1.05):1.05)
- */
-function translateNaiWeightSyntax(prompt: string): string {
-  // Process A1111-style weight::text:: syntax first
-  prompt = prompt.replace(/(\d+\.?\d*)::([^:]+)::/g, (_m, weight, text) => {
-    return `(${text.trim()}:${parseFloat(weight).toFixed(2)})`;
-  });
-
-  // Process innermost {text} → (text:1.05) repeatedly
-  let prev: string;
-  do {
-    prev = prompt;
-    prompt = prompt.replace(/\{([^{}]+)\}/g, (_m, inner) => `(${inner}:1.05)`);
-  } while (prompt !== prev);
-
-  // Process innermost [text] → (text:0.95) repeatedly
-  // Skip escaped brackets \[ and \]
-  do {
-    prev = prompt;
-    prompt = prompt.replace(/(?<!\\)\[([^\[\]]+)\]/g, (_m, inner) => `(${inner}:0.95)`);
-  } while (prompt !== prev);
-
-  return prompt;
-}
-
-/**
- * Translate InvokeAI/compel weight + emphasis syntax to ComfyUI (tag:weight).
- * - (group)0.8      -> (group:0.8)      explicit weight, number OUTSIDE the paren
- * - (group)+ / ++   -> (group:1.10) / (group:1.21)   group emphasis, 1.1^n
- * - (group)- / --   -> (group:0.90) / (group:0.81)   group de-emphasis, 0.9^n
- * - word+ / word--  -> (word:1.10) / (word:0.81)     bareword emphasis
- * Guard: bareword rewrite only fires when the base (token minus the trailing
- * +/- run) contains an ASCII letter, so emoticon tags like +_+ and bare ++ / 1+
- * are left untouched. Blend/swap operators are intentionally not handled.
- *
- * Escape: a backslash directly before a trailing +/- run keeps it a literal
- * character instead of emphasis — e.g. a crossover tag "nero (bride)\+astolfo"
- * or a character name "La\+ darkness" whose name is not emphasis syntax. The
- * escaping backslash is stripped from the output either way.
- */
-function translateInvokeAiWeightSyntax(prompt: string): string {
-  const emphasisWeight = (marks: string): string => {
-    const base = marks[0] === "+" ? 1.1 : 0.9;
-    return Math.pow(base, marks.length).toFixed(2);
-  };
-
-  // 1. Group trailing explicit weight: (group)0.8 -> (group:0.8)
-  prompt = prompt.replace(
-    /\(([^()]+)\)(\d+\.?\d*)(?=[\s,(){}\[\]]|$)/g,
-    (_m, inner, weight) => `(${inner}:${weight})`,
-  );
-
-  // 2. Group emphasis: (group)+++ / (group)--- -> (group:W). Innermost-first.
-  // An escaped run is left untouched here (returned byte-for-byte) so the loop
-  // still converges; the escaping backslash is stripped once, after the loop,
-  // so the now-literal +/- doesn't get re-matched and wrongly converted on a
-  // later pass.
-  let prev: string;
-  do {
-    prev = prompt;
-    prompt = prompt.replace(
-      /\(([^()]+)\)(\\(?:\++|-+)|\++|-+)/g,
-      (_m, inner, marks) => {
-        if (marks[0] === "\\") return `(${inner})${marks}`;
-        return `(${inner}:${emphasisWeight(marks)})`;
-      },
-    );
-  } while (prompt !== prev);
-  prompt = prompt.replace(/\)\\(\++|-+)/g, ")$1");
-
-  // 3. Bareword emphasis: tokenize on delimiters, rewrite word+ / word- when the
-  // base has a letter. Delimiters: whitespace , ( ) { }
-  prompt = prompt.replace(/[^\s,(){}]+/g, (token) => {
-    const m = token.match(/^(.*?)(\\?)(\++|-+)$/);
-    if (!m) return token;
-    const [, base, esc, marks] = m;
-    if (esc) return base + marks;
-    if (!/[a-zA-Z]/.test(base)) return token;
-    return `(${base}:${emphasisWeight(marks)})`;
-  });
-
-  return prompt;
-}
-
-/** Apply InvokeAI translation, then NAI translation, to a prompt string. */
-function translatePromptWeightSyntax(prompt: string): string {
-  return translateNaiWeightSyntax(translateInvokeAiWeightSyntax(prompt));
-}
-
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
 
 // `satisfies` ties the runtime list to the shared union in types/index.ts, so a
@@ -427,6 +371,7 @@ const GENERATION_MODES = [
   "txt2img",
   "img2img",
   "inpainting",
+  "outpainting",
   "image_edit",
   "video",
 ] as const satisfies readonly GenerationMode[];
@@ -460,6 +405,7 @@ function createDefaultModeToggles(): ModeToggleStates {
     txt2img: defaultModeToggleState(),
     img2img: defaultModeToggleState(),
     inpainting: defaultModeToggleState(),
+    outpainting: defaultModeToggleState(),
     image_edit: defaultModeToggleState(),
     video: defaultModeToggleState(),
   };
@@ -679,6 +625,22 @@ export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = appendMissingNegativeTags(
 /** Reference-image slots kept in the store: the most any edit family takes (FLUX 3 Klein). */
 export const EDIT_REFERENCE_SLOTS = 10;
 
+/**
+ * Model-slot files (Flux.1's CLIP-L, ...) for a registered family's split
+ * NovelAI local pass: the first installed file each slot accepts. The main
+ * panel's auto-download covers missing ones once that family is picked there.
+ */
+function localSlotFiles(family: string | null, encoders: string[], vaes: string[]): Record<string, string> {
+  const slots = findFamily(family)?.arch.model_slots ?? [];
+  const picks: Record<string, string> = {};
+  for (const slot of slots) {
+    const installed = slot.category === "text_encoders" ? encoders : slot.category === "vae" ? vaes : [];
+    const pick = installed.find((file) => slotMatches(slot, file));
+    if (pick) picks[slot.key] = pick;
+  }
+  return picks;
+}
+
 class GenerationStore {
   _mode = $state<GenerationMode>("txt2img");
   lastImageMode = $state<Exclude<GenerationMode, "video">>("txt2img");
@@ -737,6 +699,12 @@ class GenerationStore {
    * the other enhance options.
    */
   naiEnhanceKeepArtists = $state(false);
+  /**
+   * Send the keep-minors-non-sexual rule with a V5 enhance whose prompt
+   * mentions a child. On by default; some providers refuse SFW school and
+   * family scenes with it in. The minor + sexual refusal stays either way.
+   */
+  naiEnhanceMinorRule = $state(true);
   /**
    * What the last NovelAI image Enhance was run with. The Enhance modal opens
    * on these, so someone who always enhances at 1.5x / magnitude 4 is not
@@ -804,6 +772,11 @@ class GenerationStore {
   inputImage = $state<string | null>(null);
   maskImage = $state<string | null>(null);
   growMaskBy = $state(6);
+  outpaintTop = $state(0);
+  outpaintBottom = $state(0);
+  outpaintLeft = $state(256);
+  outpaintRight = $state(256);
+  outpaintFeather = $state(40);
   differentialDiffusion = $state(false);
   upscaleEnabled = $state(false);
   upscaleMethod = $state<"algorithmic" | "model" | "seedvr2">("algorithmic");
@@ -828,6 +801,14 @@ class GenerationStore {
    * directly into the upscale/refine chain (SwarmUI "Refine Image" semantics).
    */
   refineOnly = $state(false);
+  /** Moody Moss 4K HD two-pass sampling for Moody Moss Mix (see
+   *  `moodyMossHdActive`). On by default: it is the author's own workflow. */
+  moodyMossHd = $state(true);
+  /** Ask for a transparent background (Ming-Image Design, see
+   *  `transparentBackgroundActive`). */
+  transparentBackground = $state(false);
+  /** The rest of the Moody Moss workflow (detailers, skin contrast, SeedVR2 final). */
+  moodyMoss = $state<MoodyMossSettings>({ ...MOODY_MOSS_FINISH_DEFAULTS });
   smartGuidance = $state(false);
   /** RescaleCFG for v-pred models: rescales the guidance vector each step so
    *  v-pred checkpoints don't oversaturate/burn at normal CFG. Only sent to the
@@ -878,11 +859,26 @@ class GenerationStore {
    * Not persisted: re-derived from the files on every pick.
    */
   mainModelWrongKind = $state<ModelKind | null>(null);
+  /**
+   * True when the selected model's tensor keys carry a baked text encoder and
+   * VAE (an all-in-one checkpoint). Families that normally ship split, such as
+   * Anima fine-tunes on CivitAI, are sometimes packed this way and load fine
+   * through CheckpointLoaderSimple. Not persisted: re-derived on every pick.
+   */
+  mainModelIsFullCheckpoint = $state(false);
+  /**
+   * True when the selected model carries a VAE but no text encoders, as
+   * Stability's own SD3 / SD3.5 release files do. Not persisted.
+   */
+  mainModelHasBakedVae = $state(false);
   vaeWrongKind = $state<ModelKind | null>(null);
   clipWrongKind = $state<ModelKind | null>(null);
   private componentKindCache = new Map<string, ModelKind | null>();
   clipModel = $state<string | null>(null);
   clipType = $state<string | null>(null);
+  /** Extra files a registered architecture loads, keyed by its model slot
+   *  (`architecture_files`; picked and downloaded by ModelSelector). */
+  architectureFiles = $state<Record<string, string>>({});
   stylePreset = $state<StylePresetId>("none");
   stylePresetsEnabled = $state(false);
   controlnetEnabled = $state(false);
@@ -902,6 +898,12 @@ class GenerationStore {
   editReferenceStrength = $state(1.0);
   /** Anima ReStyler drastic restyle: original split-screen inpaint recipe (stronger style change, ~2x generation area). */
   editSplitScreen = $state(false);
+  /** Krea 2 Image Edit recipe: General Edit, Identity Edit or Style Reference (utils/krea2Edit.ts). */
+  krea2EditMethod = $state<Krea2EditMethod>("general");
+  /** Krea 2 Identity/General Edit reference fidelity (ref_boost); null uses the method's default. */
+  krea2EditRefBoost = $state<number | null>(null);
+  /** Krea 2 Identity/General Edit: place the person beside the canvas so they can be restaged freely. */
+  krea2EditBeside = $state(true);
   /** Qwen Edit Plus camera angle: prepends a Multiple-Angles LoRA shot phrase to the prompt. */
   cameraAngleEnabled = $state(false);
   /** Index into CAMERA_AZIMUTHS (0 = front, clockwise in 45 degree steps). */
@@ -941,17 +943,36 @@ class GenerationStore {
   guideStrength = $state(0.6);
   /** Fraction of the schedule the guide runs for, from the start. */
   guideEndPercent = $state(0.35);
+  /** Anima character reference: optional second character (right side). */
+  styleRefImage2 = $state<string | null>(null);
+  animaRefMethod = $state<"anima_ref_adapter" | "snapref" | "art_style">("anima_ref_adapter");
+  /** Anima art style: how far each block's channel statistics move towards the picture's (0 to 1). */
+  animaArtStyleMatch = $state(0.6);
+  /** Anima art style: leave the first quarter of the steps alone to keep the prompt's composition. */
+  animaArtStyleRestyle = $state(true);
+  /** Anima art style: area the picture is shrunk to first, in megapixels (0.5 to 4). */
+  animaArtStyleMegapixels = $state(1);
+  snaprefAdapter = $state<string | null>(null);
+  snaprefMode = $state<"Character & Style" | "Character">("Character & Style");
+  snaprefFidelity = $state(1);
+  snaprefReferences = $state<{ image: string | null; strength: number }[]>([
+    { image: null, strength: 1 }, { image: null, strength: 1 },
+  ]);
+  animaRefGuidance = $state(4.5);
+  animaRefCorrection = $state("apg");
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
   facefixSteps = $state(20);
-  facefixGuideSize = $state(512);
+  facefixGuideSize = $state(1024);
   facefixMaxFaces = $state(8);
   facefixAutoPrompt = $state(false);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
   /** WebP is lossless VP8L and always 8-bit (no 16-bit VP8L variant exists). */
   outputFormat = $state<"png" | "jxl" | "webp">("png");
-  metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
+  metadataMode = $state<"both">("both");
+  /** Weave an invisible TrustMark ID into saved images (see src-tauri/src/watermark). */
+  invisibleWatermark = $state(false);
   autoQualityTags = $state(true);
   /** UI-reveal toggle for the custom quality tags editor (values apply based on autoQualityTags). */
   customQualityTagsEnabled = $state(false);
@@ -968,6 +989,15 @@ class GenerationStore {
   osNotificationsEnabled = $state(false);
   /** When true, OS notifications only fire when the app window is not focused. */
   osNotifyOnlyWhenUnfocused = $state(true);
+  /** Plays a short chime when a generation finishes. */
+  finishSound = $state(false);
+  /** Continuous generation: how many runs one Generate click starts. 1 is a
+   *  normal single run, 0 keeps going until stopped. */
+  repeatCount = $state(1);
+  /** Seconds to wait between continuous runs. */
+  repeatDelaySec = $state(0);
+  /** When true, a failed run ends a continuous run instead of moving on. */
+  repeatStopOnError = $state(true);
   /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
@@ -1049,6 +1079,10 @@ class GenerationStore {
   /** Turbo LoRA filename inside `models/loras/`. Defaults to the recommended
    *  checkpoint; the custom tier lets users swap in any installed LoRA. */
   videoTurboLora = $state(H3_TURBO_LORA.filename);
+  /** The user's own MiniMax H3 LoRAs (style, character, camera, ...), kept
+   *  apart from `loras`, which belong to the image model. Model-only: only
+   *  `strength_model` is used, and `strength_clip` mirrors it. */
+  videoLoras = $state<LoraEntry[]>([]);
   /** KSamplerSelect override for the custom tier. Null means preset default
    *  (res_multistep). Ignored when Turbo is on (Turbo ships its own sampler). */
   videoSampler = $state<string | null>(null);
@@ -1198,6 +1232,8 @@ class GenerationStore {
   setMode(mode: GenerationMode): void {
     if (mode !== "video") this.lastImageMode = mode;
     if (mode === this._mode) return;
+    const modeSampling = (m: GenerationMode) => !!registeredMode(this.modelFamily, m)?.sampling;
+    const swapsSampling = modeSampling(this._mode) || modeSampling(mode);
 
     this.modeToggles = {
       ...this.modeToggles,
@@ -1216,6 +1252,9 @@ class GenerationStore {
     // Leaving the inpaint canvas abandons the painted edit; the paused run
     // itself stays until discarded.
     if (mode !== "inpainting") this.pausedEditArmed = false;
+    // A registered mode with its own sampling (MOSS-Image's edit LoRA) swaps
+    // the sampler settings in and out of that mode, keeping the size.
+    if (swapsSampling && !this.isNovelAi) this.applyModelSpecificPreset(true);
   }
 
   readPromptBucket(): PromptBucket {
@@ -1308,6 +1347,36 @@ class GenerationStore {
     return filename.toLowerCase().includes("light-lavender");
   }
 
+  /**
+   * True for Moody Moss Mix (catlover1937), a MOSS-Image fine-tune whose
+   * author publishes a two-pass "Moody Moss 4K HD" ComfyUI workflow for it.
+   * Matched by filename, as the tensors are plain MOSS-Image.
+   */
+  get isMoodyMossMix(): boolean {
+    if (this.modelFamily !== "mossimage" && this.modelFamily !== "mossimagebase") return false;
+    return isMoodyMossFilename(this.useSplitModel ? this.diffusionModel : this.checkpoint);
+  }
+
+  /** Whether the model can be asked for a transparent background. */
+  get supportsTransparentBackground(): boolean {
+    return this.modelFamily === "mingimage";
+  }
+
+  /** Whether the next generation asks for a transparent background. */
+  get transparentBackgroundActive(): boolean {
+    return this.supportsTransparentBackground && this.transparentBackground;
+  }
+
+  /** Whether the next generation runs the Moody Moss 4K HD two passes (txt2img only). */
+  get moodyMossHdActive(): boolean {
+    return this.isMoodyMossMix && this.moodyMossHd && this.mode === "txt2img";
+  }
+
+  /** Whether the next inpaint is the Moody Moss "Detail Anything" pass. */
+  get moodyMossAreaDetailActive(): boolean {
+    return this.isMoodyMossMix && this.moodyMoss.areaDetail && this.mode === "inpainting";
+  }
+
   /** True when auto quality tags use the Anima tag set for the selected model. */
   get usesAnimaQualityTags(): boolean {
     return this.isAnima && !this.isAnimaLightLavender;
@@ -1329,7 +1398,8 @@ class GenerationStore {
 
   /** True when the selected model is an SD3/SD3.5 variant. */
   get isSd3(): boolean {
-    return this.modelFamily === "sd3";
+    // Every family of the registered SD3 architecture (SD3, SD3.5 Large Turbo).
+    return findFamily(this.modelFamily)?.arch.id === "sd3";
   }
 
   /** True when the selected model is a Flux-family variant. */
@@ -1369,14 +1439,47 @@ class GenerationStore {
     return this.modelFamily === "zit";
   }
 
-  /** True when the selected model is a Wan variant. */
+  /**
+   * Wan 2.2 A14B: the installed low-noise expert that finishes the selected
+   * high-noise model. Null for every other model, or when none is installed.
+   */
+  get wanLowNoisePartner(): string | null {
+    if (!this.isWan || !this.useSplitModel || wanVariant(this.diffusionModel) !== "a14bHigh") return null;
+    // The same-name partner first; else the model panel's slot pick, when it
+    // is a text-to-video low-noise file that is still installed.
+    const slotPick = this.architectureFiles[WAN_LOW_NOISE_SLOT];
+    return (
+      findWanLowNoisePartner(this.diffusionModel, models.diffusionModels) ??
+      (slotPick && wanVariant(slotPick) === "a14bLow" && models.diffusionModels.includes(slotPick) ? slotPick : null)
+    );
+  }
+
+  /** True when the selected model is a Wan variant (Wan 2.1, 2.2 A14B, 2.2 TI2V 5B). */
   get isWan(): boolean {
-    return this.modelFamily === "wan";
+    return findFamily(this.modelFamily)?.arch.id === "wan";
   }
 
   /** True when the selected model is a Qwen variant. */
   get isQwen(): boolean {
     return this.modelFamily === "qwen";
+  }
+
+  /** True when the selected model is Krea 2 (Raw, Turbo or a fine-tune). */
+  get isKrea2(): boolean {
+    return this.modelFamily === "krea2";
+  }
+
+  /** Krea 2 edit fidelity in effect: the user's value or the method's model-card default. */
+  get krea2EditRefBoostEffective(): number {
+    return this.krea2EditRefBoost ?? KREA2_EDIT_LORAS[this.krea2EditMethod].defaultRefBoost;
+  }
+
+  /** Switch the Krea 2 edit recipe and reset its dials to the model card's defaults. */
+  setKrea2EditMethod(method: Krea2EditMethod): void {
+    this.krea2EditMethod = method;
+    this.krea2EditRefBoost = null;
+    this.krea2EditBeside = KREA2_EDIT_LORAS[method].defaultBeside;
+    this.saveSettings();
   }
 
   /** True when the selected model is Qwen Image Edit (single reference image). */
@@ -1409,11 +1512,23 @@ class GenerationStore {
     return this.modelFamily === "flux1kontext";
   }
 
-  /** True when the model family supports style reference (IP-Adapter or Flux Redux). */
+  /** True when the model family supports style reference (IP-Adapter, Flux Redux or Anima). */
   get supportsStyleRef(): boolean {
-    return ["flux1d", "flux1s", "flux1krea", "sd15", "sdxl", "illustrious", "pony"].includes(
-      this.modelFamily,
-    );
+    return [
+      "flux1d",
+      "flux1s",
+      "flux1krea",
+      "sd15",
+      "sdxl",
+      "illustrious",
+      "pony",
+      "anima",
+    ].includes(this.modelFamily);
+  }
+
+  /** True when the active style ref is the Anima character reference (Reference Adapter). */
+  get styleRefIsAnima(): boolean {
+    return this.modelFamily === "anima";
   }
 
   /** True when the active style ref is Flux Redux (Flux.1 family). */
@@ -1428,18 +1543,29 @@ class GenerationStore {
 
   /** True when the selected model is an Image Edit family (or Anima, via the ReStyler). */
   get supportsImageEditMode(): boolean {
+    // A registered architecture (src-tauri/src/architectures) says so itself.
+    if (findFamily(this.modelFamily)) return registeredMode(this.modelFamily, "image_edit") !== null;
     return (
-      this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext || this.isFlux3 || this.isAnima
+      this.isQwenEdit ||
+      this.isQwenEditPlus ||
+      this.isFluxKontext ||
+      this.isFlux3 ||
+      this.isAnima ||
+      this.isKrea2
     );
   }
 
   /**
    * Number of reference-image slots the current edit family accepts: 10 for
-   * FLUX 3 Klein (FLUX3_MAX_REFERENCES in templates/image_edit.rs), 3 for
-   * Qwen Edit Plus, else 1.
+   * FLUX 3 Klein (KLEIN_MAX_REFERENCES in templates/image_edit.rs), 3 for
+   * Qwen Edit Plus, 2 for Krea 2 (scene + person, or two style references),
+   * else 1. Registered families declare their own.
    */
   get editReferenceSlotCount(): number {
+    const registered = registeredMode(this.modelFamily, "image_edit");
+    if (registered) return Math.max(1, Math.min(EDIT_REFERENCE_SLOTS, registered.max_references));
     if (this.isFlux3) return EDIT_REFERENCE_SLOTS;
+    if (this.isKrea2) return KREA2_EDIT_MAX_REFERENCES;
     return this.isQwenEditPlus ? 3 : 1;
   }
 
@@ -1453,15 +1579,13 @@ class GenerationStore {
     return this.modelFamily === "auraflow";
   }
 
-  /** In img2img/inpainting/image_edit, the loaded source image owns width/height. */
+  /** In img2img/inpainting/outpainting/image_edit, the loaded source image owns width/height. */
   get hasAuthoritativeEditSource(): boolean {
     if (this._mode === "image_edit") return !!this.editReferenceImages[0];
-    return (this._mode === "img2img" || this._mode === "inpainting") && !!this.inputImage;
-  }
-
-  /** True when the selected model is PixArt. */
-  get isPixArt(): boolean {
-    return this.modelFamily === "pixart";
+    return (
+      (this._mode === "img2img" || this._mode === "inpainting" || this._mode === "outpainting") &&
+      !!this.inputImage
+    );
   }
 
   /** True when the selected model is HunyuanDiT. */
@@ -1472,11 +1596,6 @@ class GenerationStore {
   /** True when the selected model is Stable Cascade. */
   get isCascade(): boolean {
     return this.modelFamily === "cascade";
-  }
-
-  /** True when the selected model is Kolors. */
-  get isKolors(): boolean {
-    return this.modelFamily === "kolors";
   }
 
   /** True when the selected model is Mugen (SDXL with Flux2 VAE + rectified flow). */
@@ -1514,13 +1633,13 @@ class GenerationStore {
    */
   get disablesNegativePrompt(): boolean {
     if (this.mode === "video") return true;
+    const registered = findFamily(this.modelFamily);
+    if (registered) return !registered.arch.negative_prompt;
     return [
       "flux1d",
       "flux1s",
       "flux1krea",
       "zit",
-      "flux2klein9b",
-      "flux2klein4b",
       "flux3klein",
     ].includes(this.modelFamily);
   }
@@ -1528,11 +1647,29 @@ class GenerationStore {
   /**
    * True when the selected model runs on NovelAI rather than local ComfyUI.
    *
-   * This is the switch the whole NovelAI mode hangs off: it picks the backend
-   * in `requestGeneration`, and the UI uses it to hide controls ComfyUI owns.
+   * This is the switch the whole NovelAI mode hangs off: the UI uses it to hide
+   * controls ComfyUI owns, and prompt building uses it for NovelAI's syntax.
+   *
+   * Video never runs on NovelAI (it has no video endpoint) and loads its own
+   * model trio from the `video_*` fields, so a NovelAI image checkpoint left
+   * selected does not put Video into NovelAI mode. `requestGeneration` applies
+   * the same rule when it picks the backend.
    */
   get isNovelAi(): boolean {
-    return isNovelAiModel(this.checkpoint);
+    return this._mode !== "video" && isNovelAiModel(this.checkpoint);
+  }
+
+  /**
+   * How prompts for the active model are written: Danbooru tags, NovelAI's
+   * tag dialect (Danbooru plus V5 tokens, `artist:`, `source#` and prose
+   * lines), or natural language. An undetected family counts as tags, since
+   * an unrecognised checkpoint is usually an SDXL merge.
+   */
+  get promptStyle(): "tags" | "novelai" | "prose" {
+    if (this._mode === "video") return "prose";
+    if (this.isNovelAi) return "novelai";
+    if (this.modelFamily === "unknown" || familyUsesTagPrompts(this.modelFamily)) return "tags";
+    return "prose";
   }
 
   /** Capability flags for the selected NovelAI model, or null outside NovelAI mode. */
@@ -1732,6 +1869,8 @@ class GenerationStore {
     this.modelSpecUnavailable = false;
     this.modelSourceCategory = null;
     this.mainModelWrongKind = null;
+    this.mainModelIsFullCheckpoint = false;
+    this.mainModelHasBakedVae = false;
     this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
   }
 
@@ -1745,6 +1884,8 @@ class GenerationStore {
     this.isModelMetadataLoading = false;
     this.modelSpec = null;
     this.modelSpecUnavailable = false;
+    this.mainModelIsFullCheckpoint = false;
+    this.mainModelHasBakedVae = false;
   }
 
   /** Drop the cached key so the next fetch re-runs backend detection. */
@@ -1760,7 +1901,11 @@ class GenerationStore {
    * whenever the Model panel is collapsed, and quality-tag injection in
    * toParams() keys off modelFamily, so it was silently skipped in that state.
    */
-  async fetchAndApplyModelMetadata(category: string, filename: string): Promise<void> {
+  async fetchAndApplyModelMetadata(
+    category: string,
+    filename: string,
+    options: { applyPreset?: boolean } = {},
+  ): Promise<void> {
     // GGUF carries no safetensors header, but the backend still resolves
     // family/turbo/recommended-encoder info from the filename and sidecars.
     const supportsSpec =
@@ -1779,7 +1924,7 @@ class GenerationStore {
         modelFamily: manualOverride,
         modelIsSdxlLike: familyIsSdxlLike(manualOverride),
       });
-      this.applyModelSpecificPreset();
+      if (options.applyPreset !== false) this.applyModelSpecificPreset();
       return;
     }
 
@@ -1788,6 +1933,8 @@ class GenerationStore {
     const requestId = ++this._latestModelMetadataRequestId;
     this.isModelMetadataLoading = true;
     this.mainModelWrongKind = null;
+    this.mainModelIsFullCheckpoint = false;
+    this.mainModelHasBakedVae = false;
     try {
       const spec = await readModelSpec(category, filename);
       if (requestId !== this._latestModelMetadataRequestId) return;
@@ -1811,9 +1958,10 @@ class GenerationStore {
         modelRecommendedClipType: spec?.recommended_clip_type ?? null,
       });
       this.applyDetectedModelKind(category, filename, spec?.model_kind ?? null);
+      this.mainModelHasBakedVae = spec?.baked_vae === "true";
       this.ensureRecommendedSplitClip(models.textEncoders);
       this.ensureRecommendedSplitVae(models.vaes);
-      this.applyModelSpecificPreset();
+      if (options.applyPreset !== false) this.applyModelSpecificPreset();
       // Nothing resolved — clear the key so a later selection retries detection.
       if (family === "unknown") this._loadedModelMetadataKey = "";
     } catch {
@@ -1842,6 +1990,7 @@ class GenerationStore {
     filename: string,
     modelKind: string | null,
   ): void {
+    this.mainModelIsFullCheckpoint = modelKind === "checkpoint";
     // A text encoder or VAE picked as the model cannot load as one; the model
     // panel and toParams() say so instead of letting ComfyUI fail on it.
     this.mainModelWrongKind = modelKind === "text_encoder" || modelKind === "vae" ? modelKind : null;
@@ -1934,17 +2083,46 @@ class GenerationStore {
     }
   }
 
+  /**
+   * Stability's SD3 / SD3.5 release files hold the VAE but no encoders. Sitting
+   * in `checkpoints/`, they decode with that VAE unless the user picks an SD3 one
+   * (the backend loads MODEL and VAE from one checkpoint loader, see
+   * `templates/sd3.rs`), so an empty VAE is the right setting for them.
+   */
+  get splitVaeFromModelFile(): boolean {
+    return (
+      this.useSplitModel &&
+      this.isSd3 &&
+      this.mainModelHasBakedVae &&
+      this.modelSourceCategory === "checkpoints"
+    );
+  }
+
   ensureRecommendedSplitVae(vaes: string[], save = false): void {
     if (!this.useSplitModel) return;
+
+    if (this.splitVaeFromModelFile) {
+      // Keep an installed SD3 VAE the user picked; drop anything else (an SDXL
+      // VAE left over from the last model) so the file's own VAE is used.
+      const current = this.vae.trim();
+      if (current && !shouldKeepSplitVae(current, this.modelFamily, vaes)) {
+        this.vae = "";
+        if (save) this.saveSettings();
+      }
+      return;
+    }
 
     const recommended = this.modelRecommendedVae?.trim();
     if (!recommended) return;
 
     const current = this.vae.trim();
-    if (current !== recommended) {
-      this.vae = recommended;
-      if (save) this.saveSettings();
-    }
+    if (current === recommended) return;
+    // Keep a pick that is installed and decodes this family's latents, such as a
+    // sharpened Qwen Image VAE on Anima or Krea 2. Only an empty, missing or
+    // mismatched VAE (an SDXL VAE left over on Anima, say) gets replaced.
+    if (shouldKeepSplitVae(current, this.modelFamily, vaes)) return;
+    this.vae = recommended;
+    if (save) this.saveSettings();
   }
 
   /** SDXL-style area conditioning (ConditioningSetArea). */
@@ -2019,43 +2197,18 @@ class GenerationStore {
     return STYLE_PRESETS;
   }
 
-  private splitTags(text: string): string[] {
-    return text
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => !!part);
-  }
-
-  private mergeTagPrompts(base: string, extra: string): string {
-    if (!extra) return base;
-    const existing = this.splitTags(base);
-    const seen = new Set(existing.map((tag) => tag.toLowerCase()));
-    const merged = [...existing];
-
-    for (const tag of this.splitTags(extra)) {
-      const normalized = tag.toLowerCase();
-      if (!seen.has(normalized)) {
-        seen.add(normalized);
-        merged.push(tag);
-      }
-    }
-
-    return merged.join(", ");
-  }
-
   /**
-   * Merge a system tag fragment (style preset, Artist Style, Prompt Chunk)
-   * into a prompt. ComfyUI prompts are flat tag lists, so `mergeTagPrompts`
-   * may re-tokenize them freely. NovelAI prompts carry layout that matters
-   * (a `Text:` block on its own line, blank lines between rendered strings,
-   * prose lines), so they go through `mergeNovelAiTags`, which splices the
-   * new tags in ahead of the `Text:` block and leaves the rest untouched.
+   * Merge a system tag fragment (quality tags, style preset, Artist Style,
+   * Prompt Chunk) into a prompt. ComfyUI prompts are flat tag lists, so
+   * `mergeComfyTags` may re-tokenize them on commas. NovelAI prompts carry
+   * layout that matters (a `Text:` block on its own line, blank lines between
+   * rendered strings, prose lines), so they go through `mergeNovelAiTags`,
+   * which splices the new tags in ahead of the `Text:` block and leaves the
+   * rest untouched. Both only dedupe the incoming tags, never the prompt's own.
    */
   private mergeIntoPrompt(prompt: string, tags: string, where: "before" | "after"): string {
     if (this.isNovelAi) return mergeNovelAiTags(prompt, tags, where);
-    return where === "before"
-      ? this.mergeTagPrompts(tags, prompt)
-      : this.mergeTagPrompts(prompt, tags);
+    return mergeComfyTags(prompt, tags, where);
   }
 
   private loadPromptHistory() {
@@ -2226,16 +2379,20 @@ class GenerationStore {
     this.scheduler = this.resolveAvailableOption(models.schedulers, preferred, "normal");
   }
 
-  private applyResolvedPreset(preset: ModelPreset) {
+  private applyResolvedPreset(preset: ModelPreset, keepSize = false) {
     this.steps = preset.steps;
     this.cfg = preset.cfg;
     this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, preset.samplerFallback ?? "euler");
     this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
-    if (!this.hasAuthoritativeEditSource && !this.resolutionLocked) {
+    if (!keepSize && !this.hasAuthoritativeEditSource && !this.resolutionLocked) {
       this.width = preset.width;
       this.height = preset.height;
     }
-    this.facefixSteps = Math.ceil(preset.steps / 3);
+    this.facefixGuideSize = Math.max(preset.width, preset.height) <= 512 ? 512 : 1024;
+    this.facefixSteps =
+      preset.steps <= 12
+        ? Math.max(4, Math.ceil(preset.steps / 2))
+        : Math.max(15, Math.round(preset.steps * 0.75));
     this.upscaleSteps = Math.ceil(preset.steps / 3);
     if (preset.upscaleDenoise !== undefined) {
       this.upscaleDenoise = preset.upscaleDenoise;
@@ -2353,6 +2510,7 @@ class GenerationStore {
         local_clip_model: null,
         local_clip_type: null,
         local_vae: null,
+        local_architecture_files: {},
         local_sampler: null,
         local_scheduler: null,
         local_cfg: null,
@@ -2409,6 +2567,7 @@ class GenerationStore {
         : null,
       local_clip_type: useSplit ? (spec?.recommended_clip_type ?? null) : null,
       local_vae: useSplit ? matchInstalledModel(spec?.recommended_vae, vaes) : null,
+      local_architecture_files: useSplit ? localSlotFiles(spec?.family ?? null, encoders, vaes) : {},
       local_sampler: rec.samplerName,
       local_scheduler: rec.scheduler,
       local_cfg: rec.cfg,
@@ -2599,7 +2758,11 @@ class GenerationStore {
     });
   }
 
-  applyModelSpecificPreset() {
+  /**
+   * `keepSize` is set on a mode switch: only the sampling changes, the size
+   * the user has in that mode stays.
+   */
+  applyModelSpecificPreset(keepSize = false) {
     // Autocomplete tag-set sync on model-family change is handled by an
     // $effect in App.svelte (stores must not import each other).
 
@@ -2610,7 +2773,13 @@ class GenerationStore {
       this.useSplitModel && this.diffusionModel ? `dm:${this.diffusionModel}` : `cp:${this.checkpoint}`,
       this.modelFamily,
       this.modelTurboVariant,
-    ].join("|");
+      // A registered mode with its own sampling (an edit LoRA) re-applies
+      // when the user switches into or out of that mode. Absent otherwise, so
+      // every other model keeps the key it already saved.
+      registeredMode(this.modelFamily, this._mode)?.sampling ? `mode:${this._mode}` : null,
+    ]
+      .filter((part) => part !== null)
+      .join("|");
     if (presetKey === this.modelPresetAppliedKey) return;
     const isFirstPresetApplication = !this.modelPresetAppliedKey;
     // Advanced Mode: after the first-ever application, preserve the user's generation
@@ -2622,6 +2791,31 @@ class GenerationStore {
     if (this.advancedMode && !isFirstPresetApplication) return;
 
     this.modelPresetAppliedKey = presetKey;
+
+    // Moody Moss Mix, a MOSS-Image fine-tune, follows its author's 4K HD
+    // workflow outside Image Edit: Euler on simple at 25 steps and CFG 3, from
+    // a 2:3 base of about 1 MP that the second pass takes to 1.5x, and the
+    // workflow's negative prompt when the box is empty.
+    if (this.isMoodyMossMix && this._mode !== "image_edit") {
+      if (!this.negativePrompt.trim()) this.negativePrompt = MOODY_MOSS_NEGATIVE;
+      this.applyResolvedPreset({ ...MOODY_MOSS_SAMPLING, ...MOODY_MOSS_BASE_SIZE }, keepSize);
+      return;
+    }
+
+    // A registered architecture declares its own defaults (per mode when the
+    // mode wants other settings, e.g. an edit LoRA).
+    const registered = registeredSampling(this.modelFamily, this._mode);
+    if (registered) {
+      this.applyResolvedPreset({
+        steps: registered.steps,
+        cfg: registered.cfg,
+        samplerName: registered.sampler,
+        scheduler: registered.scheduler,
+        width: registered.width,
+        height: registered.height,
+      }, keepSize);
+      return;
+    }
 
     let preset: ModelPreset;
     switch (this.modelFamily) {
@@ -2635,18 +2829,6 @@ class GenerationStore {
           width: 896,
           height: 1152,
           upscaleDenoise: 0.5,
-        };
-        break;
-
-      // SD3 family prefers moderate CFG with SGM uniform scheduling.
-      case "sd3":
-        preset = {
-          steps: this.modelTurboVariant === "turbo" ? 6 : 28,
-          cfg: this.modelTurboVariant === "turbo" ? 1.0 : 4.5,
-          samplerName: "euler",
-          scheduler: "sgm_uniform",
-          width: 1024,
-          height: 1024,
         };
         break;
 
@@ -2687,10 +2869,8 @@ class GenerationStore {
         };
         break;
 
-      // Flux.2 base.
+      // Flux.2 Dev.
       case "flux2d":
-      case "flux2klein9bbase":
-      case "flux2klein4bbase":
         preset = {
           steps: 20,
           cfg: 4.0,
@@ -2718,19 +2898,6 @@ class GenerationStore {
         preset = {
           steps: 50,
           cfg: 3.5,
-          samplerName: "euler",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // Flux.2 klein.
-      case "flux2klein9b":
-      case "flux2klein4b":
-        preset = {
-          steps: 9,
-          cfg: 1.5,
           samplerName: "euler",
           scheduler: "simple",
           width: 1024,
@@ -2774,47 +2941,11 @@ class GenerationStore {
         };
         break;
 
-      // PixArt ships best with conservative Euler-based defaults.
-      case "pixart":
-        preset = {
-          steps: 20,
-          cfg: 4.5,
-          samplerName: "euler",
-          scheduler: "normal",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
       // HunyuanDiT benefits from a higher step/count CFG preset.
       case "hunyuandit":
         preset = {
           steps: 30,
           cfg: 6.0,
-          samplerName: "euler",
-          scheduler: "normal",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // Stable Cascade keeps a simple scheduler preset for the base stage.
-      case "cascade":
-        preset = {
-          steps: 20,
-          cfg: 4.0,
-          samplerName: "euler",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // Kolors stays in the SDXL-like resolution bucket with a slightly higher CFG.
-      case "kolors":
-        preset = {
-          steps: 25,
-          cfg: 5.0,
           samplerName: "euler",
           scheduler: "normal",
           width: 1024,
@@ -2883,7 +3014,6 @@ class GenerationStore {
             };
         break;
 
-      case "wan":
       case "qwen":
         preset = {
           steps: 30,
@@ -2958,7 +3088,7 @@ class GenerationStore {
         break;
     }
 
-    this.applyResolvedPreset(preset);
+    this.applyResolvedPreset(preset, keepSize);
   }
 
   async loadSettings() {
@@ -3008,6 +3138,11 @@ class GenerationStore {
     if (saved.height) this.height = saved.height;
     if (saved.batchSize) this.batchSize = saved.batchSize;
     if (saved.denoise !== undefined) this.denoise = saved.denoise;
+    if (saved.outpaintTop !== undefined) this.outpaintTop = Number(saved.outpaintTop) || 0;
+    if (saved.outpaintBottom !== undefined) this.outpaintBottom = Number(saved.outpaintBottom) || 0;
+    if (saved.outpaintLeft !== undefined) this.outpaintLeft = Number(saved.outpaintLeft) || 0;
+    if (saved.outpaintRight !== undefined) this.outpaintRight = Number(saved.outpaintRight) || 0;
+    if (saved.outpaintFeather !== undefined) this.outpaintFeather = Number(saved.outpaintFeather) || 0;
     if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
     // The parked bucket. The active one is loaded from the flat fields below,
     // which also carries a pre-split store forward: its single prompt lands
@@ -3027,6 +3162,11 @@ class GenerationStore {
         strength_model: l.strength_model ?? 1.0,
         strength_clip: l.strength_clip ?? 1.0,
         enabled: l.enabled ?? true,
+        // Kept so words inserted from trigger chips still leave the prompt
+        // when the LoRA is switched off after a restart.
+        insertedWords: Array.isArray(l.insertedWords)
+          ? l.insertedWords.filter((w: unknown): w is string => typeof w === "string" && w.trim() !== "")
+          : undefined,
       }));
     }
     if (saved.upscaleEnabled !== undefined) this.upscaleEnabled = saved.upscaleEnabled;
@@ -3047,6 +3187,9 @@ class GenerationStore {
     if (saved.savePreUpscaleImage !== undefined) this.savePreUpscaleImage = saved.savePreUpscaleImage;
     if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
     if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
+    if (saved.moodyMossHd !== undefined) this.moodyMossHd = saved.moodyMossHd;
+    if (saved.transparentBackground !== undefined) this.transparentBackground = saved.transparentBackground;
+    if (saved.moodyMoss !== undefined) this.moodyMoss = restoreMoodyMossSettings(saved.moodyMoss);
     if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
     if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
     if (saved.nagScale !== undefined) this.nagScale = saved.nagScale;
@@ -3087,6 +3230,12 @@ class GenerationStore {
       this.editReferenceStrength = saved.editReferenceStrength;
     if (saved.editSplitScreen !== undefined)
       this.editSplitScreen = saved.editSplitScreen;
+    if (saved.krea2EditMethod !== undefined)
+      this.krea2EditMethod = parseKrea2EditMethod(saved.krea2EditMethod);
+    if (saved.krea2EditRefBoost !== undefined)
+      this.krea2EditRefBoost =
+        typeof saved.krea2EditRefBoost === "number" ? saved.krea2EditRefBoost : null;
+    if (saved.krea2EditBeside !== undefined) this.krea2EditBeside = !!saved.krea2EditBeside;
     if (saved.cameraAngleEnabled !== undefined)
       this.cameraAngleEnabled = !!saved.cameraAngleEnabled;
     if (saved.cameraAzimuth !== undefined) this.cameraAzimuth = clampAzimuth(saved.cameraAzimuth);
@@ -3141,6 +3290,14 @@ class GenerationStore {
       );
     if (saved.videoModelTier !== undefined) this.videoModelTier = saved.videoModelTier;
     if (saved.videoTurboLora !== undefined) this.videoTurboLora = saved.videoTurboLora;
+    if (Array.isArray(saved.videoLoras)) {
+      this.videoLoras = saved.videoLoras
+        .filter((l: any) => l && typeof l.name === "string")
+        .map((l: any) => {
+          const strength = Number.isFinite(l.strength_model) ? l.strength_model : 1.0;
+          return { name: l.name, strength_model: strength, strength_clip: strength, enabled: l.enabled ?? true };
+        });
+    }
     if (saved.videoSampler !== undefined) this.videoSampler = saved.videoSampler;
     if (saved.videoScheduler !== undefined) this.videoScheduler = saved.videoScheduler;
     if (saved.videoDiffusionModel !== undefined)
@@ -3183,6 +3340,8 @@ class GenerationStore {
       this.naiEnhanceIncludeExisting = saved.naiEnhanceIncludeExisting;
     if (saved.naiEnhanceKeepArtists !== undefined)
       this.naiEnhanceKeepArtists = saved.naiEnhanceKeepArtists;
+    if (saved.naiEnhanceMinorRule !== undefined)
+      this.naiEnhanceMinorRule = saved.naiEnhanceMinorRule;
     if (isEnhanceScaleChoice(saved.naiEnhanceScaleChoice))
       this.naiEnhanceScaleChoice = saved.naiEnhanceScaleChoice;
     if (typeof saved.naiEnhanceMagnitude === "number")
@@ -3212,6 +3371,26 @@ class GenerationStore {
     if (saved.guideImage !== undefined) this.guideImage = saved.guideImage;
     if (saved.guideStrength !== undefined) this.guideStrength = saved.guideStrength;
     if (saved.guideEndPercent !== undefined) this.guideEndPercent = saved.guideEndPercent;
+    if (saved.styleRefImage2 !== undefined) this.styleRefImage2 = saved.styleRefImage2;
+    this.animaRefMethod =
+      saved.animaRefMethod === "snapref" || saved.animaRefMethod === "art_style"
+        ? saved.animaRefMethod
+        : "anima_ref_adapter";
+    if (typeof saved.animaArtStyleMatch === "number") this.animaArtStyleMatch = Math.max(0, Math.min(1, saved.animaArtStyleMatch));
+    if (typeof saved.animaArtStyleRestyle === "boolean") this.animaArtStyleRestyle = saved.animaArtStyleRestyle;
+    if (typeof saved.animaArtStyleMegapixels === "number") this.animaArtStyleMegapixels = Math.max(0.5, Math.min(4, saved.animaArtStyleMegapixels));
+    if (saved.snaprefAdapter !== undefined) this.snaprefAdapter = saved.snaprefAdapter;
+    if (saved.snaprefMode === "Character" || saved.snaprefMode === "Character & Style") this.snaprefMode = saved.snaprefMode;
+    if (typeof saved.snaprefFidelity === "number") this.snaprefFidelity = Math.max(0, Math.min(1, saved.snaprefFidelity));
+    if (Array.isArray(saved.snaprefReferences)) {
+      this.snaprefReferences = saved.snaprefReferences.slice(0, 8).map((r: any) => ({
+        image: typeof r?.image === "string" ? r.image : null,
+        strength: typeof r?.strength === "number" ? Math.max(0, Math.min(2, r.strength)) : 1,
+      }));
+      while (this.snaprefReferences.length < 2) this.snaprefReferences = [...this.snaprefReferences, { image: null, strength: 1 }];
+    }
+    if (saved.animaRefGuidance !== undefined) this.animaRefGuidance = saved.animaRefGuidance;
+    if (saved.animaRefCorrection) this.animaRefCorrection = saved.animaRefCorrection;
     if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
     if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
     if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -3232,7 +3411,8 @@ class GenerationStore {
     this.applyModeToggleState(this.modeToggles[savedMode] ?? defaultModeToggleState());
     if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
     if (saved.outputFormat === "png" || saved.outputFormat === "jxl" || saved.outputFormat === "webp") this.outputFormat = saved.outputFormat;
-    if (saved.metadataMode) this.metadataMode = saved.metadataMode;
+    this.metadataMode = "both";
+    if (saved.invisibleWatermark !== undefined) this.invisibleWatermark = saved.invisibleWatermark;
     if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
     if (saved.customQualityTagsEnabled !== undefined) this.customQualityTagsEnabled = saved.customQualityTagsEnabled;
     if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
@@ -3246,12 +3426,22 @@ class GenerationStore {
     if (saved.modelFamilyOverrides && typeof saved.modelFamilyOverrides === "object") {
       this.modelFamilyOverrides = Object.fromEntries(
         Object.entries(saved.modelFamilyOverrides as Record<string, unknown>).filter(
-          ([key, value]) => !!key && isModelFamily(value) && value !== "unknown",
+          // Any family id: settings load before the architecture registry,
+          // so an override to a registered family must not be dropped here.
+          ([key, value]) => !!key && typeof value === "string" && !!value && value !== "unknown",
         ),
       ) as Record<string, ModelFamily>;
     }
     if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
     if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
+    if (saved.finishSound !== undefined) this.finishSound = saved.finishSound;
+    if (typeof saved.repeatCount === "number" && Number.isFinite(saved.repeatCount)) {
+      this.repeatCount = Math.max(0, Math.min(999, Math.round(saved.repeatCount)));
+    }
+    if (typeof saved.repeatDelaySec === "number" && Number.isFinite(saved.repeatDelaySec)) {
+      this.repeatDelaySec = Math.max(0, Math.min(3600, saved.repeatDelaySec));
+    }
+    if (saved.repeatStopOnError !== undefined) this.repeatStopOnError = saved.repeatStopOnError;
     if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
     if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
     if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
@@ -3311,6 +3501,11 @@ class GenerationStore {
         height: this.height,
         batchSize: this.batchSize,
         denoise: this.denoise,
+        outpaintTop: this.outpaintTop,
+        outpaintBottom: this.outpaintBottom,
+        outpaintLeft: this.outpaintLeft,
+        outpaintRight: this.outpaintRight,
+        outpaintFeather: this.outpaintFeather,
         differentialDiffusion: this.differentialDiffusion,
         upscaleEnabled: this.upscaleEnabled,
         upscaleMethod: this.upscaleMethod,
@@ -3328,6 +3523,9 @@ class GenerationStore {
         refineOnly: this.refineOnly,
         savePreUpscaleImage: this.savePreUpscaleImage,
         smartGuidance: this.smartGuidance,
+        moodyMossHd: this.moodyMossHd,
+        transparentBackground: this.transparentBackground,
+        moodyMoss: $state.snapshot(this.moodyMoss),
         vpredRescaleCfg: this.vpredRescaleCfg,
         vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
         nagEnabled: this.nagEnabled,
@@ -3360,6 +3558,9 @@ class GenerationStore {
         editReferenceImages: this.editReferenceImages,
         editReferenceStrength: this.editReferenceStrength,
         editSplitScreen: this.editSplitScreen,
+        krea2EditMethod: this.krea2EditMethod,
+        krea2EditRefBoost: this.krea2EditRefBoost,
+        krea2EditBeside: this.krea2EditBeside,
         cameraAngleEnabled: this.cameraAngleEnabled,
         cameraAzimuth: this.cameraAzimuth,
         cameraElevation: this.cameraElevation,
@@ -3388,6 +3589,17 @@ class GenerationStore {
         guideImage: this.guideImage,
         guideStrength: this.guideStrength,
         guideEndPercent: this.guideEndPercent,
+        styleRefImage2: this.styleRefImage2,
+        animaRefMethod: this.animaRefMethod,
+        animaArtStyleMatch: this.animaArtStyleMatch,
+        animaArtStyleRestyle: this.animaArtStyleRestyle,
+        animaArtStyleMegapixels: this.animaArtStyleMegapixels,
+        snaprefAdapter: this.snaprefAdapter,
+        snaprefMode: this.snaprefMode,
+        snaprefFidelity: this.snaprefFidelity,
+        snaprefReferences: this.snaprefReferences,
+        animaRefGuidance: this.animaRefGuidance,
+        animaRefCorrection: this.animaRefCorrection,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -3398,6 +3610,7 @@ class GenerationStore {
         outputBitDepth: this.outputBitDepth,
         outputFormat: this.outputFormat,
         metadataMode: this.metadataMode,
+        invisibleWatermark: this.invisibleWatermark,
         autoQualityTags: this.autoQualityTags,
         customQualityTagsEnabled: this.customQualityTagsEnabled,
         customAnimaPositiveQuality: this.customAnimaPositiveQuality,
@@ -3411,6 +3624,10 @@ class GenerationStore {
         modelFamilyOverrides: this.modelFamilyOverrides,
         osNotificationsEnabled: this.osNotificationsEnabled,
         osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+        finishSound: this.finishSound,
+        repeatCount: this.repeatCount,
+        repeatDelaySec: this.repeatDelaySec,
+        repeatStopOnError: this.repeatStopOnError,
         manualSaveMode: this.manualSaveMode,
         advancedMode: this.advancedMode,
         resolutionLocked: this.resolutionLocked,
@@ -3443,6 +3660,7 @@ class GenerationStore {
         videoLivePreview: this.videoLivePreview,
         videoModelTier: this.videoModelTier,
         videoTurboLora: this.videoTurboLora,
+        videoLoras: this.videoLoras,
         videoSampler: this.videoSampler,
         videoScheduler: this.videoScheduler,
         videoDiffusionModel: this.videoDiffusionModel,
@@ -3454,6 +3672,7 @@ class GenerationStore {
         naiEnhanceLanguage: this.naiEnhanceLanguage,
         naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
         naiEnhanceKeepArtists: this.naiEnhanceKeepArtists,
+        naiEnhanceMinorRule: this.naiEnhanceMinorRule,
         naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
         naiEnhanceMagnitude: this.naiEnhanceMagnitude,
       });
@@ -3487,6 +3706,11 @@ class GenerationStore {
       height: this.height,
       batchSize: this.batchSize,
       denoise: this.denoise,
+      outpaintTop: this.outpaintTop,
+      outpaintBottom: this.outpaintBottom,
+      outpaintLeft: this.outpaintLeft,
+      outpaintRight: this.outpaintRight,
+      outpaintFeather: this.outpaintFeather,
       refineOnly: this.refineOnly,
       differentialDiffusion: this.differentialDiffusion,
       upscaleEnabled: this.upscaleEnabled,
@@ -3504,6 +3728,9 @@ class GenerationStore {
       upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
       savePreUpscaleImage: this.savePreUpscaleImage,
       smartGuidance: this.smartGuidance,
+      moodyMossHd: this.moodyMossHd,
+      transparentBackground: this.transparentBackground,
+      moodyMoss: $state.snapshot(this.moodyMoss),
       vpredRescaleCfg: this.vpredRescaleCfg,
       vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
       nagEnabled: this.nagEnabled,
@@ -3536,6 +3763,9 @@ class GenerationStore {
       editReferenceImages: this.editReferenceImages,
       editReferenceStrength: this.editReferenceStrength,
       editSplitScreen: this.editSplitScreen,
+      krea2EditMethod: this.krea2EditMethod,
+      krea2EditRefBoost: this.krea2EditRefBoost,
+      krea2EditBeside: this.krea2EditBeside,
       cameraAngleEnabled: this.cameraAngleEnabled,
       cameraAzimuth: this.cameraAzimuth,
       cameraElevation: this.cameraElevation,
@@ -3564,6 +3794,17 @@ class GenerationStore {
       guideImage: this.guideImage,
       guideStrength: this.guideStrength,
       guideEndPercent: this.guideEndPercent,
+      styleRefImage2: this.styleRefImage2,
+      animaRefMethod: this.animaRefMethod,
+      animaArtStyleMatch: this.animaArtStyleMatch,
+      animaArtStyleRestyle: this.animaArtStyleRestyle,
+      animaArtStyleMegapixels: this.animaArtStyleMegapixels,
+      snaprefAdapter: this.snaprefAdapter,
+      snaprefMode: this.snaprefMode,
+      snaprefFidelity: this.snaprefFidelity,
+      snaprefReferences: this.snaprefReferences,
+      animaRefGuidance: this.animaRefGuidance,
+      animaRefCorrection: this.animaRefCorrection,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -3574,6 +3815,7 @@ class GenerationStore {
       outputBitDepth: this.outputBitDepth,
       outputFormat: this.outputFormat,
       metadataMode: this.metadataMode,
+      invisibleWatermark: this.invisibleWatermark,
       autoQualityTags: this.autoQualityTags,
       customQualityTagsEnabled: this.customQualityTagsEnabled,
       customAnimaPositiveQuality: this.customAnimaPositiveQuality,
@@ -3586,6 +3828,10 @@ class GenerationStore {
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
       osNotificationsEnabled: this.osNotificationsEnabled,
       osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+      finishSound: this.finishSound,
+      repeatCount: this.repeatCount,
+      repeatDelaySec: this.repeatDelaySec,
+      repeatStopOnError: this.repeatStopOnError,
       manualSaveMode: this.manualSaveMode,
       advancedMode: this.advancedMode,
       resolutionLocked: this.resolutionLocked,
@@ -3619,6 +3865,7 @@ class GenerationStore {
       videoLivePreview: this.videoLivePreview,
       videoModelTier: this.videoModelTier,
       videoTurboLora: this.videoTurboLora,
+      videoLoras: this.videoLoras,
       videoSampler: this.videoSampler,
       videoScheduler: this.videoScheduler,
       videoDiffusionModel: this.videoDiffusionModel,
@@ -3630,6 +3877,7 @@ class GenerationStore {
       naiEnhanceLanguage: this.naiEnhanceLanguage,
       naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
       naiEnhanceKeepArtists: this.naiEnhanceKeepArtists,
+      naiEnhanceMinorRule: this.naiEnhanceMinorRule,
       naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
       naiEnhanceMagnitude: this.naiEnhanceMagnitude,
     };
@@ -3679,14 +3927,19 @@ class GenerationStore {
    * image or mask it needs is missing, so a stale mode cannot burn Anlas on a
    * request NovelAI would reject.
    *
-   * Both `local_*` prompts stay null. The NovelAI syntax reversal happens in
-   * Rust while building the payload and never touches `params`, so the
-   * top-level prompt is still the ComfyUI-syntax one the free local pass wants.
+   * Both `local_*` prompts stay null. The top-level prompt goes out in the
+   * syntax the user wrote, and Rust translates it each way it is needed:
+   * `to_novelai` while building the NovelAI payload, `from_novelai` for the
+   * free local pass (`upscale_standalone::build_params`).
    */
   private novelAiParams(characters: NovelAiCharacter[]): NovelAiParams | null {
-    if (!isNovelAiModel(this.checkpoint)) return null;
+    if (!this.isNovelAi) return null;
     const action =
-      this.mode === "inpainting" ? "infill" : this.mode === "img2img" ? "img2img" : "generate";
+      this.mode === "inpainting" || this.mode === "outpainting"
+        ? "infill"
+        : this.mode === "img2img"
+          ? "img2img"
+          : "generate";
     return {
       ...this.novelaiSettings,
       face_detail: {
@@ -3717,14 +3970,21 @@ class GenerationStore {
   } {
     const inlineIds = new Set<string>();
     const characters = (this.novelaiSettings.characters ?? []).map((character) => {
-      for (const id of promptPresets.inlinePresetIds(character.prompt)) inlineIds.add(id);
-      for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
+      const prompt = stripPromptComments(character.prompt);
+      const characterNegative = stripPromptComments(character.negative_prompt);
+      const promptIds = promptPresets.inlinePresetIds(prompt);
+      for (const id of promptIds) inlineIds.add(id);
+      for (const id of promptPresets.inlinePresetIds(characterNegative)) {
         inlineIds.add(id);
       }
+      // A chunk used in this character's prompt brings its UC to this
+      // character's UC, not the image's.
+      const negative = promptPresets.resolveInline(characterNegative, { fixedChoices });
+      const uc = promptPresets.negativeFor(promptIds);
       return {
         ...character,
-        prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
-        negative_prompt: promptPresets.resolveInline(character.negative_prompt, { fixedChoices }),
+        prompt: promptPresets.resolveInline(prompt, { fixedChoices }),
+        negative_prompt: uc ? this.mergeIntoPrompt(negative, uc, "after") : negative,
       };
     });
     return { characters, inlineIds };
@@ -3765,6 +4025,8 @@ class GenerationStore {
    * it is dropped and the run completes.
    */
   get effectivePauseAtStep(): number {
+    // Stable Cascade samples in two separate stages, which can't pause.
+    if (this.isCascade) return 0;
     const step = Math.floor(this.pauseAtStep);
     if (!Number.isFinite(step) || step <= this.pausedEndStep || step >= this.steps) return 0;
     return step;
@@ -3924,16 +4186,30 @@ class GenerationStore {
       if (!this.clipType) {
         throw new Error("Split model text encoder type is still loading.");
       }
-      if (!this.vae) {
+      if (!this.vae && !this.splitVaeFromModelFile) {
+        if (this.isSd3) {
+          // GGUFs and bare SD3 diffusion models carry no VAE, and the SD3 VAE
+          // sits in Stability's gated repo, so it cannot be auto-downloaded.
+          throw new Error(
+            "This SD3 file has no VAE of its own. Pick the SD3 VAE under VAE, or download \"SD3.5 VAE (HF access)\" from the Model Hub.",
+          );
+        }
         throw new Error("Split model VAE is still loading.");
       }
     }
 
-    // Diffusion-only families (Flux, Anima, Wan, Qwen, Chroma, ...) carry no
-    // text encoder in a single checkpoint. If one was placed in `checkpoints/`
-    // and loaded via CheckpointLoaderSimple, ComfyUI returns a None CLIP and
-    // fails with "clip input is invalid: None". Surface an actionable error.
-    if (!isVideo && !this.useSplitModel && familyRequiresSeparateClip(this.modelFamily)) {
+    // Diffusion-only families (Flux, Anima, Wan, Qwen, Chroma, ...) usually
+    // carry no text encoder in a single file. If one was placed in
+    // `checkpoints/` and loaded via CheckpointLoaderSimple, ComfyUI returns a
+    // None CLIP and fails with "clip input is invalid: None". Surface an
+    // actionable error, unless the file's own tensor keys show a baked text
+    // encoder and VAE (all-in-one fine-tunes such as ColdMilk Anima).
+    if (
+      !isVideo &&
+      !this.useSplitModel &&
+      !this.mainModelIsFullCheckpoint &&
+      familyRequiresSeparateClip(this.modelFamily)
+    ) {
       throw new Error(
         `"${this.checkpoint}" is a ${this.modelFamily} diffusion model with no built-in text encoder. ` +
           `Move it to ComfyUI's diffusion_models/ folder and select it as a diffusion model, ` +
@@ -3951,13 +4227,23 @@ class GenerationStore {
     // `@preset:` tokens inside extra boxes still flow through the pipeline.
     // NovelAI reads the prompt line by line (a `Text:` line opens the lettering
     // block), so its layout is preserved instead of folded into commas.
-    const sanitizeOptions = { keepNewlines: this.isNovelAi };
+    const sanitizeOptions = {
+      keepNewlines: this.isNovelAi,
+      keepBreak: !this.isNovelAi && !isVideo && familySupportsBreakChunking(this.modelFamily),
+    };
+    const ownPrompts = options.prompts ?? null;
+    // `//` comments come off each box before the boxes are joined, so a
+    // comment at the end of one box cannot swallow the next box's text.
     const effectivePositive = sanitizePromptForSend(
-      joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
+      ownPrompts
+        ? stripPromptComments(ownPrompts.positive)
+        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
     const effectiveNegative = sanitizePromptForSend(
-      joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
+      ownPrompts
+        ? stripPromptComments(ownPrompts.negative)
+        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
 
@@ -3966,7 +4252,9 @@ class GenerationStore {
     // occurrence rolls independently.
     const inlinePositiveIds = promptPresets.inlinePresetIds(effectivePositive);
     const inlineNegativeIds = promptPresets.inlinePresetIds(effectiveNegative);
-    const novelAiCharacters = this.resolveNovelAiCharacters(options.fixedPresetChoices);
+    const novelAiCharacters = ownPrompts
+      ? { characters: [] as NovelAiCharacter[], inlineIds: new Set<string>() }
+      : this.resolveNovelAiCharacters(options.fixedPresetChoices);
     const inlinePresetIds = new Set([
       ...inlinePositiveIds,
       ...inlineNegativeIds,
@@ -3996,12 +4284,27 @@ class GenerationStore {
       !isNaN(numericSeed) && numericSeed !== -1
         ? numericSeed >>> 0
         : (Math.random() * 0x100000000) >>> 0;
-    const inlinePositive = hasPositiveRandom
-      ? expandRandomPrompt(inlinePositiveRaw, rngSeed)
-      : inlinePositiveRaw;
-    const inlineNegative = hasNegativeRandom
-      ? expandRandomPrompt(inlineNegativeRaw, rngSeed + 1)
-      : inlineNegativeRaw;
+    // `__name__` file wildcards: expanded before {a|b} (an option may hold
+    // alternation) and once more after it (an alternation may hold a wildcard).
+    wildcards.beginBuild();
+    const expandAll = (text: string, salt: number, randomize: boolean) => {
+      let out = wildcards.expand(text, rngSeed + salt).text;
+      if (randomize || hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt);
+      if (out.includes("__")) {
+        out = wildcards.expand(out, rngSeed + salt + 7).text;
+        if (hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt + 7);
+      }
+      return out;
+    };
+    const inlinePositive = expandAll(inlinePositiveRaw, 0, hasPositiveRandom);
+    const inlineNegative = expandAll(inlineNegativeRaw, 1, hasNegativeRandom);
+    novelAiCharacters.characters = novelAiCharacters.characters.map((character, i) => ({
+      ...character,
+      prompt: character.prompt.includes("__") ? wildcards.expand(character.prompt, rngSeed + 101 + i * 2).text : character.prompt,
+      negative_prompt: character.negative_prompt.includes("__")
+        ? wildcards.expand(character.negative_prompt, rngSeed + 102 + i * 2).text
+        : character.negative_prompt,
+    }));
 
     // Parse <segment:...> auto-refinement tags from the user-typed prompt before
     // system fragments (style presets, artist styles, preset appends, quality
@@ -4033,13 +4336,15 @@ class GenerationStore {
     }
 
     // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
-    // pick a random choice per generation — mergeTagPrompts dedupes against
+    // pick a random choice per generation — mergeComfyTags dedupes them against
     // whatever the user has already typed.
-    const preset = promptPresets.resolve({
-      fixedChoices: options.fixedPresetChoices,
-      skipIds: inlinePresetIds,
-      advanceFixedOrdered: false,
-    });
+    const preset = ownPrompts
+      ? { prepend: "", append: "" }
+      : promptPresets.resolve({
+          fixedChoices: options.fixedPresetChoices,
+          skipIds: inlinePresetIds,
+          advanceFixedOrdered: false,
+        });
     if (preset.prepend) {
       positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.prepend, "before");
     }
@@ -4047,10 +4352,27 @@ class GenerationStore {
       positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.append, "after");
     }
 
+    // UC carried by styles and chunks goes to the negative prompt: active
+    // styles, the chunks the pass above applied, and chunks used inline in
+    // the positive prompt. A chunk used only in the negative box is already
+    // negative text there, so its UC is not added again.
+    const chunkUcIds = [
+      ...(ownPrompts ? [] : promptPresets.activeIdsFor(inlinePresetIds)),
+      ...inlinePositiveIds,
+    ];
+    const ucParts = [
+      options.skipActiveStyles ? "" : styles.buildNegativeFragment(),
+      promptPresets.negativeFor(chunkUcIds),
+      options.extraNegative?.trim() ?? "",
+    ].filter(Boolean);
+    if (ucParts.length > 0) {
+      negativePrompt = this.mergeIntoPrompt(negativePrompt, ucParts.join(", "), "after");
+    }
+
     // The Multiple-Angles LoRA wants its shot phrase first. Prepended as-is
     // rather than through mergeIntoPrompt, which would re-tokenize the edit
     // instruction (usually prose) on commas.
-    if (this.cameraAngleActive) {
+    if (this.cameraAngleActive && !ownPrompts) {
       const phrase = this.cameraAnglePrompt;
       const rest = positivePrompt.trim();
       if (!rest.toLowerCase().includes(phrase.toLowerCase())) {
@@ -4075,26 +4397,26 @@ class GenerationStore {
     if (!isVideo && !this.isNovelAi && this.autoQualityTags) {
       // Anima models (positive before, negative after)
       if (this.usesAnimaQualityTags) {
-        positivePrompt = this.mergeTagPrompts(this.animaPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.animaNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.animaPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.animaNegativeQuality, "after");
       }
 
       // Illustrious/NoobAI family (positive before, negative after)
       if (this.isIllustrious) {
-        positivePrompt = this.mergeTagPrompts(this.customIllustriousPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customIllustriousNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.customIllustriousPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.customIllustriousNegativeQuality, "after");
       }
 
       // Pony Diffusion (score-based quality tags)
       if (this.isPony) {
-        positivePrompt = this.mergeTagPrompts(this.customPonyPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customPonyNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.customPonyPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.customPonyNegativeQuality, "after");
       }
 
       // Nanosaur (newest/oldest quality tags)
       if (this.isNanosaur) {
-        positivePrompt = this.mergeTagPrompts(this.customNanosaurPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customNanosaurNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.customNanosaurPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.customNanosaurNegativeQuality, "after");
       }
     }
 
@@ -4175,7 +4497,12 @@ class GenerationStore {
     const parsedPositive = parseScheduledPrompt(positivePrompt);
     const parsedNegative = parseScheduledPrompt(negativePrompt);
 
-    const translatedPositiveBase = translatePromptWeightSyntax(parsedPositive.baseText);
+    // The base prompts are what a NovelAI request sends, so in NovelAI mode
+    // they keep the NovelAI weight syntax the user wrote (`1.2::tag::`,
+    // `{tag}`) instead of being converted to ComfyUI's and back again in
+    // Rust. Segments and detail prompts below are only ever read by ComfyUI.
+    const baseSyntax = this.isNovelAi ? "novelai" : "comfyui";
+    const translatedPositiveBase = translatePromptWeightSyntax(parsedPositive.baseText, baseSyntax);
     const translatedPositiveSegments = parsedPositive.segments.map((s) => ({
       text: translatePromptWeightSyntax(s.text),
       start: s.start,
@@ -4227,7 +4554,7 @@ class GenerationStore {
     const params: GenerationParams = {
       mode: this.mode,
       positive_prompt: translatedPositiveBase,
-      negative_prompt: translatePromptWeightSyntax(parsedNegative.baseText),
+      negative_prompt: translatePromptWeightSyntax(parsedNegative.baseText, baseSyntax),
       positive_segments: translatedPositiveSegments,
       negative_segments: parsedNegative.segments.map((s) => ({
         text: translatePromptWeightSyntax(s.text),
@@ -4257,6 +4584,11 @@ class GenerationStore {
       input_image: this.inputImage,
       mask_image: this.maskImage,
       grow_mask_by: this.growMaskBy,
+      outpaint_top: this.outpaintTop,
+      outpaint_bottom: this.outpaintBottom,
+      outpaint_left: this.outpaintLeft,
+      outpaint_right: this.outpaintRight,
+      outpaint_feather: this.outpaintFeather,
       upscale_enabled: this.upscaleEnabled,
       upscale_method: this.upscaleMethod,
       upscale_model: this.upscaleModel,
@@ -4272,6 +4604,9 @@ class GenerationStore {
       refine_only: this.mode === "img2img" && this.upscaleEnabled && this.refineOnly,
       save_pre_upscale_image: this.savePreUpscaleImage,
       smart_guidance: this.smartGuidance,
+      moody_moss_hd: this.moodyMossHdActive,
+      transparent_background: this.transparentBackgroundActive,
+      moody_moss: this.isMoodyMossMix ? moodyMossFinishPayload(this.moodyMoss) : undefined,
       vpred_rescale_cfg: this.vpredRescaleCfg,
       vpred_rescale_cfg_multiplier: this.vpredRescaleCfgMultiplier,
       nag_enabled: this.nagEnabled,
@@ -4340,14 +4675,43 @@ class GenerationStore {
       guide_image: this.guideImage,
       guide_strength: this.guideStrength,
       guide_end_percent: this.guideEndPercent,
+      style_ref_image_2: this.styleRefImage2,
+      anima_ref_method: this.animaRefMethod,
+      anima_art_style_match: this.animaArtStyleMatch,
+      anima_art_style_restyle: this.animaArtStyleRestyle,
+      anima_art_style_megapixels: this.animaArtStyleMegapixels,
+      snapref_adapter: this.snaprefAdapter,
+      snapref_mode: this.snaprefMode,
+      snapref_fidelity: this.snaprefFidelity,
+      snapref_references: this.snaprefReferences,
+      anima_ref_guidance: this.animaRefGuidance,
+      anima_ref_correction: this.animaRefCorrection,
       anima_teacache_enabled: this.animaTeacacheEnabled,
       // Only the slots the current family shows: a FLUX 3 session's extra
       // references must not ride along once a 1- or 3-slot model is picked.
       edit_reference_images: this.editReferenceImages
         .slice(0, this.editReferenceSlotCount)
         .filter((v): v is string => !!v),
+      // Only the current family's slots, so another family's files never ride along.
+      architecture_files: {
+        ...Object.fromEntries(
+          (findFamily(this.modelFamily)?.arch.model_slots ?? [])
+            .map((slot) => [slot.key, this.architectureFiles[slot.key] ?? ""] as const)
+            .filter(([, file]) => !!file),
+        ),
+        // Wan 2.2 A14B pairs the high-noise model with its own low-noise file.
+        ...(this.wanLowNoisePartner ? { [WAN_LOW_NOISE_SLOT]: this.wanLowNoisePartner } : {}),
+      },
       edit_reference_strength: this.editReferenceStrength,
       edit_split_screen: this.editSplitScreen,
+      ...(this._mode === "image_edit" && this.isKrea2
+        ? {
+            krea2_edit_method: this.krea2EditMethod,
+            krea2_edit_lora: installedKrea2EditLora(models.loras, this.krea2EditMethod) ?? "",
+            krea2_edit_ref_boost: this.krea2EditRefBoost ?? undefined,
+            krea2_edit_beside: this.krea2EditBeside,
+          }
+        : {}),
       video_variant: this.videoVariant,
       video_duration_seconds: this.videoDurationSeconds,
       video_megapixels: this.videoMegapixels,
@@ -4372,6 +4736,9 @@ class GenerationStore {
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.effectiveVideoTurboPreset.steps ?? this.videoTurboSteps,
       video_turbo_lora: this.videoTurboEnabled ? (this.effectiveVideoTurboPreset.id === "larryvrh" ? this.videoTurboLora : (this.videoPresetLora ?? this.effectiveVideoTurboPreset.file.filename)) : null,
+      video_loras: this.videoLoras
+        .filter((l) => l.enabled && l.name)
+        .map(({ name, strength_model }) => ({ name, strength_model, strength_clip: strength_model })),
       video_teacache_enabled: this.videoTeacacheEnabled,
       video_live_preview: this.videoLivePreview,
       video_model_tier: this.videoModelTier,
@@ -4417,6 +4784,41 @@ class GenerationStore {
     return params;
   }
 
+  /** Add an H3 video LoRA row, switched on, or switch on the row it already has. */
+  addVideoLora(name = "") {
+    if (name) {
+      const idx = this.videoLoras.findIndex((l) => l.name === name);
+      if (idx >= 0) {
+        this.videoLoras = this.videoLoras.map((l, i) => (i === idx ? { ...l, enabled: true } : l));
+        return;
+      }
+    }
+    this.videoLoras = [
+      ...this.videoLoras,
+      { name, strength_model: 1.0, strength_clip: 1.0, enabled: true },
+    ];
+  }
+
+  removeVideoLora(index: number) {
+    this.videoLoras = this.videoLoras.filter((_, i) => i !== index);
+  }
+
+  /** Patch one H3 video LoRA row; strength is written to both fields. */
+  updateVideoLora(index: number, patch: { name?: string; strength?: number; enabled?: boolean }) {
+    if (!this.videoLoras[index]) return;
+    this.videoLoras = this.videoLoras.map((l, i) => {
+      if (i !== index) return l;
+      const strength = patch.strength ?? l.strength_model;
+      return {
+        ...l,
+        name: patch.name ?? l.name,
+        enabled: patch.enabled ?? l.enabled,
+        strength_model: strength,
+        strength_clip: strength,
+      };
+    });
+  }
+
   addLora() {
     this.loras = [
       ...this.loras,
@@ -4425,30 +4827,97 @@ class GenerationStore {
   }
 
   removeLora(index: number) {
-    const removed = this.loras[index];
-    this.loras = this.loras.filter((_, i) => i !== index);
-    if (removed?.insertedWords?.length) {
-      this.removeInsertedWordsFromPrompt(removed.insertedWords);
-    }
+    this.setLoras(this.loras.filter((_, i) => i !== index));
   }
 
   /**
-   * Flip a LoRA on or off, taking its chip-inserted trigger words out of the
-   * prompt when it goes off and putting them back when it comes on again.
-   * Words that were no longer in the prompt when it went off (the user
-   * removed or edited them) stop being tracked, so they are not re-added.
+   * Flip a LoRA on or off. Its custom trigger and the trigger words inserted
+   * from its chips go into the prompt when it comes on and out when it goes
+   * off (see `setLoras`).
    */
   toggleLora(index: number) {
-    const target = this.loras[index];
-    if (!target) return;
-    let insertedWords = target.insertedWords;
-    if (insertedWords?.length) {
-      if (target.enabled) insertedWords = this.removeInsertedWordsFromPrompt(insertedWords);
-      else this.restoreInsertedWordsToPrompt(insertedWords);
-    }
-    this.loras = this.loras.map((l, i) =>
-      i === index ? { ...l, enabled: !l.enabled, insertedWords } : l
+    if (!this.loras[index]) return;
+    this.setLoras(this.loras.map((l, i) => (i === index ? { ...l, enabled: !l.enabled } : l)));
+  }
+
+  /** Point a LoRA row at another file, swapping the old file's trigger for the new one's. */
+  setLoraName(index: number, name: string) {
+    if (!this.loras[index]) return;
+    this.setLoras(
+      this.loras.map((l, i) => (i === index ? { ...l, name, insertedWords: undefined } : l)),
     );
+  }
+
+  /** Switch a LoRA on by file name, adding a row for it when there is none. */
+  enableLoraByName(name: string) {
+    if (!name) return;
+    const idx = this.loras.findIndex((l) => l.name === name);
+    if (idx >= 0) {
+      if (!this.loras[idx].enabled) this.toggleLora(idx);
+      return;
+    }
+    this.setLoras([...this.loras, { name, strength_model: 1.0, strength_clip: 1.0, enabled: true }]);
+  }
+
+  /**
+   * Replace the LoRA list the way a user action does, keeping the prompt in
+   * step: every LoRA that stops being active (switched off, removed, renamed
+   * away) has its custom trigger and its chip-inserted words taken out of the
+   * positive prompt, and every LoRA that becomes active gets them put in.
+   *
+   * Words a user edited or deleted are no longer found, so they stop being
+   * tracked and are not put back later. Restoring settings, presets of other
+   * features and metadata imports assign `loras` directly instead, because
+   * their prompt already says what it should.
+   */
+  setLoras(next: LoraEntry[]) {
+    const active = (list: LoraEntry[]) => {
+      const map = new Map<string, LoraEntry>();
+      for (const l of list) if (l.enabled && l.name && !map.has(l.name)) map.set(l.name, l);
+      return map;
+    };
+    const before = active(this.loras);
+    const after = active(next);
+    let prompt = this.positivePrompt;
+    const kept = new Map<string, string[]>();
+
+    for (const [name, lora] of before) {
+      if (after.has(name)) continue;
+      const trigger = loraTriggers.get(name);
+      if (trigger) prompt = removeTrigger(prompt, trigger);
+      const words: string[] = [];
+      for (const word of lora.insertedWords ?? []) {
+        const removed = removeTrigger(prompt, word);
+        if (removed !== prompt) words.push(word);
+        prompt = removed;
+      }
+      kept.set(name, words);
+    }
+    for (const [name, lora] of after) {
+      if (before.has(name)) continue;
+      for (const word of lora.insertedWords ?? []) prompt = insertTrigger(prompt, word);
+      const trigger = loraTriggers.get(name);
+      if (trigger) prompt = insertTrigger(prompt, trigger);
+    }
+
+    this.loras = next.map((l) => {
+      const words = kept.get(l.name);
+      if (!words || l.enabled) return l;
+      return { ...l, insertedWords: words.length ? words : undefined };
+    });
+    if (prompt !== this.positivePrompt) this.positivePrompt = prompt;
+  }
+
+  /**
+   * A LoRA's custom trigger was edited: if that LoRA is on, swap the old text
+   * in the prompt for the new one (or add it, when the old one is gone).
+   */
+  replaceLoraTrigger(name: string, oldTrigger: string, newTrigger: string) {
+    if (!this.loras.some((l) => l.enabled && l.name === name)) return;
+    let prompt = this.positivePrompt;
+    if (oldTrigger) prompt = removeTrigger(prompt, oldTrigger);
+    if (newTrigger) prompt = insertTrigger(prompt, newTrigger);
+    if (prompt !== this.positivePrompt) this.positivePrompt = prompt;
   }
 
   /** Record a trigger word inserted into the prompt via a LoRA's trigger-word chip, so it can be removed on deselect. */
@@ -4460,40 +4929,11 @@ class GenerationStore {
     );
   }
 
-  /**
-   * Strip trigger words previously inserted via addTriggerWord/recordInsertedLoraWord, removing each as its own comma-delimited segment so surrounding text is untouched.
-   * Returns the words actually found and removed.
-   */
-  private removeInsertedWordsFromPrompt(words: string[]): string[] {
-    let text = this.positivePrompt;
-    const removed: string[] = [];
-    for (const word of words) {
-      const trimmed = word.trim();
-      if (!trimmed) continue;
-      const segments = text.split(",");
-      const idx = segments.findIndex((s) => s.trim() === trimmed);
-      if (idx === -1) continue;
-      segments.splice(idx, 1);
-      text = segments.join(",").replace(/^\s*,\s*/, "").replace(/,\s*$/, "").trim();
-      removed.push(word);
-    }
-    if (text !== this.positivePrompt) {
-      this.positivePrompt = text;
-    }
-    return removed;
-  }
-
-  /** Append trigger words removed by removeInsertedWordsFromPrompt, each as its own comma-delimited segment, skipping any already in the prompt. */
-  private restoreInsertedWordsToPrompt(words: string[]) {
-    let text = this.positivePrompt.trim();
-    for (const word of words) {
-      const trimmed = word.trim();
-      if (!trimmed || text.split(",").some((s) => s.trim() === trimmed)) continue;
-      text = text ? `${text}, ${trimmed}` : trimmed;
-    }
-    if (text !== this.positivePrompt) {
-      this.positivePrompt = text;
-    }
+  /** Put a trigger-word chip's word into the prompt and remember it belongs to that LoRA. */
+  insertLoraWord(loraName: string, word: string) {
+    const prompt = insertTrigger(this.positivePrompt, word);
+    if (prompt !== this.positivePrompt) this.positivePrompt = prompt;
+    this.recordInsertedLoraWord(loraName, word);
   }
 
   /** Apply defaults if no checkpoint is selected yet (first run). */

@@ -481,6 +481,26 @@ fn chatgpt_thread_params(cwd: &Path, system: &str, model: &str) -> Value {
     params
 }
 
+/// The reasoning effort for a ChatGPT turn, read from the account's model
+/// list so it is one the model offers. `None` (the CLI's default) when the
+/// owner chose the model default or the list cannot be read.
+async fn codex_effort(
+    rpc: &mut Rpc,
+    effort: super::reasoning::Setting,
+    model: &str,
+) -> Option<String> {
+    if effort == super::reasoning::Setting::ModelDefault {
+        return None;
+    }
+    match rpc.call("model/list", json!({})).await {
+        Ok(list) => super::reasoning::codex(effort, &list["data"], model),
+        Err(e) => {
+            log::warn!("[prompt-assistant] ChatGPT kept its default effort: {e}");
+            None
+        }
+    }
+}
+
 pub async fn chat(
     provider: &str,
     model: &str,
@@ -488,6 +508,7 @@ pub async fn chat(
     user: &str,
     images: &[super::vision::VisionImage],
     audio: Option<&[u8]>,
+    effort: super::reasoning::Setting,
 ) -> Result<String, AppError> {
     bounded(240, None, async {
         require_connected(provider)?;
@@ -504,7 +525,11 @@ pub async fn chat(
             let id = thread["thread"]["id"].as_str().ok_or_else(|| error("ChatGPT returned no thread."))?;
             let mut input = vec![json!({"type":"text","text":user,"text_elements":[]})];
             for image in images { input.push(json!({"type":"image","url":format!("data:{};base64,{}",image.media_type,image.base64)})); }
-            let turn = rpc.call("turn/start", json!({"threadId":id,"input":input})).await?;
+            let mut turn_params = json!({"threadId":id,"input":input});
+            if let Some(level) = codex_effort(&mut rpc, effort, model).await {
+                turn_params["effort"] = json!(level);
+            }
+            let turn = rpc.call("turn/start", turn_params).await?;
             let turn_id = turn["turn"]["id"].as_str().ok_or_else(|| error("ChatGPT returned no turn."))?;
             rpc.codex_answer(id, turn_id).await
         } else {
@@ -516,7 +541,18 @@ pub async fn chat(
             }
             let session = rpc.call("session/new", json!({"cwd":cwd.0,"mcpServers":[]})).await?;
             let id = session["sessionId"].as_str().ok_or_else(|| error("Gemini returned no session."))?;
-            if !model.trim().is_empty() { rpc.call("session/set_config_option", json!({"sessionId":id,"configId":"model","value":model})).await?; }
+            let mut options = session["configOptions"].clone();
+            if !model.trim().is_empty() {
+                let updated = rpc.call("session/set_config_option", json!({"sessionId":id,"configId":"model","value":model})).await?;
+                // A model switch can change which thinking levels are offered.
+                if updated["configOptions"].is_array() { options = updated["configOptions"].clone(); }
+            }
+            if let Some((option, value)) = super::reasoning::acp_thought_level(effort, &options) {
+                // Best effort: a companion that refuses still answers at its default.
+                if let Err(e) = rpc.call("session/set_config_option", json!({"sessionId":id,"configId":option,"value":value})).await {
+                    log::warn!("[prompt-assistant] Gemini kept its default thinking level: {e}");
+                }
+            }
             let mut prompt = vec![json!({"type":"text","text":format!("{system}\n\n{user}\n\nReturn only the requested answer. Do not use tools.")})];
             for image in images { prompt.push(json!({"type":"image","mimeType":image.media_type,"data":image.base64})); }
             if let Some(audio) = audio { prompt.push(json!({"type":"audio","mimeType":"audio/mpeg","data":STANDARD.encode(audio)})); }

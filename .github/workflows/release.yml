@@ -72,7 +72,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           workspaces: src-tauri
 
@@ -83,32 +83,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --ignore-scripts
 
-      # Blocking: a high or critical advisory in a shipped (non-dev) dependency
-      # stops the release. Dev-only advisories are left to Dependabot.
-      - name: Audit npm dependencies
-        run: npm audit --omit=dev --audit-level=high
-
-      # Blocking on vulnerabilities. Informational advisories (unmaintained,
-      # unsound, yanked) only warn: most come from the gtk-rs/webkit stack Tauri
-      # pins on Linux (glib, gtk, unic-*) and have no release to move to. Fix a
-      # vulnerability with `cargo update -p <crate>`; only one with no fixed
-      # release reachable from our dependency tree goes on the ignore list below,
-      # with the reason, and comes off again once a fix lands.
-      - name: Audit Rust dependencies
+      # Blocking: a high or critical npm advisory in a shipped dependency, or a
+      # Rust vulnerability, stops the release. Rules and the ignore list live in
+      # scripts/audit-deps.sh, which the Dependency Audit workflow also runs on
+      # PRs, main and daily, so a new advisory should be fixed before tagging.
+      - name: Audit dependencies
         shell: bash
         run: |
           cargo install cargo-audit --locked
-          cd src-tauri
-          ignored=(
-            # --ignore RUSTSEC-YYYY-NNNN  # crate: why there is no fix yet
-            # zip 4.6.1 via tauri-plugin-updater (2.14.0 still pins zip ^4; fix needs >=9).
-            # Windows-only dep, used solely on minisign-verified update archives, and all
-            # three are Unix symlink/permission-bit issues.
-            --ignore RUSTSEC-2026-0367  # zip: SUID/SGID bits preserved on extract
-            --ignore RUSTSEC-2026-0368  # zip: extracted symlinks may point outside dest
-            --ignore RUSTSEC-2026-0369  # zip: Unix permissions applied through symlinks
-          )
-          cargo audit "${ignored[@]}"
+          bash scripts/audit-deps.sh
 
       # Built as three separate `tauri build` invocations (one process per format)
       # instead of one `--target ... ` call with `targets: "all"`. Tauri's bundler
@@ -227,8 +210,92 @@ jobs:
           path: artifacts/**/*.sig
           if-no-files-found: error
 
+  # Signed apt + rpm repository metadata for this release, published as
+  # apt-* / rpm-* release assets that mooshieui.com/apt and /rpm redirect to.
+  # Must finish before `release`: published releases are immutable. Skipped
+  # with a warning (never failing the release) when the signing key secret or
+  # the committed public key is missing, or for prereleases.
+  linux-repo:
+    needs: [sign-updaters]
+    if: ${{ !cancelled() && needs.sign-updaters.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Check repo signing prerequisites
+        id: gate
+        env:
+          HAS_KEY: ${{ secrets.REPO_GPG_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != 'true' ]; then
+            echo "::warning::REPO_GPG_PRIVATE_KEY is not set; this release gets no apt/rpm repo metadata."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ ! -f packaging/linux/mooshieui.asc ]; then
+            echo "::warning::packaging/linux/mooshieui.asc is not committed yet; this release gets no apt/rpm repo metadata."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [[ ! "${TAG#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::warning::${TAG} is a prerelease; the apt/rpm repo only carries stable versions."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Linux packages
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: artifacts-x86_64-unknown-linux-gnu
+          path: linux
+
+      - name: Install repo tools
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils createrepo-c
+
+      - name: Build and sign repo metadata
+        if: steps.gate.outputs.run == 'true'
+        env:
+          REPO_GPG_PRIVATE_KEY: ${{ secrets.REPO_GPG_PRIVATE_KEY }}
+          REPO_GPG_PASSPHRASE: ${{ secrets.REPO_GPG_PASSPHRASE }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          passphrase="$RUNNER_TEMP/repo-passphrase"
+          # Secrets may have been pasted on Windows: drop carriage returns.
+          printf '%s' "$REPO_GPG_PASSPHRASE" | tr -d '\r\n' > "$passphrase"
+          printf '%s\n' "$REPO_GPG_PRIVATE_KEY" | tr -d '\r' \
+            | gpg --batch --pinentry-mode loopback --passphrase-file "$passphrase" --import
+          # Only sign with the key whose public half is committed and served
+          # at mooshieui.com/mooshieui.asc.
+          pinned=$(gpg --batch --with-colons --show-keys packaging/linux/mooshieui.asc | awk -F: '/^fpr/{print $10; exit}')
+          if ! gpg --batch --with-colons --list-secret-keys "$pinned" >/dev/null 2>&1; then
+            echo "::error::REPO_GPG_PRIVATE_KEY does not hold the key in packaging/linux/mooshieui.asc ($pinned)."
+            exit 1
+          fi
+          deb=$(find linux/deb -name "*_${TAG#v}_amd64.deb")
+          rpm=$(find linux/rpm -name "*-${TAG#v}-1.x86_64.rpm")
+          MOOSHIEUI_REPO_KEY="$pinned" MOOSHIEUI_REPO_PASSPHRASE_FILE="$passphrase" \
+            bash scripts/linux-repo.sh "$TAG" "$deb" "$rpm" linux-repo
+          rm -rf "$GNUPGHOME" "$passphrase"
+
+      - name: Upload repo metadata
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-linux-repo
+          path: linux-repo/
+          if-no-files-found: error
+
   release:
-    needs: [build-macos, sign-updaters]
+    needs: [build-macos, sign-updaters, linux-repo]
     if: ${{ !cancelled() && needs.sign-updaters.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
     runs-on: ubuntu-latest
     # Creates/edits the GitHub Release and uploads its assets (gh uses GITHUB_TOKEN).
@@ -272,8 +339,8 @@ jobs:
             '### Downloads' \
             '| Platform | File |' \
             '|----------|------|' \
-            '| **Windows** | `.msi` or `.exe` |' \
-            '| **Linux** | `.deb` or `.AppImage` |' \
+            '| **Windows** | `_x64-setup.exe` |' \
+            '| **Linux** | `.AppImage`, `.deb` or `.rpm`, or apt, dnf and the AUR ([Linux guide](https://github.com/Mooshieblob1/MooshieUI/blob/main/docs/LINUX.md)) |' \
             '' \
             '---' \
             '' \
@@ -336,6 +403,75 @@ jobs:
               release-files/*
           fi
 
+  # Pushes the mooshieui-bin PKGBUILD for this release to the AUR, so Arch
+  # users get it with `yay -S mooshieui-bin`. Skipped with a warning when the
+  # AUR_SSH_KEY secret is missing or the tag is a prerelease; never blocks the
+  # release itself, which is already published by now.
+  publish-aur:
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Check AUR prerequisites
+        id: gate
+        env:
+          HAS_KEY: ${{ secrets.AUR_SSH_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != 'true' ]; then
+            echo "::warning::AUR_SSH_KEY is not set; skipping the AUR update."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [[ ! "${TAG#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::warning::${TAG} is a prerelease; the AUR only gets stable versions."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and check the package
+        if: steps.gate.outputs.run == 'true'
+        run: bash scripts/aur-package.sh "${TAG#v}" "$RUNNER_TEMP/aur"
+
+      - name: Push to the AUR
+        if: steps.gate.outputs.run == 'true'
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          # Published at https://aur.archlinux.org (SSH fingerprints, Ed25519).
+          AUR_HOST_FINGERPRINT: SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4
+        run: |
+          key="$RUNNER_TEMP/aur_key"
+          hosts="$RUNNER_TEMP/aur_known_hosts"
+          # The key may have been pasted on Windows: drop carriage returns.
+          printf '%s\n' "$AUR_SSH_KEY" | tr -d '\r' > "$key"
+          chmod 600 "$key"
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$hosts" 2>/dev/null
+          fingerprint=$(ssh-keygen -lf "$hosts" | awk '{print $2}')
+          if [ "$fingerprint" != "$AUR_HOST_FINGERPRINT" ]; then
+            echo "::error::aur.archlinux.org offered host key $fingerprint, expected $AUR_HOST_FINGERPRINT"
+            exit 1
+          fi
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$hosts -o StrictHostKeyChecking=yes"
+          repo="$RUNNER_TEMP/aur-repo"
+          git clone ssh://aur@aur.archlinux.org/mooshieui-bin.git "$repo"
+          cp "$RUNNER_TEMP/aur/PKGBUILD" "$RUNNER_TEMP/aur/.SRCINFO" "$repo/"
+          cd "$repo"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "The AUR already has ${TAG#v}."
+            exit 0
+          fi
+          git -c user.name=Mooshieblob -c user.email=blob@mooshieblob.com commit -m "Update to ${TAG#v}"
+          git push origin HEAD:master
+          rm -f "$key"
+
   # -------------------------------------------------------------------------
   # Headless server binary (no webkit / Tauri deps required)
   # -------------------------------------------------------------------------
@@ -366,7 +502,7 @@ jobs:
 
       - name: Rust cache
         if: env.USE_NUC_RUNNER != 'true'
-        uses: swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           workspaces: src-tauri
 
@@ -433,7 +569,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

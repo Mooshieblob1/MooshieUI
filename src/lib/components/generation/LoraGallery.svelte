@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { loraKeywords } from "../../stores/loraKeywords.svelte.js";
+  import LoraTriggerInput from "./LoraTriggerInput.svelte";
+  import { civitaiModelPageUrl } from "../../utils/civitaiUrl.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import {
@@ -25,6 +28,7 @@
     type ModelGallerySort,
   } from "../../utils/modelGallerySort.js";
   import ModelPreviewActions from "./ModelPreviewActions.svelte";
+  import { h3UserLoraChoices } from "../../utils/h3Models.js";
 
   interface Props {
     cardSize?: number;
@@ -93,6 +97,16 @@
   let applyMode = $state<LoraPresetApplyMode>("replace");
   let presetStatus = $state<string | null>(null);
   let presetError = $state<string | null>(null);
+  // LoRA Presets folds away (closed by default) so the LoRA list gets the room (#988).
+  const PRESETS_OPEN_KEY = "mooshieui.lora.presetsOpen.v1";
+  let presetsOpen = $state(readPresetsOpen());
+  function readPresetsOpen(): boolean {
+    try { return localStorage.getItem(PRESETS_OPEN_KEY) === "true"; } catch { return false; }
+  }
+  function togglePresetsOpen() {
+    presetsOpen = !presetsOpen;
+    try { localStorage.setItem(PRESETS_OPEN_KEY, String(presetsOpen)); } catch {}
+  }
   let loraInfoAccessBlocked = $state<string | null>(null);
 
   function isAccessDeniedError(message: string): boolean {
@@ -118,10 +132,20 @@
     } catch {}
   });
 
+  // Video mode lists only MiniMax H3 LoRAs and switches the video LoRA stack;
+  // image mode lists everything else and switches the image model's stack.
+  const videoMode = $derived(generation.mode === "video");
+  const availableLoras = $derived(
+    videoMode
+      ? h3UserLoraChoices(models.h3VideoLoras, generation.videoTurboEnabled ? generation.videoTurboLora : null)
+      : models.imageLorasFor(generation.modelFamily),
+  );
+  const activeStack = $derived(videoMode ? generation.videoLoras : generation.loras);
+
   // All available LoRAs, filtered by search
   const filteredLoras = $derived(() => {
     const q = searchQuery.toLowerCase().trim();
-    let list = models.loras;
+    let list = availableLoras;
     if (q) {
       list = list.filter((name) => {
         const display = displayName(name).toLowerCase();
@@ -130,7 +154,7 @@
       });
     }
     const enabledSet = new Set(
-      generation.loras.filter((l) => l.enabled && l.name).map((l) => l.name),
+      activeStack.filter((l) => l.enabled && l.name).map((l) => l.name),
     );
     const familyOf = (filename: string) =>
       inferLoraFamily(filename, cache[filename]?.data);
@@ -156,20 +180,20 @@
   }
 
   function isLoraEnabled(filename: string): boolean {
-    return generation.loras.some((l) => l.name === filename && l.enabled);
+    return activeStack.some((l) => l.name === filename && l.enabled);
   }
 
   function toggleLoraByName(filename: string) {
-    const idx = generation.loras.findIndex((l) => l.name === filename);
-    if (idx >= 0) {
-      generation.toggleLora(idx);
-    } else {
-      // Add as new enabled LoRA
-      generation.loras = [
-        ...generation.loras,
-        { name: filename, strength_model: 1.0, strength_clip: 1.0, enabled: true },
-      ];
+    if (videoMode) {
+      const idx = generation.videoLoras.findIndex((l) => l.name === filename);
+      if (idx >= 0) generation.updateVideoLora(idx, { enabled: !generation.videoLoras[idx].enabled });
+      else generation.addVideoLora(filename);
+      generation.saveSettings();
+      return;
     }
+    const idx = generation.loras.findIndex((l) => l.name === filename);
+    if (idx >= 0) generation.toggleLora(idx);
+    else generation.enableLoraByName(filename);
     generation.saveSettings();
   }
 
@@ -228,7 +252,7 @@
       presetError = locale.t("lora_presets.error.not_found");
       return;
     }
-    generation.loras = result.loras;
+    generation.setLoras(result.loras);
     generation.saveSettings();
     if (result.missingNames.length > 0) {
       presetError = locale.t("lora_presets.applied_missing", { names: result.missingNames.join(", ") });
@@ -282,6 +306,7 @@
     try {
       const info = await getLoraCivitaiInfo(filename);
       cache = { ...cache, [filename]: { data: info, fetchedAt: Date.now() } };
+      loraKeywords.ingest(filename, info);
       // Only persist to localStorage when CivitAI data was retrieved.
       // Empty results (failed auth, pre-fix) stay in-memory only so they
       // re-fetch fresh next session once an API key is configured.
@@ -472,10 +497,7 @@
   }
 
   function addTriggerWord(loraName: string, word: string) {
-    const current = generation.positivePrompt.trim();
-    if (current.includes(word)) return;
-    generation.positivePrompt = current ? `${current}, ${word}` : word;
-    generation.recordInsertedLoraWord(loraName, word);
+    generation.insertLoraWord(loraName, word);
     generation.saveSettings();
   }
 
@@ -517,8 +539,25 @@
 
 <!-- Search + LoRA grid -->
 <div class="flex flex-col h-full">
-  <div class="mx-2 mt-1.5 rounded border border-neutral-800 bg-neutral-900/60 p-2 text-[11px] space-y-2">
-    <p class="text-neutral-400">{locale.t("lora_presets.title")}</p>
+  <!-- LoRA presets hold image-model stacks, so video mode leaves them out. -->
+  {#if !videoMode}
+  <div class="mx-2 mt-1.5 rounded border border-neutral-800 bg-neutral-900/60 {presetsOpen ? 'p-2' : 'px-2 py-1'} text-[11px] space-y-2 shrink-0">
+    <button
+      type="button"
+      class="flex w-full items-center justify-between gap-2 text-neutral-400 hover:text-neutral-200 transition-colors"
+      onclick={togglePresetsOpen}
+      aria-expanded={presetsOpen}
+      title={presetsOpen ? locale.t("common.collapse", { section: locale.t("lora_presets.title") }) : locale.t("common.expand", { section: locale.t("lora_presets.title") })}
+    >
+      <span>
+        {locale.t("lora_presets.title")}
+        {#if loraPresets.presets.length > 0}
+          <span class="ml-1 text-neutral-500 tabular-nums">{loraPresets.presets.length}</span>
+        {/if}
+      </span>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {presetsOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    {#if presetsOpen}
     <div class="flex items-center gap-2">
       <select
         bind:value={selectedPresetId}
@@ -579,7 +618,9 @@
     {#if presetError}
       <p class="text-amber-300">{presetError}</p>
     {/if}
+    {/if}
   </div>
+  {/if}
 
   <!-- CivitAI bulk scan controls -->
   <div class="px-2 pt-1 pb-0.5 shrink-0">
@@ -727,9 +768,9 @@
     </div>
   {/if}
 
-  {#if models.loras.length === 0}
+  {#if availableLoras.length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
-      <p>{locale.t('lora.no_loras')}</p>
+      <p class="max-w-sm px-4 text-center">{locale.t(videoMode ? 'lora.no_h3_loras' : 'lora.no_loras')}</p>
     </div>
   {:else if filteredLoras().length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
@@ -869,7 +910,7 @@
               </button>
               {#if info?.civitai_model_id}
                 <a
-                  href="https://civitai.com/models/{info.civitai_model_id}"
+                  href={civitaiModelPageUrl(info.civitai_model_id, info.civitai_nsfw)}
                   target="_blank"
                   rel="noopener noreferrer"
                   class="shrink-0 text-neutral-500 hover:text-indigo-400 transition-colors"
@@ -928,6 +969,7 @@
                 {/if}
               </div>
             {/if}
+            <LoraTriggerInput name={loraName} />
           </div>
         </div>
     {/snippet}

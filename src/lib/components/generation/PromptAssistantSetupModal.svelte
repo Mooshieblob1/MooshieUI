@@ -3,12 +3,14 @@
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import type { LlmCatalogEntry, LlmVariant } from "../../types/index.js";
+  import { llmFit } from "../../utils/llmFit.js";
 
   let { onClose, onInstalled }: { onClose: () => void; onInstalled?: () => void } =
     $props();
 
   const hw = $derived(promptAssistant.hardware);
-  const catalog = $derived(promptAssistant.catalog);
+  // A captioner only describes images; Interrogate offers it, not this setup.
+  const catalog = $derived(promptAssistant.catalog.filter((e) => e.purpose !== "captioner"));
 
   let selectedId = $state(promptAssistant.selectedModelId ?? "");
   let selectedVariant = $state("");
@@ -31,10 +33,19 @@
   }
 
   function fits(v: LlmVariant): boolean {
-    const vram = hw?.total_vram_mb ?? 0;
-    // CPU path: allow if system RAM can hold it.
-    if (vram < 2000) return (hw?.system_ram_mb ?? 0) * 0.6 >= v.vram_mb;
-    return v.vram_mb <= vram;
+    return llmFit(v, hw) !== null;
+  }
+
+  /** Why a variant is greyed out. */
+  function needsLabel(v: LlmVariant): string {
+    const gb = (mb: number) => (mb / 1024).toFixed(1);
+    return v.cpu_moe_vram_mb != null
+      ? locale.t("prompt_assistant.needs_vram_or_ram", {
+          gb: gb(v.vram_mb),
+          moe: gb(v.cpu_moe_vram_mb + 1500),
+          ram: String(Math.ceil(v.size_mb / 1024 / 0.7)),
+        })
+      : locale.t("prompt_assistant.needs_vram", { gb: gb(v.vram_mb) });
   }
 
   function isInstalled(id: string): boolean {
@@ -141,13 +152,14 @@
             <div class="mt-2 flex flex-wrap gap-1.5">
               {#each entry.variants as v}
                 {@const selectable = fits(v)}
+                {@const inRam = llmFit(v, hw) === "experts_in_ram"}
                 <button
                   disabled={!selectable}
                   title={!selectable
-                    ? locale.t("prompt_assistant.needs_vram", {
-                        gb: (v.vram_mb / 1024).toFixed(1),
-                      })
-                    : ""}
+                    ? needsLabel(v)
+                    : inRam
+                      ? locale.t("prompt_assistant.experts_in_ram_tip")
+                      : ""}
                   class="rounded border px-2 py-0.5 text-[10px] {selectedVariant ===
                   variantKey(v)
                     ? 'border-[var(--theme-accent-500)] text-neutral-100'
@@ -159,7 +171,8 @@
                     if (selectable) selectedVariant = variantKey(v);
                   }}
                 >
-                  {variantLabel(v)} · {(v.size_mb / 1024).toFixed(1)} GB
+                  {variantLabel(v)} · {(v.size_mb / 1024).toFixed(1)} GB{#if inRam}
+                    · {locale.t("prompt_assistant.experts_in_ram")}{/if}
                 </button>
               {/each}
             </div>

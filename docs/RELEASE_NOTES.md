@@ -1,3 +1,559 @@
+## What's New in v2.4.7
+
+### Comic Builder
+- **Multi-page comic books & export**: create and manage multi-page books (**New book**, **+ Add page**, **Duplicate page**, reorder/delete pages), use **Save all** to save every page to the gallery, or export full books with **Export CBZ** and **Export PDF**.
+- **Cross-page character continuity**: upgraded **Character ref** selector with **Off**, **Page 1 Panel 1**, **Previous panel**, and **Cast portraits** modes (plus **+ From Characters** cast portrait picker) across pages.
+- **Freeform & overlapping layouts**: switch **Layout mode** between **Grid** and **Freeform** to add, move, resize, overlap, and reorder panels (**+ Panel**, **Layer up**, **Layer down**), with matching `boxes` support in MCP `create_comic`.
+- **Panel pan/zoom, border styles & take history**: frame generated panels with **Pan** mode (or `Alt`+drag and scroll wheel zoom, plus **Reset crop**), pick **Border** styles (**Standard**, **Borderless**, **Rounded**, **Slanted**), and step through **Previous take** / **Next take** variations per panel.
+- **Vector speech bubbles & Vertical JP lettering**: add vector speech bubbles (**+ Bubble** or **From dialogue**) across all models with **Speech**, **Thought**, **Shout**, and **Caption** shapes, **Sans**/**Serif**/**Comic**/**Mono** fonts, adjustable **Size**, draggable tails, and **Vertical JP** (`tategaki`) top-to-bottom lettering.
+- **Settings & prompt polish**: clearer pixel-budget sizing in Comic settings and tag autocomplete inside panel prompts.
+
+### Updates, Shortcuts & Backup
+- **What's New! popup**: shows release notes automatically after updating (including skipped versions) and can be reopened anytime from **What's new** in Settings.
+- **Automatic updates**: new desktop **Automatic updates** selector in Settings with **Off**, **Download in background**, and **Download and restart when idle** modes.
+- **Keyboard shortcuts**: press `Shift+?` to open the keyboard shortcut cheat sheet, and rebind hotkeys per account under **Keyboard shortcuts** in Settings.
+- **Backup & Restore**: export and restore characters, prompts, styles, LoRA presets, comics, shortcuts, and settings (plus sanitized app config and wildcard files for admins) as a single `.zip` archive with **Merge** and **Replace** modes.
+
+### Fixes
+- **Preview lightbox**: clicking the preview image after generation finishes now always opens the final image instead of a stale intermediate preview frame.
+- **Security**: updated the Rust `url` crate to 2.5.9 (RUSTSEC-2026-0592).
+
+---
+
+## What's New in v2.4.6
+
+### Prompt Assistant
+- **Per-tab Enhance chat**: Enhance chat conversations, drafts, and errors are now scoped per generation tab. Opening a new tab starts a fresh Enhance chat, switching tabs restores that tab's session, and in-flight Enhance replies land on the tab that started them.
+
+### Metadata & AI Provenance
+- **Mandatory Stealth Alpha metadata**: Stealth Alpha metadata is now always embedded on saved, exported, and copied images (keeping transparency and 16-bit fallbacks). The old Metadata mode picker has been removed from Sampler settings.
+- **IPTC AI-generation disclosure**: saved PNG, NovelAI PNG, WebP, JPEG XL, MP4, and AVIF outputs now include zero-interference IPTC `trainedAlgorithmicMedia` XMP disclosure without altering existing XMP properties, ComfyUI chunks, or pixel data.
+
+---
+
+## What's New in v2.4.5
+
+### Outpainting
+- **Dedicated Outpaint mode**: new **Outpaint** mode with directional **Top**, **Bottom**, **Left**, and **Right** padding controls, **Feather width**, quick presets, a live expanded-frame preview, and **Send to outpaint** actions from the preview and gallery. Works with both ComfyUI (`ImagePadForOutpaint`) and NovelAI padded infill, and adds outpaint overrides to MCP `generate_image`.
+
+### Workflows, Prompts & Models
+- **Real `BREAK` chunking**: CLIP models (SD 1.5, SDXL, Illustrious, Pony, Mugen) now split `BREAK` chunks into separate `CLIPTextEncode` nodes chained with `ConditioningConcat`, and auto quality tags deduplicate cleanly across `BREAK` even without a comma.
+- **SDXL-family 64 px aspect buckets**: aspect ratio presets for SDXL, Illustrious, Pony, and Mugen now snap to standard 64 px training buckets (for example `1216x832` for 3:2 at 1024 px).
+- **Comic Panel 1 reference**: new **Use Panel 1 as character reference** toggle on the Comic page forwards Panel 1's image to Panels 2-6 on supported reference and edit models.
+- **Transparent & Ming-Image Layer polish**: transparent RGBA images render over a checkerboard backdrop in preview, gallery, and lightbox, and the Gallery adds **Layer sets** grouping for multi-layer Ming-Image outputs.
+- **MiniMax H3 & 2026 GGUF compatibility**: bundled GGUF loader patch now supports MiniMax H3 (video and image), newer 2026 architectures, and untagged native-keyed text-encoder GGUFs, plus a verified Model Hub entry for the MiniMax-H3-Image pDMD 2-step LoRA.
+- **CivitAI Proxy URL**: optional HTTP, HTTPS, or SOCKS5 proxy setting in Settings used only for CivitAI API requests and model downloads.
+
+### Prompt Assistant & Characters
+- **Character memory on bundled local models**: Character Memory files now work with bundled natural-language models using tighter memory budgets and a review-before-save flow.
+- **Custom server thinking-off & JoyCaption routing**: custom OpenAI-compatible servers can turn thinking off, and **Describe in words** automatically falls back to bundled JoyCaption when an external provider is text-only (with route indicator badges).
+- **NovelAI V5 prompt caching**: static NovelAI V5 Enhance instructions are sent with Anthropic and OpenRouter prompt caching blocks.
+- **Natural-language Yue sample & faster New chat**: prose-prompt architectures get a natural-language Yue sample character card, and clicking **New chat** in Enhance starts a fresh chat without a confirmation dialog.
+
+### Gallery & Metadata Import
+- **Near duplicates & Match strictness**: new **Near duplicates** perceptual-hash duplicate finder in the Gallery with a similarity threshold slider and **Select extras**, plus a **Match strictness** slider for character filtering and sorting.
+- **SwarmUI metadata & quality-tag import fixes**: imports SwarmUI LoRA arrays (`loras`, `loraweights`, `loratencweights`), matches imported checkpoints and LoRAs to installed filenames, strips SwarmUI `//cid=...` suffixes in `<segment:...>` tags, scopes quality-tag stripping to what **Auto-apply quality tags** will re-inject, and improves `*illu` Illustrious checkpoint detection.
+
+### Face Detailer & Maintenance
+- **Sharper Face, Segment & Mask Detailers**: detailers preserve native crop resolution (up to 1536 px) instead of shrinking large crops down to **Guide Size**, use area downscaling and bicubic upscaling instead of bilinear, and raise default Face Detailer **Guide Size** to 1024 px and **Steps** to 15-20 for 1024 px+ non-turbo models.
+- **Dependency updates**: updated Cargo (including Tauri 2.12.6, `jxl-encoder` 0.3.4, `ort` 2.0.0-rc.15), npm, and GitHub Actions dependencies.
+
+---
+
+## What's New in v2.4.4
+
+### Fixes and maintenance
+- **Enhance chat crash on Windows fixed**: sending a message in the Enhance chat window no longer crashes the app on Windows.
+- **NovelAI quality tags with in-image text**: when a prompt includes a `Text:` lettering block (written by hand or created from quoted text on V5), MooshieUI omits `no text` from the appended Quality tags preset so it does not fight the lettering, and matches `text:` / `TEXT:` labels case-insensitively.
+- **Model picker while ComfyUI restarts**: when ComfyUI is starting or restarting, the model picker waits for ComfyUI to list your models instead of showing download arrows and retries the model list automatically, so installed models no longer look uninstalled.
+
+---
+
+## What's New in v2.4.3
+
+### Character Extract
+- **More accurate on small local models**: Extract from prompt asks the prompt assistant for exact copies (low temperature, JSON replies) and checks the result against your prompt, so invented tags, quality and artist tags, and tags from another character no longer end up on the card. Only related saved characters are sent along.
+- **Editable review**: what Extract found shows in text boxes you can fix before saving, a wrong match can be saved with Save as new, and a click outside no longer throws the review away.
+- **NovelAI character boxes read directly**: with character boxes in use, each box becomes one character as written. The prompt assistant only names them, and Extract works without one.
+
+### Prompt assistant
+- **Bigger built-in models**: Qwen3-VL 8B, Qwen3 30B-A3B, Qwen3.6 35B-A3B and Qwen3.8 27B, offered only where they fit. Mixture-of-experts models too big for your GPU run with their experts in system RAM.
+- **Bundled llama.cpp updated** to b12500, which the newest Qwen models need. Thinking is turned off per request so replies stay fast and in JSON.
+
+---
+
+## What's New in v2.4.2
+
+### Fixes and maintenance
+- **Comic page has its own model and settings**: the Comic page now has a Model and settings section with its own model, sampler and size, and no longer depends on (or is blocked by) the Generate page being in Video mode.
+- **Faster startup with many models**: model file hashes are remembered between launches, and Model Hub hash lookups run one at a time, so startup no longer stalls (most visible in browser mode) and installed models show up without a restart.
+- **Repeated character tags kept**: multi-character prompts keep tags repeated on purpose (like `long hair` for each character) when auto quality tags or Prompt Chunks are merged in.
+
+---
+
+## What's New in v2.4.1
+
+### Fixes and maintenance
+- **Enhance chat in a modal window again**: the Enhance chat moves out of the docked panel and back into a modal chat window. Applying closes it, and Enhance reopens the same conversation.
+- **Faster long chats**: long Enhance chats show the newest 12 exchanges with a Show earlier button, and the gallery picker loads only while picking.
+
+---
+
+## What's New in v2.4.0
+
+### Model architecture registry
+- **One spec per model family**: model families are now declared once in a registry that drives detection, text encoders, VAE, extra model files, modes, sampling defaults and Model Hub downloads. Most of the families below moved onto it in this release.
+
+### New and fixed models
+- **Flux.2 Klein (4B, 9B, Base)**: Image Edit with up to 10 reference images, Flux.2 Klein 9B KV support, and the right defaults (4 steps at CFG 1 for distilled, 20 steps at CFG 5 for Base). Renamed Klein files are no longer mistaken for Flux.1.
+- **Flux.1 from split files**: dev, schnell, Krea and Kontext now load T5-XXL and CLIP-L together, as ComfyUI does. Split Flux.1 images were silently degraded before.
+- **SD3 and SD3.5 from split files**: CLIP-L, CLIP-G and T5-XXL load together, Stability's own release files work, and SD3.5 Large Turbo runs on its 4-step schedule. New Model Hub downloads for the encoders and GGUF models.
+- **Stable Cascade**: now generates, with the official stage C plus stage B workflow for txt2img, img2img, hires fix and face fix. The stage B checkpoint downloads when missing.
+- **Wan 2.x as an image model**: Wan 2.1, Wan 2.2 A14B (high and low noise experts) and Wan 2.2 TI2V 5B now generate stills with the umT5 encoder and the right VAE.
+- **Kolors**: now generates, through a bundled ChatGLM3 loader node. No third-party node pack needed, and a Model Hub entry for the full set of files.
+- **Ming-Image 0.1**: Design (txt2img, img2img, inpainting, Image Edit with up to 8 references, and a Transparent background option) and Layer.
+- **MOSS-Image**: Image Edit with the MOSS-Image Edit LoRA and up to 4 references.
+
+### Video
+- **Your own LoRAs on MiniMax H3**: Video mode has its own LoRA list for community H3 LoRAs (orbit, character swap, camera motion, style). They stay on for retake and 2x refinement, and acceleration adapters are never applied twice.
+
+---
+
+## What's New in v2.3.51
+
+### Comic pages
+- **Enhance V5 for panels**: on a NovelAI V5 model, "Write prompts from beats" writes each panel by the Enhance V5 rules, and a new per-panel Enhance button rewrites one panel with the rest of the page as context.
+- **Dialogue**: panels get a Dialogue field, one speech bubble per line, lettered on NovelAI. Whole-page mode letters all bubbles in reading order.
+
+### LoRAs
+- **One strength slider**: a single Strength slider now drives both model and CLIP strength, with a link button to split them again. The slider spans 0 to 2 in 0.05 steps, and double-click resets it to 1.
+- **Custom trigger words**: each LoRA gets a Trigger words field (in the LoRA panel and on the LoRA gallery card). The text goes into the prompt when the LoRA turns on and comes out when it turns off. Works offline.
+- **Collapsible LoRA Presets**: the presets section folds away and starts closed.
+
+### Prompts
+- **Right-click menu**: the prompt box now has Cut, Copy, Paste and Select all on right-click, and you can drag-select across highlighted tags.
+- **Weights survive autocomplete**: accepting an autocomplete suggestion or a spellcheck fix no longer deletes the weight syntax around a tag (`-2::tag::`, `{tag}`, `(tag:1.2)`).
+- **Enhance is now a chat**: Enhance (V5, general and H3) opens as a chat panel docked on the right instead of a modal, so the prompt box and Generate stay usable. The assistant can answer questions, revise an answer from your feedback, and keeps the conversation until you start a new chat. Answers apply with Replace, Append, Apply or Review.
+
+### Models
+- **Moody Moss Mix**: support for the MOSS-Image fine-tune, with its full 4K HD workflow rebuilt in MooshieUI and a matching preset.
+- **Anima Style Reference: Art style**: a third method that takes a picture's palette, shading and texture without its subject. No downloads needed.
+- **Qwen-Image 2.1 and Turbo**: detected correctly now (they were treated as Qwen-Image 1 and could not generate), with the right encoder and VAE, a Model Hub download, and Image Edit with up to 10 references. Turbo runs on its 8-step schedule.
+- **MiniMax-H3-Image**: txt2img and Image Edit (up to 16 references) for the 33B model, with INT8 and W4A8 Model Hub downloads and the pDMD 2-step mode.
+- **PixArt Sigma and Alpha**: now generate (they were only detected before), loaded split with the T5-XXL encoder and the right VAE, with the encoder downloaded when missing.
+- **Krea 2 in Image Edit**: pick General Edit, Identity Edit or Style Reference under Edit LoRA, with 1 or 2 reference images.
+- **Transparent backgrounds kept**: images with a real alpha channel now save with their transparency instead of being made opaque.
+
+### Characters and NovelAI
+- **Portraits use a character prompt**: on NovelAI V4 and later, the portrait maker puts the character's look in a character prompt and keeps framing in the main prompt.
+- **MooshieUI marker on NovelAI PNGs**: NovelAI images saved as PNG now carry a small MooshieUI text chunk. The image bytes from NovelAI are untouched.
+
+### Image Info
+- **Stable field order**: fields show in the same order on every image, and a new button lets you hide and reorder fields.
+- **LoRAs one per line**, with the weight in a coloured pill.
+
+### MCP
+- **NovelAI over MCP**, inside the Opus free window only, so it never spends Anlas.
+- **Wildcards, saved characters, styles and chunks** by name in MCP prompts.
+- **Edit and upscale** existing images, signed download links for full-size files, gallery boards and Eagle search.
+- **Comics**: assistants can build comic pages over MCP.
+- **Tunnel fix**: the Cloudflare tunnel only shows as running once it has actually connected, and explains a blocked port 7844 (VPN or firewall).
+
+### Fixes
+- Apple Silicon build check fixed for node packs that live in a subfolder (SnapRef).
+- Apple Silicon build fixed for node packs pinned through a named constant (Krea 2 edit). This failure stopped v2.3.50 from publishing, so v2.3.51 carries all of its changes.
+- Managed ComfyUI updated to v0.45.0.
+
+---
+
+## What's New in v2.3.49
+
+### Comic pages
+- **Comic page builder**: a new Comic page builds a page panel by panel. Pick from 15 layouts (1 to 6 panels) or split and resize panels yourself, with portrait, landscape or square pages, a gutter slider and right-to-left reading order for manga.
+- **Two ways to generate**: "Each panel" makes one image per panel at the panel's own shape and crops them into the page. "Whole page" makes the page in a single NovelAI image (up to 6 panels).
+- **Continuity**: describe your cast and page setting once and they are added to every panel. After each panel the tagger flags changed hair, eyes or setting, with a redo button. "Check story" flags contradictions between panels and "Write prompts from beats" drafts panel prompts from one-line beats.
+- **Saving**: panel images go to the gallery as they finish, and "Save page" writes the assembled page with the panel prompts in its metadata.
+- **Cleaner comic lettering**: Prompt Enhance (NovelAI V5) no longer puts speaker names or page headings inside speech bubbles. The words go in the `Text:` block and the speaker is named in the prose.
+
+### Generation
+- **Continuous generation**: a repeat button next to the batch stepper runs Generate again and again, for a set number of runs or until stopped, with an optional delay between runs and a "Stop on error" option. Random seeds and wildcards reroll each run.
+- **Repeat-image warning (NovelAI)**: sending the exact same settings and seed as the last image asks for a second click first, so you don't spend Anlas on a duplicate by accident.
+- **Finish chime**: Settings > Notifications can play a short sound when an image is ready.
+
+### Prompts
+- **File wildcards**: `__name__` picks a line from a file in the wildcards folder. Text, YAML and JSON files work, in the Dynamic Prompts layout, so existing packs drop in unchanged. A fixed seed repeats its picks, and "In order" walks a list one line per request.
+- **Wildcards tab**: a new bottom panel tab to browse, edit, create and delete wildcard files, with click-to-insert tokens.
+- **Line comments**: `//` comments out the rest of a line and Ctrl+/ toggles comments on the selected lines. Comments are greyed out and never sent.
+- **Find and replace**: Ctrl+F and Ctrl+H open a find bar on the focused prompt box, with match case, next and previous, and Replace / Replace all.
+- **Related tags**: select a tag and press Related in the prompt toolbar to see tags that go with it, from Danbooru and from your own gallery. Click a chip to add it right after the selected tag.
+
+### NovelAI
+- **Saved keys**: name and save several NovelAI keys in Settings > NovelAI and switch between them. With two or more saved, an account picker appears on the Anlas line.
+- **Paid-through date**: the account panel shows when your subscription is paid through, and the Anlas line shows the days left.
+
+### Gallery
+- **Eagle export**: Settings > Connection > Eagle export sends images to Eagle, either automatically as they are saved or with an Eagle button in the gallery selection bar. Tags come from the prompt and the full prompt, negative and seed go in the annotation.
+
+---
+
+## What's New in v2.3.48
+
+### Prompt chunks and styles
+- **UC part for chunks and styles**: prompt chunks and artist styles can now carry UC tags that go to the negative prompt whenever they are used. This covers active chunks and styles, chunks used inline in a positive prompt (or in a NovelAI character's prompt, which sends them to that character's UC), style thumbnails, and the character Portrait maker, which shows picked UC as red pills under its negative box.
+- **UC in export and import**: UC round-trips through .txt export and import, and saving a negative prompt block as a chunk now stores it as the UC.
+
+---
+
+## What's New in v2.3.47
+
+### Setup
+- **Live PyTorch download progress**: setup no longer looks frozen at 50% while the 2 GB PyTorch wheel downloads. The status line shows how much has downloaded and the speed, the bar moves from 50% to 72%, and the last three installer lines show under the bar during install.
+- **Stall notice**: after 90 seconds with no new data the status says so, and the log names the usual causes (slow link, VPN, proxy, firewall, antivirus).
+- **Longer network timeouts**: setup gives uv a 120 second HTTP timeout and 6 retries (unless you set your own), so a slow link no longer restarts the whole download.
+- **Disk space check**: before a fresh PyTorch install, setup stops with a clear message when the install drive or uv's cache drive has under 6 GB free (2 GB for CPU and Metal).
+- **Failure hints**: network failures and full disks now come with a hint under uv's error.
+
+### Linux
+- **apt and dnf repos**: Debian, Ubuntu and Fedora users can add the signed MooshieUI repo once and get updates with their normal system updates. See `docs/LINUX.md`.
+- **Self-updates fixed for .deb and .rpm**: the in-app updater used to download the AppImage for these installs and then refuse it. It now gets the right package.
+- **Package-manager installs**: when MooshieUI was installed from the apt, dnf, zypper or AUR package, the update banner and Settings > About show the update command instead of a download button.
+- **AUR package coming soon**: `mooshieui-bin` is ready to publish once AUR account registration reopens. Arch users can use the AppImage meanwhile.
+
+---
+
+## What's New in v2.3.46
+
+### Image editor
+- **Built-in image editor**: the Edit button on the generation preview opens a full-screen editor whose saves keep the image's generation metadata. Layout and shortcuts follow Photoshop: move, crop with aspect presets, rotate, flip, image size, brush, eraser, clone stamp, eyedropper, rectangular and lasso selections, text, and up to 16 layers with opacity, 15 blend modes and layer masks. Undo and redo go back 30 steps.
+- **Adjustments**: brightness, contrast, highlights, shadows, a tone curve, temperature, tint, saturation, vibrance, hue, sharpen, blur and vignette. They stay editable until you save, and can be saved as named presets.
+- **Saving never overwrites**: Save adds a new gallery item, and Save as file writes a PNG with the same metadata embedded. Closing with unsaved changes asks first.
+- **NovelAI images stay NovelAI images**: editing a NovelAI PNG keeps NovelAI's own PNG text chunks, so novelai.net still recognises the saved file.
+- **Preview buttons**: Edit now shows its label, and Save and Copy are icon buttons with tooltips.
+
+### Prompting
+- **Spellcheck stays out of prose**: the tag spellcheck no longer runs for natural-language models (Flux, Krea, Qwen and similar), and inside tag prompts it skips lines that read as sentences.
+- **NovelAI dialect**: in NovelAI mode the spellcheck knows V5 custom tags, quality toggle tokens, `artist:` tokens, `source#` / `target#` / `mutual#` prefixes, `-N::tag::` weights and the `Text:` block.
+- **Fewer false flags everywhere**: common quality, year and score tokens (`masterpiece`, `very aesthetic`, `year 2024`, `score_9_up`, ...) count as known, and `{{tag}}` nesting is checked as the tag inside.
+
+---
+
+## What's New in v2.3.45
+
+### NovelAI
+- **Weight syntax kept as written**: prompts imported from NovelAI images keep `1.2::tag::` instead of turning into `(tag:1.2)`, in the prompt, undesired content and every character box. In NovelAI mode the base prompt and undesired content are sent exactly as typed.
+- **Negative weights fixed**: `-1::tag::` in the base prompt or undesired content no longer loses its weight on the way to NovelAI. This includes the spans Enhance for V5 writes.
+
+### Models
+- **Picked VAE stays on split models**: a VAE you choose for Anima, Krea 2, Qwen, Flux 2 and other split models is no longer replaced on startup or reconnect, as long as it is installed and fits the model. This makes the Qwen-Image Sharp VAE usable on Anima and Krea 2. The default for Qwen-based models is now the stock `qwen_image_vae`.
+
+### Desktop
+- **External links open in your browser**: Open on CivitAI and about 20 other links (Model Hub, Animadex, artist pages, music sources) did nothing in the desktop app. They now open in the system browser.
+- **Solid red Stop button**: the Stop button beside Generate is now solid red while a generation runs, like the mobile one.
+
+---
+## What's New in v2.3.44
+
+### Characters
+- **Yue sample character**: every user gets Yue once, on a fresh install or the first time an existing install opens this version. She is added for NovelAI and for each local tag model (Illustrious, SDXL, Pony, Anima, SD 1.5) with a face close-up as her picture. Natural-language models such as Flux get no card. Deleting her is remembered across synced devices, so she does not come back.
+- **Card size slider**: the Characters tab header has a Card size slider, from 48 px (the old size, still the default) to 192 px. Bigger cards show more prompt lines. Saved per device.
+
+### Gallery
+- **Sorts can be undone**: Sort by Artist and Sort by Character show an Undo in their toast. For an earlier sort, Remove artist boards / Remove character boards deletes those boards and sends the images back to Unsorted, also with Undo.
+- **Reset filters**: one button clears the search and every filter. Sort, grouping and view stay as they are.
+- **Board row stays short**: past 10 boards the row shows the 8 largest plus the selected one, and More boards opens a searchable list of every board with its count.
+- **Confirm for large deletes**: deleting more than 10 selected images asks first. Undo still follows.
+- **Gallery opens without a freeze**: matching saved characters against every prompt no longer blocks the page. With 43 characters and 6,000 images, opening went from a 2.0 s freeze to 0.14 s, and the Character counts fill in once ready.
+
+---
+
+## What's New in v2.3.43
+
+### Gallery
+- **Multi-select with bulk actions**: every tile and Detailed View row has a checkbox. Shift+click selects a range, Ctrl/Cmd+click picks single images, Ctrl/Cmd+A selects everything the filters show, and group headers select a whole group. A bar at the bottom moves the selection to a board, sets rating, favourite or NSFW, compares two images, or deletes.
+- **Undo for delete**: deleting from the gallery page removes the images at once and shows a 7 second Undo toast. Files only go to the recycle bin when the toast closes, and Undo restores board, favourite and rating marks. Originals in a linked folder still ask first.
+- **Boards**: rename or delete a board beside the board filter (renaming onto an existing name merges them, deleting sends images back to Unsorted). A row of board chips above the grid shows counts, sets the filter, and accepts dragged tiles or the whole selection.
+- **Arrow keys**: move a cursor through the grid, Shift+arrow extends the selection, Space selects, Enter opens, Escape clears. Works in Detailed View too.
+- **Export selection (desktop)**: copies every selected image to a folder with metadata embedded, the same as Save to folder.
+- **Repeats filter**: shows images generated more than once with the same settings, grouped per set, and Select extras picks every copy but the oldest.
+- **Find saved characters**: images are matched to your saved characters by their prompt tags, with no model run. Adds a Character filter with counts, Group By Character, Sort by Character into boards, and characters listed in Detailed View.
+- **Scan for characters**: images with no saved prompt (imports, stripped metadata) can be scanned with the built-in tagger so saved characters are found in them too. Works on the selection or everything shown, remembers what it already tagged, and can be stopped mid-scan.
+- **Collapsible filters**: a Filters button folds the panel down to the search row and shows a dot when a folded filter is active.
+- **Faster with large galleries**: the grid only keeps nearby rows on screen, and thumbnails are cached on disk (pruned past 1 GiB) instead of being re-encoded every time.
+
+### Models
+- **All-in-one Anima checkpoints generate**: Anima files with the text encoder and VAE baked in (such as ColdMilk Anima) are no longer refused as split-only.
+- **Flux 2 previews no longer crash generation**: MOSS-Image, Flux 2 Klein and dev, and Ideogram 4 failed at the first live preview with "shape is invalid". The latent was being unpacked twice.
+
+### Generation
+- **Lock resolution holds**: a locked custom size is no longer overwritten by the Anima minimum size at generate time or by uploading an image edit reference.
+- **Shorter CFG 1 warning in Advanced Mode**: one line with the full explanation in a tooltip. The full box is unchanged with Advanced Mode off.
+
+---
+
+## What's New in v2.3.42
+
+### NovelAI Enhance
+- **Table and object layouts hold up**: Enhance for V5 keeps scene objects and placement (`behind table`, `table in foreground`) in the base prompt as short tags plus one short sentence. Character boxes keep pose and side of frame only, clothing the object hides is left out, and the rewrite no longer adds tags like `opaque` or `not on table`, or puts an object the scene needs in undesired content. Existing answers are cleaned the same way.
+- **Use memory notes switch**: a new checkbox in the Enhance options (V5 and general Enhance) turns memory notes off for one rewrite, so it works from the text and saved looks alone. It is ticked each time the modal opens.
+- **Only applied rewrites join the session**: a rewrite you close without applying no longer becomes history for the next request, in V5, general and video Enhance. Undo takes the turn back out, and the session keeps the cleaned fields you applied rather than the raw answer.
+- **Memory saved on Apply**: facts a rewrite learned are saved to character memory only when you apply it.
+- **Better retries**: the V5 correction retry now edits the first answer instead of starting over, and keeps whichever attempt has fewer problems.
+- **Review stays open on a backdrop click**: Cancel and Escape still close it. Escape with the gallery picker open closes only the picker.
+
+### Prompt assistant
+- **Safety check in every flow**: general Enhance and video Enhance now refuse the same minor plus explicit requests the V5 rewrite already refused.
+- **Local fallback fits**: with local fallback on, session history is trimmed to fit the local model's context. Errors from the bundled llama-server now say why the request failed.
+- **Model notes recover**: an empty notes verdict expires after a week instead of being cached forever, and notes are rewritten once per model for the new rules.
+- **Custom endpoints get a 300 second timeout**, since long rewrites on local servers can take more than two minutes.
+
+### NovelAI
+- **V4.5 Full quality tags**: with Quality tags on, V4.5 Full now gets NovelAI's documented `location, very aesthetic, masterpiece, no text` instead of the V5 stack.
+
+### Settings
+- **Image to 3D description** names both methods (Pixal3D textured meshes and Gaussian splats).
+- **Segmind key field hidden**: nothing uses a Segmind key yet, so the field only shows if one was saved earlier, with a note so it can be cleared.
+
+### Security
+- **SQLite update**: rusqlite 0.41 brings the bundled SQLite past CVE-2026-119375 (RUSTSEC-2026-0459).
+
+### Docs
+- README, docs index, scope, roadmap and contributor docs brought in line with the current app.
+
+---
+
+## What's New in v2.3.41
+
+### NovelAI Enhance
+- **Outfits stay in their own character boxes**: with two or more characters, an Enhance for V5 rewrite keeps every garment in one character box and leaves the base prompt to the scene, framing and a short placing sentence per character. It retries once if the base tag line repeats a box's clothing or hair. Each box also gets the other characters' distinctive garments added to its own undesired content (skipping anything that character wears), shown before and after in the review.
+- **Placement and interactions**: rewrites name each character's side in both the base and the box, and add interaction tags (`source#`, `target#`, `mutual#`) when the prompt describes a hug, headpat or other interaction. Edit and session modes keep existing box outfits word for word unless you ask to change them.
+- **Possible overlap chips**: the V5 review flags a clothing or hair tag the base shares with a box, or a garment two boxes share. Click a chip to keep the tag in that box only and add it to the other boxes' undesired content.
+- **Isolate outfits**: a button in the review toolbar, the Enhance input stage and the Characters panel header (V5 models with two or more filled boxes). It cleans outfit and hair tags out of the base, adds each character's side from the position grid and fills the opposite-outfit undesired content, with no LLM call. Nothing changes until you Apply.
+- **Similar bodies tip**: when two characters share a hair colour or body tags but wear different clothes, the review recommends opposite-outfit undesired content, with an Add button.
+
+### Prompt assistant
+- **Memory notes and ages**: memory writers now state a character's age as what it is ("an adult", "24 years old") instead of what it is not, so notes stop tripping the minors check. Notes already worded like "not a child or a teenager" or "no longer a child" no longer count as a minor.
+
+### Fixes and maintenance
+- **Setup torch install**: setup no longer fails with "Failed to acquire lock on the client cache" after 5 minutes while the CUDA torch wheel downloads over a slow connection. Setup's downloads also stop when MooshieUI closes, so a hidden download can't hold the lock for the next attempt, and a lock timeout in the setup log explains what to do.
+
+---
+
+## What's New in v2.3.40
+
+### Prompt assistant
+- **Fewer false minor refusals**: the check that refuses a minor paired with sexual content now reads only what you asked for, not your saved memory notes, and only refuses a clear minor word (child, kid, schoolgirl, an age under 18, a character saved as a minor) together with an explicit word. Suggestive words alone, or phrases like "minor changes" and "remove all sexual content", no longer trip it. When it does refuse, the message names the words that tripped it.
+- **Minors rule toggle**: the V5 options row of NAI Enhance has a **Minors rule** checkbox (on by default). Turn it off if your provider refuses ordinary SFW school or family prompts because of the rule's wording; a minor with explicit content is still never sent.
+
+### Fixes and maintenance
+- **Update check**: the update check retries before giving up, and when GitHub can't be reached Settings says so plainly with an **Open releases page** button instead of showing the raw updater error.
+
+---
+
+## What's New in v2.3.39
+
+### Fixes and maintenance
+- **NovelAI braces**: `{}` and `[]` emphasis now reaches NovelAI as braces instead of being rewritten to a numeric weight, so prompts round-trip as typed. A weighted span whose text ends in a number (like `{{{year 2025}}}`) no longer makes NovelAI read the number as a new weight for the rest of the prompt.
+
+---
+
+## What's New in v2.3.38
+
+### Character portraits
+- **Neck-up filter**: a portrait now leaves out what a neck-up picture can't show (legwear, shoes, skirts, hands, poses, held items, full-body framing). What was dropped shows under the prompt as **Left out** chips; click one to put it back. It reads tag and sentence prompts in English, Japanese, Chinese, German, Spanish and Portuguese, and filters picked chunks too.
+- **Expression box**: the portrait window has an **Expression** box, filled from the last portrait, the card's own expression tags or the character's usual expression in memory. The ✨ button asks the prompt assistant to pick one from memory or canon. Portraits no longer default to a blank stare.
+
+### Character memory
+- **Write with AI**: the Memory tab has a **Write with AI** button that drafts a character's memory files from canon, their prompt and an optional brief. You review the files before they are saved.
+- **Better Remember**: Remember writes your note up as a proper entry, ties it to what the notes already say and reads the notes of other saved characters it names. Relationships go both ways: "Mumei is Miku's sister" also adds the matching line to Miku's memory.
+- **Usual expression**: the expression used for a portrait is saved to the character's memory, so Enhance draws the same face.
+- **Your version beats canon**: for gender-swapped, alternate or original takes on a known character, what you wrote wins over canon in memory writing, expression picks and Enhance.
+
+---
+
+## What's New in v2.3.37
+
+### Saved characters
+- **Memory files**: each saved character can keep short Markdown notes (personality, backstory, relationships, outfits) in the new **Memory** tab of its Edit window. **Remember** asks the prompt assistant to file a fact in the right note, and you review the change before it is saved. With an external LLM provider (Claude, ChatGPT, Gemini, Grok or a capable model on your own endpoint), Use, Update and Enhance read the notes when the scene calls for them, and Enhance saves lasting details it works out (for example a character's school uniform) with a **Saved to memory for next time** toast you can undo.
+- **Full Edit window**: Edit now opens an app-wide window with **Details** (name, prompt, UC) and **Memory** tabs. Changes stay a draft until Save.
+- **Portrait as the card picture**: the card's picture menu has a new **Portrait** option that renders a front-on, neck-up portrait of the character with the selected model, with optional artist tags, chunks and artist styles. NovelAI portraits are 1024 x 1024. The result becomes the card's picture, with Undo.
+- **Names on the cards**: Characters tab cards show the character's name on its own line again, with the action buttons along the bottom.
+
+### Generate page
+- **Preview fits the image**: the preview takes the shape of the image or video it shows instead of a fixed square, so landscape and portrait results fill the free space.
+- **Separate drawer for video**: image modes and Video each keep their own bottom drawer height and collapsed state.
+
+### Fixes
+- **Undo toasts work**: the Undo button on the Characters tab's toasts (Update, extract review) now shows up.
+
+---
+
+## What's New in v2.3.36
+
+### LAN access from the desktop window
+- **No more switching to browser mode**: the LAN section in Settings (the toggle, addresses, Windows Firewall, router forwarding and accounts) now shows in the desktop window too. With LAN access on, the app starts its web server on your network at launch and keeps the window open, so other devices can connect while you keep working in the app.
+
+### NovelAI
+- **Queued generations no longer time out**: NovelAI generations now run one at a time per account, in queue order, instead of all at once. A busy answer (429) is retried on its own with a short wait. Two different API keys still run side by side.
+
+### Fixes
+- **Cancelling Prompt Enhance stops it**: Cancel, Escape or clicking outside the Enhance window (general Enhance, Enhance for V5 and the H3 rewrite) now stops the request. The Enhance button no longer stays on its spinner, and a new Enhance no longer waits behind the old one.
+- **One gallery save with several clients connected**: with two clients open in browser or LAN mode (for example a PC tab and a phone), each generation is saved once, with its settings, instead of twice.
+- **Artist creator on phones**: the pick, switch and close buttons in the artist creator's image viewer are always visible on touch screens.
+
+---
+
+## What's New in v2.3.35
+
+### Invisible watermark and fingerprint
+- **Stripped images find their settings**: when an image you drop or open has lost its metadata (reposted, resized, screenshotted), MooshieUI now looks it up in your own gallery and restores its settings. The toast says **Restored ... from the watermark** or **Restored ... from a gallery match**.
+- **Fingerprint (always on)**: every gallery save stores a perceptual hash in the gallery index. Nothing in the file changes.
+- **Watermark (opt-in)**: new **Watermark** Off/On chips under **Metadata** hide an invisible ID in the pixels of every saved image (TrustMark, no visible change). The first use downloads about 65 MB. Off by default. NovelAI PNGs, 16-bit images, videos, images under 256 px and JXL saves are not marked yet.
+
+### Generate page redesign
+- **Mode bar and Layout menu**: the mode tabs, the Canvas Editor toggle and a new **Layout** menu sit in a bar above the preview. The menu can swap the panels, put **Everything on the left** or **Everything on the right**, or **Reset layout**. Every section header has an arrow to move it to the other side.
+- **Prompt first**: a fresh install (or **Reset layout**) puts Model, Prompts and Dimensions on the left. Saved layouts keep their order.
+- **Cards**: the side panels, preview and bottom drawer are separate rounded cards. The gaps between them are the resize handles, each with a small hide/show button.
+- **New Generate footer**: a one-line Anlas row with a small allowance bar, a batch stepper (1 to 8), a Stop button while generating (click skips the current image, right-click cancels all), and the Anlas cost inside the Generate button.
+- **Drawer**: the collapse button moved to the right of the drawer's tab row. Collapsed, the tab row stays visible and any tab opens it again.
+- **Quieter panels**: help text moved into tooltips next to the control it describes, and picked options show as neutral chips so the accent colour is left for Generate, switches and sliders.
+- **NovelAI 18+ pill**: V5 Full, V4.5 Full and V4 Full show an **18+** pill in the model picker, and the picker shows the model's name instead of its API id.
+
+### Phone layout
+- **New bottom bar**: Generate, Video, Gallery, Music and **More**, instead of eight overlapping tabs. **More** holds Artists, Characters, Scenes, Image to 3D, Model Hub, Settings, Interrogate, notifications, bug reports and the connection status.
+- **Generate on phones**: generation tabs and Profiles, the mode switcher and the Canvas Editor toggle are in the header, and Prompt, Model, Library and Generate are always visible in a dock above the bar. Prompts come first.
+- **Features phones were missing**: Image to 3D, Scenes, Interrogate, the Photopea editor, Make 3D from the gallery, artist "Insert tag" and local previews, and the startup and update notices.
+
+### Fixes
+- **Video and Image Edit with a NovelAI model**: the Video page and the Image Edit tab no longer disappear while a NovelAI model is selected. Video runs on ComfyUI as always, and a plain Image Edit run on NovelAI stops with a message instead of spending Anlas.
+- **No raw HTML in error messages**: when NovelAI (or CivitAI, ElevenLabs, fal.ai, an LLM provider, xAI sign-in or a remote ComfyUI) answers with a web page instead of an API error, you now get one short sentence instead of a screen of HTML. A failed Anlas refresh keeps the last balance, shows a warning icon with the reason, and retries on its own.
+
+---
+
+## What's New in v2.3.34
+
+### New models
+- **MOSS-Image and MOSS-Image Base**: OpenMOSS's MOSS-Image works for txt2img and img2img. Files are recognised by name, CivitAI base model or their own tensors, and get Comfy-Org's defaults (25 steps, CFG 2.5, er_sde on simple, 1024x1024). It needs the Qwen3.5 9B text encoder and the Flux 2 VAE; a missing one downloads on its own, and generating with the wrong one stops with a message naming the right file. The Model Hub has quick links for the INT8 files.
+- **ComfyUI v0.43.0**: new and updating installs get ComfyUI v0.43.0 (was v0.41.1), which MOSS-Image needs.
+
+### Image to 3D (experimental)
+- **Off by default**: the 3D page and the gallery's **3D** button now only show when **Experimental: Image to 3D** is on in **Settings > Appearance**. Results are often much rougher than the published examples.
+- **Textured mesh with Pixal3D**: a new **Method** picker. **Textured mesh (Pixal3D)**, the new default, makes a solid `.glb` with baked colour, roughness and normal maps that opens in Blender, game engines and glTF viewers; save it with **Save .glb**. **Download Pixal3D** fetches its model files (about 10 GB in total). **Gaussian splat (Idol)** is still there.
+- **Idol sampling**: Idol now uses its own reference settings (50 Euler steps, guidance 4). Saved 3D settings switch to the new steps and guidance once.
+
+### Prompt Assistant
+- **Reasoning effort**: a new **Reasoning effort** setting in **Settings > Prompt Assistant** for providers whose models think before answering: **Low** (default), **Medium**, **High** or **Model default**. Before, no effort was sent, so models such as Grok 4.6 and 4.7 thought at their slow default and often timed out as "unavailable".
+- **Newer OpenAI and Claude models answer again**: OpenAI reasoning models and Claude Opus 4.7 and the Claude 5 models no longer get settings they reject, and thinking models get extra room in their answer budget and a longer timeout.
+
+### Fixes
+- **Stuck on "Preparing" after a crash**: if MooshieUI crashed or was killed while ComfyUI was busy, the next launch reused that ComfyUI and queued every prompt behind the stuck job. A ComfyUI left behind by a closed MooshieUI is now stopped and a fresh one started, unless **Keep ComfyUI running after app closes** is on. On Windows the managed ComfyUI now closes with MooshieUI however it exits.
+- **High VRAM on 16 GB cards**: the High VRAM mode is only kept when the largest installed model leaves 6 GB free, for every model family (it used to check MiniMax H3 only). Its label now says **24GB+**.
+- **Interrogate always shows Artists**: when no artist reaches the Kaloscope threshold, the Artists section now shows Kaloscope's closest guesses, unticked, to add with one click. When artist detection is off, it says so and offers **Turn on**.
+
+---
+
+## What's New in v2.3.33
+
+### Image to 3D
+- **New 3D page**: turn one picture of a character or object into a 3D Gaussian splat, back side included. Open **3D** in the navigation, or press **3D** on a gallery image. Drop, paste or choose an image, or pick one from the gallery, then press **Make 3D model**. It runs Idol by Speridlabs (Apache 2.0, a TripoSplat fine-tune) on ComfyUI's own TripoSplat nodes, so no ComfyUI update or custom nodes are needed. It needs about 7 GB of VRAM.
+- **One-click model download**: **Download Idol** fetches only the missing files (about 3.8 GB when none are there) from Comfy-Org's ungated repackage. No Hugging Face token needed. On shared servers only admins and moderators can download.
+- **Options**: **Remove background** (BiRefNet; turn it off for images that already have a transparent background), **Detail** from Draft to Maximum (131,072 to 1,048,576 Gaussians), and **Advanced** steps, guidance and seed.
+- **Viewer**: a built-in WebGL 2 viewer. Drag to orbit, right-drag or Shift-drag to pan, scroll or pinch to zoom, double-click to reset. **Spin** turns the model on a turntable. Works in the desktop app and browser mode.
+- **Library and export**: finished models are kept under **Your 3D models** in this browser, per account, like the music library. Rename or delete them, and export with **Save .ply** (the file ComfyUI made) or **Save .splat** for web splat viewers. Both open in SuperSplat, Blender add-ons and other Gaussian splat tools.
+
+---
+
+## What's New in v2.3.32
+
+v2.3.31 was tagged but never published (its builds stopped on a new dependency advisory), so this release carries its changes.
+
+### Prompting
+- **LoRA keywords in autocomplete**: when a LoRA with trigger words is switched on, the prompt autocomplete lists its keywords at the top, marked with a **LoRA** badge (hover to see which LoRA). Picking one inserts it exactly as written, and in the main prompt it is removed again when you switch the LoRA off. Keywords come from the same list the LoRA gallery shows. Not offered in negative prompts. Turn it off with **LoRA keywords first** in **Settings > Autocomplete** (on by default).
+
+### Fixes
+- **Mature CivitAI models open on civitai.red**: **Open on CivitAI** in the Model Hub and the LoRA and checkpoint galleries now opens mature models on civitai.red, where CivitAI serves them, instead of a blocked civitai.com page. The Model Hub also accepts pasted civitai.red model links. Gallery links cached before this update switch over within 24 hours.
+
+### Maintenance
+- **Updater**: the Windows updater now uses zip 9, which removes a zip advisory that stopped the v2.3.31 builds.
+- **Dependency audit before release**: the npm and Rust advisory audit the release build runs now also runs on dependency PRs, on main and once a day, so a new advisory is fixed before a release is tagged instead of stopping its builds.
+
+---
+
+## What's New in v2.3.30
+
+### Performance
+- **Lighter when idle**: MooshieUI now uses far less CPU and GPU while you are not using it. The tips carousel on the empty preview no longer redraws the page 20 times a second (about 7% of a CPU core down to under 0.5%), and after 2 minutes with no input, or while the window is hidden, all UI animations pause until you move the mouse or press a key.
+- **WebView2 rests on Windows**: while the window is minimised the WebView is hidden, and while the UI is resting it asks WebView2 to use less memory.
+- **Free VRAM when idle** (opt-in): turn it on in **Settings > Connection** and pick **Unload after** (5, 10, 15, 30 or 60 min). After that long with no generations, the managed ComfyUI unloads its models and frees memory, giving back VRAM and RAM. ComfyUI keeps running and the next generation reloads the model. Off by default; a ComfyUI you run yourself is never touched.
+
+---
+
+## What's New in v2.3.29
+
+### Style Reference
+- **Anima character reference**: **Style Reference** now works on Anima through the Anima Reference Adapter v2. From one reference image it keeps the character (hair, eyes, outfit and much of the art style), so the prompt only describes the scene. No character LoRA or name tags needed. Add a **Second character** image for two characters (placed on the right). On Anima the panel shows **Reference guidance** (default 4.5), **Colour correction** (APG recommended) and **End**, plus a one-click download of the adapter (183 MB; skip it and ComfyUI fetches it on the first run). Each step makes one extra model call at the default guidance, so generations take about twice as long; guidance 1 removes that cost. Anima TeaCache is switched off while the reference is on.
+
+### Fixes
+- **Style Reference file drops**: dropping an image file onto the Style Reference drop zone in the desktop app now loads it.
+
+### Maintenance
+- **macOS CI**: Dependabot PRs no longer run macOS validation, a new push cancels a PR's older macOS run, and Dependabot minor and patch updates come as one weekly PR per ecosystem. This keeps macOS runners free for release builds.
+
+---
+## What's New in v2.3.28
+
+v2.3.27 was tagged but never published (its builds stopped on a new dependency advisory), so this release carries its changes.
+
+### AI Assistants (MCP)
+- **Connect from Claude and other cloud apps**: Claude's custom connectors (Claude Desktop, claude.ai, mobile) and ChatGPT connect from their own servers, so they need a public https address. Turn on **Cloudflare tunnel** in **Settings > AI assistants (MCP)** for a temporary address with no account needed (it changes each time MooshieUI starts), or enter **Your own address** for a named tunnel, Tailscale Funnel, ngrok or reverse proxy. Copy the **Connector URL** (it contains the token, so keep it private) and paste it under Settings > Connectors > Add custom connector in Claude.
+
+### Prompt Assistant
+- **Fallback models**: for API providers, list up to 4 more models in **Settings > Prompt Assistant**. They are tried in order when the main model times out, is rate limited or its server fails. A refusal is never retried on another model.
+- **Fall back to the local model**: when no external model can answer, an installed local writing model answers instead (never DanTagGen, and without reference images).
+
+### Interrogate
+- **Describe in words**: a new panel writes a natural-language prompt (short or detailed) for the interrogated image, for Flux, Krea, H3 and other models that read prose rather than tags. Edit it, copy it, **Append to prompt** or **Replace prompt**. It uses your prompt assistant provider when it can see images, otherwise a local vision model.
+- **New local vision models**: Qwen3-VL 4B Instruct (a writing model that also reads images, so Enhance reference images work locally) and JoyCaption Beta One (a captioner, preferred for Describe when installed) can be installed from the panel.
+
+### Security
+- **DOMPurify 3.4.17**: fixes three sanitizer bypasses (GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr, GHSA-c6gr-qvv4-5v3f).
+- **ctutils 0.4.4**: fixes non-constant-time comparisons (RUSTSEC-2026-0385).
+
+---
+
+## What's New in v2.3.26
+
+### AI Assistants (MCP)
+- **Local MCP server**: AI assistants such as Claude Code, Claude Desktop or Cursor can now generate images, check jobs and search your gallery through the Model Context Protocol. It is off by default; turn it on in **Settings > AI assistants (MCP)**. It listens on `127.0.0.1:3210` (port configurable), only accepts apps on this computer, and every request needs the token shown in the panel. Each model uses the setup from your last local txt2img run with it, so generations match what you would get in the app. See `docs/MCP.md`.
+- **Music generation**: a `generate_music` tool makes YuE2 songs from a style, optional lyrics and a duration. Finished songs are saved as FLAC (with the planned ABC score) in the app's `music` folder.
+
+### Interrogate
+- **Image stays in view**: the interrogated image now shows uncropped beside the tags (above them on narrow screens), including for lightbox previews, model previews and clipboard pastes.
+- **Detections on by default**: Kaloscope artist detection and saved character detection are on for new installs. Existing settings are kept.
+
+### Fixes
+- **Animadex characters open again**: characters with two or more LoRAs or a repeated tag (Ganyu, Remilia Scarlet) only outlined the card, and paging could leave the previous character's details on screen.
+- **Browser-mode gallery thumbnails**: thumbnails are built off the async runtime, so a page of uncached thumbnails no longer stalls other requests.
+
+### Security
+- **eMudhra CA distrust**: setup now pins uv 0.13.4 and upgrades an older uv instead of keeping it, and the ComfyUI venv gets certifi 2026.10.19 or newer (checked in the background at launch). Both drop the compromised emSign root. rustls-webpki 0.103.16 and webpki-root-certs 1.0.10 do the same on the Rust side.
+
+---
+
+## What's New in v2.3.25
+
+### Image Edit
+- **Camera angle picker for Qwen Edit Plus**: a new **Camera Angle** section re-shoots the reference from another angle. Pick a direction (8 steps of 45 degrees), a height and a distance, and the matching shot phrase is added to the start of your prompt. When the Multiple-Angles LoRA is installed it is applied at 0.9 with its trigger word; otherwise only the shot words are sent. The LoRA can be downloaded from the panel (295 MB).
+
+### Video
+- **Custom Turbo LoRA picker no longer greys out**: with a LightX2V or PDD turbo preset stored, the Custom tier's **Turbo LoRA** picker was disabled even while Turbo was off, with no visible reason. It now locks only while Turbo is on, and says which preset set the file and how to pick your own.
+
+### Interface
+- **Sidebar runs full height again**: the generation tab strip moved from above the whole layout to the top of the main column, so the left sidebar starts at the top edge and the tabs line up with the main panel.
+
+### Project
+- **SECURITY.md**: report vulnerabilities privately to security@mooshieui.com or through GitHub private vulnerability reporting.
+
+---
 ## What's New in v2.3.24
 
 v2.3.23 was tagged but never published: its build stopped on new security advisories for two dependencies. Everything below ships in this release, plus the fix for those advisories.

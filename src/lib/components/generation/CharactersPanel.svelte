@@ -9,6 +9,8 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import {
+    CARD_SIZE_MAX,
+    CARD_SIZE_MIN,
     architectureLabel,
     architecturePromptStyle,
     characterArchitectures,
@@ -20,12 +22,15 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import type { CharacterMergeResult } from "../../utils/characterMerge.js";
   import CharacterMergeModal from "./CharacterMergeModal.svelte";
+  import CharacterPortraitModal from "./CharacterPortraitModal.svelte";
+  import CharacterEditModal from "./CharacterEditModal.svelte";
+  import { memoryContext, type MemoryChange } from "../../utils/characterMemory.js";
   import CharacterExtractReviewModal, {
     type DuplicateDecision,
     type DuplicateMatch,
     type NewCharacterDecision,
   } from "./CharacterExtractReviewModal.svelte";
-  import type { ExtractedCharacter } from "../../utils/characterExtract.js";
+  import { boxCharacters, type ExtractedCharacter } from "../../utils/characterExtract.js";
   import { findDuplicate, sameContent } from "../../utils/characterDuplicates.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import { progress } from "../../stores/progress.svelte.js";
@@ -40,10 +45,12 @@
 
   let search = $state("");
   let extracting = $state(false);
-  let editingId = $state<string | null>(null);
-  let editName = $state("");
-  let editPrompt = $state("");
-  let editNegative = $state("");
+  /** Card open in the editor, with the tab to start on and memory changes to review. */
+  let editor = $state<{
+    character: SavedCharacter;
+    tab: "details" | "memory";
+    suggestions: MemoryChange[];
+  } | null>(null);
   /** Character the prompt assistant is working into the prompt right now. */
   let mergingId = $state<string | null>(null);
   /** Card whose thumbnail options are showing. */
@@ -53,6 +60,8 @@
   /** Card whose thumbnail is being made right now. */
   let thumbBusyId = $state<string | null>(null);
   let thumbPickerOpen = $state(false);
+  /** Card the portrait dialog is open for. */
+  let portraitFor = $state<SavedCharacter | null>(null);
   let thumbFileInput = $state<HTMLInputElement | null>(null);
 
   /** What Extract found, awaiting the user's names and calls before saving. */
@@ -60,8 +69,6 @@
     arch: string;
     fresh: ExtractedCharacter[];
     matches: DuplicateMatch[];
-    source: string;
-    negative: string;
   } | null>(null);
 
   /** Top-level cards whose variants are showing. */
@@ -129,6 +136,12 @@
   }
 
   /** Whether Use can attach a card's picture as a Precise Reference (not V5 yet). */
+  /** More of the prompt fits beside a taller picture. */
+  const promptClamp = $derived(
+    savedCharacters.cardSize >= 144 ? "line-clamp-6" : savedCharacters.cardSize >= 96 ? "line-clamp-4" : "line-clamp-2",
+  );
+  const negativeClamp = $derived(savedCharacters.cardSize >= 96 ? "line-clamp-2" : "line-clamp-1");
+
   const canReference = $derived(
     generation.isNovelAi &&
       generation.supportsNovelAiPreciseReference &&
@@ -164,7 +177,7 @@
     if (!id) return;
     expanded = new Set([...expanded, character.parentId ?? character.id]);
     const created = savedCharacters.characters.find((c) => c.id === id);
-    if (created) startEdit(created);
+    if (created) openEditor(created);
   }
 
   /**
@@ -203,7 +216,15 @@
       }
     }
     savedCharacters.saveExtracted(
-      [{ name: character.name, ...text, thumbnail: character.thumbnail, reference: character.reference }],
+      [
+        {
+          name: character.name,
+          ...text,
+          thumbnail: character.thumbnail,
+          reference: character.reference,
+          memory: savedCharacters.memoryOf(character),
+        },
+      ],
       target,
     );
     gallery.showToast(
@@ -283,10 +304,38 @@
     return parts.filter(Boolean).join("\n");
   }
 
+  /**
+   * On NovelAI with character boxes in use, each box is one character: read
+   * them as they are, and only ask the prompt assistant for names. Without an
+   * assistant, or if naming fails, they are numbered for the user to name in
+   * the review. Null when there are no boxes to read.
+   */
+  async function charactersFromBoxes(saved: SavedCharacter[]): Promise<ExtractedCharacter[] | null> {
+    if (!generation.isNovelAi) return null;
+    const boxes = boxCharacters(
+      generation.activeNovelAiCharacters.map((c) => ({ prompt: c.prompt, negative: c.negative_prompt })),
+    );
+    if (boxes.length === 0) return null;
+    let named = boxes;
+    if (promptAssistant.isAvailable) {
+      try {
+        named = await promptAssistant.nameCharacters(boxes, saved);
+      } catch (e) {
+        // The characters are already right; only their names are missing.
+        console.error("Naming extracted characters failed:", e);
+      }
+    }
+    return named.map((c, i) => ({
+      ...c,
+      name: c.name.trim() || locale.t("characters.extract_box_name", { n: String(i + 1) }),
+    }));
+  }
+
   async function extract() {
     const arch = architecture;
     if (!arch || extracting) return;
-    if (!promptAssistant.isAvailable) {
+    const hasBoxes = generation.isNovelAi && generation.activeNovelAiCharacters.some((c) => c.prompt.trim());
+    if (!hasBoxes && !promptAssistant.isAvailable) {
       promptAssistant.setupModalOpen = true;
       return;
     }
@@ -299,7 +348,8 @@
     try {
       const negative = extractionNegative();
       const saved = savedCharacters.currentCharacters;
-      const found = await promptAssistant.extractCharacters(source, negative, saved);
+      const found =
+        (await charactersFromBoxes(saved)) ?? (await promptAssistant.extractCharacters(source, negative, saved));
       if (found.length === 0) {
         gallery.showToast(locale.t("characters.toast.none_found"), "info");
         return;
@@ -319,7 +369,7 @@
         gallery.showToast(locale.t("characters.toast.already_saved"), "info");
         return;
       }
-      extractReview = { arch, fresh, matches, source, negative };
+      extractReview = { arch, fresh, matches };
     } catch (e) {
       console.error("Character extraction failed:", e);
       const msg = String(e);
@@ -337,20 +387,25 @@
   /**
    * Carry out the extract review: new characters are saved under the names
    * the user gave them (an emptied name falls back to the suggested one),
-   * variants become cards, and each Update merges the prompt's details into
-   * the saved card the same way the card's own Update button does. One Undo
-   * covers every update.
+   * variants become cards, a wrong match saved as new becomes a card of its
+   * own, and each Update merges what the review shows (as the user left it)
+   * into the saved card. One Undo covers every update.
    */
   async function applyExtractReview(decisions: DuplicateDecision[], named: NewCharacterDecision[]) {
     const pending = extractReview;
     extractReview = null;
     if (!pending) return;
-    const { arch, source, negative } = pending;
-    const fresh = named
-      .filter((n) => n.keep)
-      .map((n) => ({ ...n.item, name: n.name.trim() || n.item.name }));
+    const { arch } = pending;
+    const fresh = [
+      ...named
+        .filter((n) => n.keep && n.item.prompt.trim())
+        .map((n) => ({ ...n.item, name: n.name.trim() || n.item.name })),
+      ...decisions
+        .filter((d) => d.action === "new" && d.newName.trim() && d.item.prompt.trim())
+        .map((d) => ({ ...d.item, name: d.newName.trim() })),
+    ];
     const variants = decisions
-      .filter((d) => d.action === "variant" && d.variantName.trim())
+      .filter((d) => d.action === "variant" && d.variantName.trim() && d.item.prompt.trim())
       .map((d) => ({
         name: d.variantName.trim(),
         prompt: d.item.prompt,
@@ -362,10 +417,13 @@
     const previous: { id: string; prompt: string; negative: string }[] = [];
     extracting = true;
     try {
-      for (const d of decisions.filter((x) => x.action === "update")) {
+      for (const d of decisions.filter((x) => x.action === "update" && x.item.prompt.trim())) {
         let next: { prompt: string; negative: string };
         try {
-          const merged = await promptAssistant.updateCharacter(d.saved, source, negative);
+          // Merged from the reviewed text, not the whole prompt: it is this
+          // character alone, already checked (and maybe corrected) by the
+          // user, so the model has nothing left to pick apart.
+          const merged = await promptAssistant.updateCharacter(d.saved, d.item.prompt, d.item.negative);
           // The duplicate check already placed this character in the prompt,
           // so a "not found" here means the model missed it: the extracted
           // text stands in.
@@ -438,6 +496,7 @@
               boxNegative: target.boxNegative,
             }
           : null,
+        memory: memoryContext(savedCharacters.memoryOf(character)),
       });
       review = {
         character,
@@ -514,22 +573,34 @@
     }
     updatingId = character.id;
     try {
-      const update = await promptAssistant.updateCharacter(character, source, extractionNegative());
+      const update = await promptAssistant.updateCharacter(
+        character,
+        source,
+        extractionNegative(),
+        savedCharacters.memoryOf(character),
+      );
       if (update === "missing") {
         gallery.showToast(locale.t("characters.toast.update_missing", { name: character.name }), "info");
         return;
       }
-      if (update.prompt === character.prompt && update.negative === character.negative) {
+      const suggestions = update.memory ?? [];
+      const changed = update.prompt !== character.prompt || update.negative !== character.negative;
+      if (!changed && suggestions.length === 0) {
         gallery.showToast(locale.t("characters.toast.update_unchanged", { name: character.name }), "info");
         return;
       }
-      const previous = { prompt: character.prompt, negative: character.negative };
-      savedCharacters.update(character.id, update);
-      gallery.showToast(locale.t("characters.toast.updated", { name: character.name }), "success", {
-        actionLabel: locale.t("characters.undo"),
-        onAction: () => savedCharacters.update(character.id, previous),
-        durationMs: 8000,
-      });
+      if (changed) {
+        const previous = { prompt: character.prompt, negative: character.negative };
+        savedCharacters.update(character.id, { prompt: update.prompt, negative: update.negative });
+        gallery.showToast(locale.t("characters.toast.updated", { name: character.name }), "success", {
+          actionLabel: locale.t("characters.undo"),
+          onAction: () => savedCharacters.update(character.id, previous),
+          durationMs: 8000,
+        });
+      }
+      // Lasting facts the prompt showed: reviewed in the editor before they are kept.
+      const card = savedCharacters.characters.find((c) => c.id === character.id);
+      if (suggestions.length > 0 && card) openEditor(card, "memory", suggestions);
     } catch (e) {
       console.error("Character update failed:", e);
       const msg = String(e);
@@ -542,6 +613,12 @@
     } finally {
       updatingId = null;
     }
+  }
+
+  /** A portrait for this card is queued or rendering. */
+  function portraitBusy(id: string): boolean {
+    const ids = savedCharacters.portraitPromptIds(id);
+    return ids.length > 0 && progress.pendingPrompts.some((p) => ids.includes(p.promptId));
   }
 
   /** Run one thumbnail source for a card and store what it produced. */
@@ -590,227 +667,212 @@
     void setThumb(id, () => outputImageToCharacterThumbnail(image), "characters.thumbnail.failed");
   }
 
-  function startEdit(character: SavedCharacter) {
-    editingId = character.id;
-    editName = character.name;
-    editPrompt = character.prompt;
-    editNegative = character.negative;
+  function openEditor(
+    character: SavedCharacter,
+    tab: "details" | "memory" = "details",
+    suggestions: MemoryChange[] = [],
+  ) {
+    moreMenuId = null;
+    thumbMenuId = null;
+    editor = { character, tab, suggestions };
   }
 
-  function saveEdit() {
-    if (!editingId) return;
-    savedCharacters.update(editingId, { name: editName, prompt: editPrompt, negative: editNegative });
-    editingId = null;
+  /** Whether a card shows its Memory button: the provider reads memory, or it has some. */
+  function showsMemory(character: SavedCharacter): boolean {
+    return promptAssistant.canUseMemory || savedCharacters.memoryOf(character).length > 0;
   }
 
   function remove(character: SavedCharacter) {
     if (!confirm(locale.t("characters.delete_confirm", { name: character.name }))) return;
-    if (editingId === character.id) editingId = null;
     savedCharacters.remove(character.id);
   }
 </script>
 
 {#snippet card(character: SavedCharacter)}
-  <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2 flex flex-col gap-1.5 min-w-0">
-    {#if editingId === character.id}
-      <input
-        type="text"
-        bind:value={editName}
-        aria-label={locale.t("characters.name")}
-        class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500"
-      />
-      <textarea
-        bind:value={editPrompt}
-        rows="3"
-        spellcheck="false"
-        aria-label={locale.t("characters.prompt")}
-        class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-indigo-500"
-      ></textarea>
-      <textarea
-        bind:value={editNegative}
-        rows="2"
-        spellcheck="false"
-        placeholder={locale.t("characters.negative")}
-        aria-label={locale.t("characters.negative")}
-        class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-red-500/70"
-      ></textarea>
-      <div class="flex justify-end gap-1.5">
-        <button
-          type="button"
-          class="px-2 py-0.5 text-[11px] rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
-          onclick={() => { editingId = null; }}
-        >
-          {locale.t("common.cancel")}
-        </button>
-        <button
-          type="button"
-          class="px-2 py-0.5 text-[11px] rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
-          disabled={!editName.trim() || !editPrompt.trim()}
-          onclick={saveEdit}
-        >
-          {locale.t("common.save")}
-        </button>
-      </div>
-    {:else}
-      <div class="flex gap-2 min-w-0">
-      <button
-        type="button"
-        class="shrink-0 w-14 h-14 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
-        title={locale.t("characters.thumbnail.change")}
-        aria-label={locale.t("characters.thumbnail.change")}
-        aria-expanded={thumbMenuId === character.id}
-        onclick={() => { thumbMenuId = thumbMenuId === character.id ? null : character.id; }}
-      >
-        {#if thumbBusyId === character.id}
-          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
-        {:else if character.thumbnail}
-          <img src={character.thumbnail} alt={character.name} class="w-full h-full object-cover" />
-        {:else}
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        {/if}
-      </button>
-      <div class="flex-1 min-w-0 flex flex-col gap-1.5">
-      <div class="flex items-center gap-1 min-w-0">
-        <span class="flex-1 min-w-0 truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
-        <button
-          type="button"
-          class="shrink-0 px-2 py-0.5 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-          title={locale.t(promptAssistant.isAvailable ? "characters.use_smart_tip" : "characters.use_tip")}
-          disabled={mergingId !== null || updatingId !== null}
-          onclick={() => use(character)}
-        >
-          {#if mergingId === character.id}
-            <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
-            {locale.t("characters.merging")}
-          {:else}
-            {locale.t("characters.use")}
-          {/if}
-        </button>
-        <button
-          type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-          title={locale.t("characters.insert_plain_tip")}
-          aria-label={locale.t("characters.insert_plain")}
-          onclick={() => insertPlain(character)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-        <button
-          type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
-          title={locale.t("characters.update_tip")}
-          aria-label={locale.t("characters.update")}
-          disabled={updatingId !== null || mergingId !== null}
-          onclick={() => refresh(character)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 {updatingId === character.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
-        <button
-          type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-          title={locale.t("characters.edit")}
-          aria-label={locale.t("characters.edit")}
-          onclick={() => startEdit(character)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-        </button>
-        <button
-          type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 {moreMenuId === character.id ? 'bg-neutral-800 text-neutral-200' : ''}"
-          title={locale.t("characters.more")}
-          aria-label={locale.t("characters.more")}
-          aria-expanded={moreMenuId === character.id}
-          onclick={() => { moreMenuId = moreMenuId === character.id ? null : character.id; }}
-        >
-          {#if copyingId === character.id}
-            <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
-          {:else}
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
-          {/if}
-        </button>
-        <button
-          type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-red-300 hover:bg-red-600/10"
-          title={locale.t("characters.delete")}
-          aria-label={locale.t("characters.delete")}
-          onclick={() => remove(character)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        </button>
-      </div>
-      <p class="text-[11px] leading-snug text-neutral-400 line-clamp-3 break-words" title={character.prompt}>{character.prompt}</p>
+  <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-1.5 flex flex-col gap-1 min-w-0">
+    <div class="flex gap-2 min-w-0">
+    <button
+      type="button"
+      style="width: {savedCharacters.cardSize}px; height: {savedCharacters.cardSize}px;"
+      class="shrink-0 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
+      title={locale.t("characters.thumbnail.change")}
+      aria-label={locale.t("characters.thumbnail.change")}
+      aria-expanded={thumbMenuId === character.id}
+      onclick={() => { thumbMenuId = thumbMenuId === character.id ? null : character.id; }}
+    >
+      {#if thumbBusyId === character.id || portraitBusy(character.id)}
+        <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+      {:else if character.thumbnail}
+        <img
+          src={savedCharacters.cardSize > 96 ? (character.reference ?? character.thumbnail) : character.thumbnail}
+          alt={character.name}
+          class="w-full h-full object-cover"
+        />
+      {:else}
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      {/if}
+    </button>
+    <div class="flex-1 min-w-0 flex flex-col gap-0.5">
+      <span class="truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
+      <p class="text-[11px] leading-snug text-neutral-400 {promptClamp} break-words" title={character.prompt}>{character.prompt}</p>
       {#if character.negative}
-        <p class="text-[11px] leading-snug text-red-300/70 line-clamp-2 break-words" title={character.negative}>
+        <p class="text-[11px] leading-snug text-red-300/70 {negativeClamp} break-words" title={character.negative}>
           <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
         </p>
       {/if}
-      </div>
-      </div>
-      {#if moreMenuId === character.id}
-        <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
-          <button
-            type="button"
-            class="px-2 py-0.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-            onclick={() => addVariant(character)}
-          >{locale.t("characters.variants.add")}</button>
-          <label class="flex items-center gap-1 text-neutral-400">
-            {locale.t("characters.variants.of")}
-            <select
-              class="max-w-[9rem] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:border-indigo-500"
-              value={character.parentId ?? ""}
-              onchange={(e) => {
-                savedCharacters.setParent(character.id, (e.currentTarget as HTMLSelectElement).value || null);
-                moreMenuId = null;
-              }}
-            >
-              <option value="">{locale.t("characters.variants.none")}</option>
-              {#each parentChoices(character) as parent (parent.id)}
-                <option value={parent.id}>{parent.name}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="flex items-center gap-1 text-neutral-400">
-            {locale.t("characters.copy_to")}
-            <select
-              class="max-w-[9rem] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:border-indigo-500 disabled:opacity-40"
-              value=""
-              disabled={copyingId !== null}
-              onchange={(e) => copyTo(character, (e.currentTarget as HTMLSelectElement).value)}
-            >
-              <option value="">{locale.t("characters.copy_to_placeholder")}</option>
-              {#each characterArchitectures().filter((a) => a !== character.architecture) as arch (arch)}
-                <option value={arch}>{architectureLabel(arch)}</option>
-              {/each}
-            </select>
-          </label>
-        </div>
+    </div>
+    </div>
+    <div class="flex items-center gap-1 min-w-0">
+      <button
+        type="button"
+        class="shrink-0 h-5 px-2 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+        title={locale.t(promptAssistant.isAvailable ? "characters.use_smart_tip" : "characters.use_tip")}
+        disabled={mergingId !== null || updatingId !== null}
+        onclick={() => use(character)}
+      >
+        {#if mergingId === character.id}
+          <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+          {locale.t("characters.merging")}
+        {:else}
+          {locale.t("characters.use")}
+        {/if}
+      </button>
+      <button
+        type="button"
+        class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+        title={locale.t("characters.insert_plain_tip")}
+        aria-label={locale.t("characters.insert_plain")}
+        onclick={() => insertPlain(character)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+      <button
+        type="button"
+        class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
+        title={locale.t("characters.update_tip")}
+        aria-label={locale.t("characters.update")}
+        disabled={updatingId !== null || mergingId !== null}
+        onclick={() => refresh(character)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 {updatingId === character.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+      <button
+        type="button"
+        class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+        title={locale.t("characters.edit")}
+        aria-label={locale.t("characters.edit")}
+        onclick={() => openEditor(character)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      </button>
+      {#if showsMemory(character)}
+        {@const memoryCount = savedCharacters.memoryOf(character).length}
+        <button
+          type="button"
+          class="shrink-0 h-5 min-w-5 px-1 flex items-center justify-center gap-0.5 rounded hover:bg-neutral-800 {memoryCount > 0 ? 'text-indigo-300 hover:text-indigo-200' : 'text-neutral-500 hover:text-neutral-200'}"
+          title={locale.t("characters.memory.tip")}
+          aria-label={locale.t("characters.memory.open")}
+          onclick={() => openEditor(character, "memory")}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+          {#if memoryCount > 0}<span class="text-[10px] leading-none tabular-nums">{memoryCount}</span>{/if}
+        </button>
       {/if}
-      {#if thumbMenuId === character.id}
-        <div class="flex flex-wrap gap-1">
+      <button
+        type="button"
+        class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 {moreMenuId === character.id ? 'bg-neutral-800 text-neutral-200' : ''}"
+        title={locale.t("characters.more")}
+        aria-label={locale.t("characters.more")}
+        aria-expanded={moreMenuId === character.id}
+        onclick={() => { moreMenuId = moreMenuId === character.id ? null : character.id; }}
+      >
+        {#if copyingId === character.id}
+          <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+        {:else}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        {/if}
+      </button>
+      <span class="flex-1"></span>
+      <button
+        type="button"
+        class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-red-300 hover:bg-red-600/10"
+        title={locale.t("characters.delete")}
+        aria-label={locale.t("characters.delete")}
+        onclick={() => remove(character)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
+    </div>
+    {#if moreMenuId === character.id}
+      <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+        <button
+          type="button"
+          class="px-2 py-0.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+          onclick={() => addVariant(character)}
+        >{locale.t("characters.variants.add")}</button>
+        <label class="flex items-center gap-1 text-neutral-400">
+          {locale.t("characters.variants.of")}
+          <select
+            class="max-w-[9rem] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:border-indigo-500"
+            value={character.parentId ?? ""}
+            onchange={(e) => {
+              savedCharacters.setParent(character.id, (e.currentTarget as HTMLSelectElement).value || null);
+              moreMenuId = null;
+            }}
+          >
+            <option value="">{locale.t("characters.variants.none")}</option>
+            {#each parentChoices(character) as parent (parent.id)}
+              <option value={parent.id}>{parent.name}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="flex items-center gap-1 text-neutral-400">
+          {locale.t("characters.copy_to")}
+          <select
+            class="max-w-[9rem] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+            value=""
+            disabled={copyingId !== null}
+            onchange={(e) => copyTo(character, (e.currentTarget as HTMLSelectElement).value)}
+          >
+            <option value="">{locale.t("characters.copy_to_placeholder")}</option>
+            {#each characterArchitectures().filter((a) => a !== character.architecture) as arch (arch)}
+              <option value={arch}>{architectureLabel(arch)}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
+    {/if}
+    {#if thumbMenuId === character.id}
+      <div class="flex flex-wrap gap-1">
+        <button
+          type="button"
+          class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+          title={locale.t("characters.thumbnail.portrait_tip")}
+          onclick={() => { thumbMenuId = null; portraitFor = character; }}
+        >{locale.t("characters.thumbnail.portrait")}</button>
+        <button
+          type="button"
+          class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+          onclick={() => thumbFromCurrent(character)}
+        >{locale.t("characters.thumbnail.current")}</button>
+        <button
+          type="button"
+          class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+          onclick={() => { thumbTargetId = character.id; thumbFileInput?.click(); }}
+        >{locale.t("characters.thumbnail.upload")}</button>
+        <button
+          type="button"
+          class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+          onclick={() => { thumbTargetId = character.id; thumbPickerOpen = true; }}
+        >{locale.t("characters.thumbnail.gallery")}</button>
+        {#if character.thumbnail}
           <button
             type="button"
-            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-            onclick={() => thumbFromCurrent(character)}
-          >{locale.t("characters.thumbnail.current")}</button>
-          <button
-            type="button"
-            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-            onclick={() => { thumbTargetId = character.id; thumbFileInput?.click(); }}
-          >{locale.t("characters.thumbnail.upload")}</button>
-          <button
-            type="button"
-            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-            onclick={() => { thumbTargetId = character.id; thumbPickerOpen = true; }}
-          >{locale.t("characters.thumbnail.gallery")}</button>
-          {#if character.thumbnail}
-            <button
-              type="button"
-              class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300"
-              onclick={() => { savedCharacters.setThumbnail(character.id, null); thumbMenuId = null; }}
-            >{locale.t("characters.thumbnail.remove")}</button>
-          {/if}
-        </div>
-      {/if}
+            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300"
+            onclick={() => { savedCharacters.setThumbnail(character.id, null); thumbMenuId = null; }}
+          >{locale.t("characters.thumbnail.remove")}</button>
+        {/if}
+      </div>
     {/if}
   </div>
 {/snippet}
@@ -833,6 +895,21 @@
         {archLabel}
       </span>
     {/if}
+    <label class="shrink-0 flex items-center gap-1 text-neutral-500" title={locale.t("characters.card_size")}>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <input
+        type="range"
+        name="saved-character-card-size"
+        min={CARD_SIZE_MIN}
+        max={CARD_SIZE_MAX}
+        step="8"
+        value={savedCharacters.cardSize}
+        oninput={(e) => savedCharacters.setCardSize(Number((e.currentTarget as HTMLInputElement).value))}
+        aria-label={locale.t("characters.card_size")}
+        disabled={!architecture}
+        class="w-16 sm:w-20 accent-indigo-500 disabled:opacity-40"
+      />
+    </label>
     <button
       type="button"
       class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
@@ -885,7 +962,7 @@
     </div>
   {:else}
     <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
-      <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); align-content: start;">
+      <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(min({124 + savedCharacters.cardSize * 2}px, 100%), 1fr)); align-content: start;">
         {#each groups as group (group.top.id)}
           <div class="flex flex-col gap-1.5 min-w-0">
             {@render card(group.top)}
@@ -921,6 +998,21 @@
     onsave={applyExtractReview}
     onclose={() => { extractReview = null; }}
   />
+{/if}
+
+{#if portraitFor}
+  <CharacterPortraitModal character={portraitFor} onclose={() => { portraitFor = null; }} />
+{/if}
+
+{#if editor}
+  {#key editor}
+    <CharacterEditModal
+      character={editor.character}
+      tab={editor.tab}
+      suggestions={editor.suggestions}
+      onclose={() => { editor = null; }}
+    />
+  {/key}
 {/if}
 
 {#if review}

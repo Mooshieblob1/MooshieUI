@@ -6,6 +6,7 @@ import type {
 } from "../types/index.js";
 import {
   listGalleryImageEntries,
+  findGalleryVisualDuplicates,
   loadGalleryImage,
   loadGalleryImageDisplay,
   loadGalleryImagePng,
@@ -26,6 +27,8 @@ import {
   readImageMetadata,
   copyGalleryFileTo,
   type StorageInfo,
+  type VisualDuplicateGroup,
+  interrogateGalleryImage,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken, userScopedKey } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
@@ -34,8 +37,19 @@ import { progress } from "./progress.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { matchesGallerySearch, parseGallerySearch } from "../utils/gallerySearch.js";
+import {
+  CHARACTER_MATCH_THRESHOLD,
+  clampCharacterMatchThreshold,
+  detectInUnits,
+  imageUnits,
+  prepareCards,
+  type PromptUnit,
+} from "../utils/galleryCharacters.js";
+import { savedCharacters } from "./savedCharacters.svelte.js";
+import { loadGalleryTags, saveGalleryTags, tagsFromInterrogation } from "../utils/galleryTagCache.js";
 import { buildNsfwMatcher, DEFAULT_NSFW_KEYWORDS } from "../utils/galleryNsfw.js";
 import { cdnFetch } from "../utils/cdnFetch.js";
+import { isMingLayerImage, layerOrderValue } from "../utils/transparentBackdrop.js";
 import {
   buildArtistTagIndex,
   detectArtistsInPrompt,
@@ -43,6 +57,12 @@ import {
   type ArtistTagIndex,
 } from "../artist-gallery/detection.js";
 import type { ArtistSearchHit } from "../artist-gallery/types.js";
+
+/** Whether an image carries the prompt it was made with. */
+function hasSavedPrompt(image: OutputImage): boolean {
+  const metadata = image.metadata;
+  return !!(metadata?.positive_prompt?.trim() || metadata?.mooshie_novelai_characters);
+}
 
 /**
  * Whether a gallery entry is a video. Keyed off the stored filename rather
@@ -63,6 +83,7 @@ function parseGenerationMode(value: string): GenerationMode | undefined {
     case "txt2img":
     case "img2img":
     case "inpainting":
+    case "outpainting":
     case "image_edit":
     case "video":
       return value;
@@ -200,12 +221,15 @@ const GALLERY_RATINGS_KEY = "mooshieui.gallery.ratings.v1";
 const GALLERY_NSFW_KEY = "mooshieui.gallery.nsfw.v1";
 
 export type GallerySortBy = "date" | "name" | "size" | "rating";
-export type GalleryGroupBy = "none" | "date" | "month" | "mode" | "prompt" | "board";
+export type GalleryGroupBy = "none" | "date" | "month" | "mode" | "prompt" | "board" | "character" | "layers";
 export type GalleryViewMode = "huge" | "large" | "small" | "details";
 /** Which images the NSFW filter keeps: everything, only safe ones, or only flagged ones. */
 export type GalleryNsfwFilter = "all" | "hide" | "only";
 /** Star ratings run from 1 to this; 0 means unrated. */
 export const GALLERY_MAX_RATING = 5;
+/** Default Hamming distance threshold for near-duplicate visual matching (0..16). */
+export const DEFAULT_VISUAL_DUPLICATE_DISTANCE = 10;
+export const VISUAL_DUPLICATE_MAX_DISTANCE = 16;
 /** `sourceFilter` value for files saved by MooshieUI itself, as opposed to a linked folder. */
 export const GALLERY_SOURCE_OWN = "gallery";
 
@@ -266,6 +290,13 @@ type GalleryToast = {
  * prompt ids would outlive every image it describes.
  */
 const VARIATION_BATCH_MEMORY = 32;
+
+/**
+ * One collator for the name sort: `localeCompare` with options builds a new
+ * one on every comparison, which is most of the cost of sorting thousands of
+ * names.
+ */
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 
 class GalleryStore {
   images = $state<OutputImage[]>([]);
@@ -332,6 +363,21 @@ class GalleryStore {
   sortDir = $state<"asc" | "desc">("desc");
   groupBy = $state<GalleryGroupBy>("none");
   boardFilter = $state("all");
+  /** Show only images a saved character was found in: the character's name, or "all". */
+  characterFilter = $state("all");
+  /** Minimum character-match score (0.3..1.0) required to attribute a character to an image. */
+  characterMatchThreshold = $state(CHARACTER_MATCH_THRESHOLD);
+  /** Show only images made more than once with the same prompt, seed and settings. Not remembered. */
+  duplicatesOnly = $state(false);
+  /** Show only visually near-identical images grouped by perceptual hash distance. Not remembered. */
+  visualDuplicatesOnly = $state(false);
+  /** Maximum Hamming distance (0..16) for perceptual hash duplicate clustering. */
+  visualDuplicateThreshold = $state(DEFAULT_VISUAL_DUPLICATE_DISTANCE);
+  visualDuplicatesLoading = $state(false);
+  visualDuplicateGroups = $state<VisualDuplicateGroup[]>([]);
+  private _visualDuplicatesToken = 0;
+  /** The gallery page's filter panel is folded down to the search row. */
+  filtersCollapsed = $state(false);
   viewMode = $state<GalleryViewMode>("large");
   /** Search text (see utils/gallerySearch.ts). Not persisted. */
   searchQuery = $state("");
@@ -393,6 +439,12 @@ class GalleryStore {
    */
   private _persistPromises = new Map<string, Promise<string>>();
 
+  /** Gallery files the server reported saved, by prompt id, from any client.
+   *  Lets a page that only watched a prompt (another client queued it) use
+   *  the submitter's save instead of writing a second copy. */
+  private _savedByPrompt = new Map<string, string[]>();
+  private _savedWaiters = new Map<string, Array<() => void>>();
+
   private _imageKey(img: { prompt_id: string; filename: string }) {
     return `${img.prompt_id}::${img.filename}`;
   }
@@ -403,10 +455,19 @@ class GalleryStore {
   }
 
   constructor() {
+    // Leaving the page ends the undo window: the files are deleted now rather
+    // than coming back on the next launch.
+    if (typeof window !== "undefined") {
+      window.addEventListener("pagehide", () => void this.finishPendingDelete());
+    }
     this.loadBoardAssignments();
     this.loadCustomBoards();
     this.loadShowGenerationTime();
     this.loadImageFlags();
+    void loadGalleryTags().then((tags) => {
+      // A scan that finished before the cache was read keeps its newer entries.
+      this.detectedTags = { ...tags, ...this.detectedTags };
+    });
   }
 
   private loadImageFlags() {
@@ -458,6 +519,10 @@ class GalleryStore {
       nsfwFilter?: GalleryNsfwFilter;
       blurNsfw?: boolean;
       sourceFilter?: string;
+      filtersCollapsed?: boolean;
+      characterFilter?: string;
+      characterMatchThreshold?: number;
+      visualDuplicateThreshold?: number;
     } | undefined;
     if (!parsed || typeof parsed !== "object") return;
     if (typeof parsed.imagesPerRow === "number") this.imagesPerRow = Math.max(2, Math.min(8, Math.round(parsed.imagesPerRow)));
@@ -471,6 +536,14 @@ class GalleryStore {
     if (parsed.nsfwFilter) this.nsfwFilter = parsed.nsfwFilter;
     if (parsed.blurNsfw !== undefined) this.blurNsfw = parsed.blurNsfw;
     if (parsed.sourceFilter) this.sourceFilter = parsed.sourceFilter;
+    if (typeof parsed.characterFilter === "string" && parsed.characterFilter) this.characterFilter = parsed.characterFilter;
+    if (typeof parsed.characterMatchThreshold === "number" && Number.isFinite(parsed.characterMatchThreshold)) {
+      this.characterMatchThreshold = clampCharacterMatchThreshold(parsed.characterMatchThreshold);
+    }
+    if (typeof parsed.visualDuplicateThreshold === "number" && Number.isFinite(parsed.visualDuplicateThreshold)) {
+      this.visualDuplicateThreshold = Math.max(0, Math.min(VISUAL_DUPLICATE_MAX_DISTANCE, Math.round(parsed.visualDuplicateThreshold)));
+    }
+    if (parsed.filtersCollapsed !== undefined) this.filtersCollapsed = parsed.filtersCollapsed === true;
   }
 
   saveViewPrefs() {
@@ -486,6 +559,10 @@ class GalleryStore {
       nsfwFilter: this.nsfwFilter,
       blurNsfw: this.blurNsfw,
       sourceFilter: this.sourceFilter,
+      filtersCollapsed: this.filtersCollapsed,
+      characterFilter: this.characterFilter,
+      characterMatchThreshold: this.characterMatchThreshold,
+      visualDuplicateThreshold: this.visualDuplicateThreshold,
     });
   }
 
@@ -586,6 +663,47 @@ class GalleryStore {
     this.saveRatings();
   }
 
+  // --- Bulk edits: one assignment and one save for the whole selection. ---
+
+  setFavouriteMany(images: OutputImage[], favourite: boolean) {
+    const next = { ...this.favourites };
+    for (const image of images) {
+      const key = this._assignmentKey(image);
+      if (favourite) next[key] = true;
+      else delete next[key];
+    }
+    this.favourites = next;
+    this.saveFavourites();
+  }
+
+  /** Set a 1 to GALLERY_MAX_RATING star rating on every image; 0 clears it. */
+  setRatingMany(images: OutputImage[], rating: number) {
+    const next = { ...this.ratings };
+    for (const image of images) {
+      const key = this._assignmentKey(image);
+      if (isRating(rating)) next[key] = rating;
+      else delete next[key];
+    }
+    this.ratings = next;
+    this.saveRatings();
+  }
+
+  setNsfwMany(images: OutputImage[], nsfw: boolean) {
+    const next = { ...this.nsfwMarks };
+    for (const image of images) next[this._assignmentKey(image)] = nsfw;
+    this.nsfwMarks = next;
+    this.saveNsfwPrefs();
+  }
+
+  setBoardMany(images: OutputImage[], board: string) {
+    const value = board.trim() || "Unsorted";
+    if (value !== "Unsorted") this.addBoard(value);
+    const next = { ...this.boardAssignments };
+    for (const image of images) next[this._assignmentKey(image)] = value;
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+  }
+
   private get nsfwMatcher(): RegExp | null {
     const key = this.nsfwKeywords.join("\n");
     if (key !== this._nsfwMatcherKey) {
@@ -624,11 +742,28 @@ class GalleryStore {
   }
 
   /** Whether `image` passes the board, source, favourite, rating and NSFW filters and the search. */
-  private _passesFilters(image: OutputImage, terms: ReturnType<typeof parseGallerySearch>): boolean {
+  private _passesFilters(
+    image: OutputImage,
+    terms: ReturnType<typeof parseGallerySearch>,
+    repeated: Set<string> | null = null,
+    visualDuplicates: Map<string, number> | null = null,
+  ): boolean {
+    if (repeated) {
+      const key = this.duplicateKey(image);
+      if (!key || !repeated.has(key)) return false;
+    }
+    if (visualDuplicates) {
+      if (!image.gallery_filename || image.linked_folder || !visualDuplicates.has(image.gallery_filename)) {
+        return false;
+      }
+    }
     if (this.boardFilter !== "all" && this.getBoard(image) !== this.boardFilter) return false;
     if (this.sourceFilter !== "all") {
       const source = image.linked_folder ?? GALLERY_SOURCE_OWN;
       if (source !== this.sourceFilter) return false;
+    }
+    if (this.characterFilter !== "all" && this.knownCharacters.includes(this.characterFilter)) {
+      if (!this.charactersIn(image).includes(this.characterFilter)) return false;
     }
     if (this.favouritesOnly && !this.isFavourite(image)) return false;
     if (this.minRating > 0 && this.getRating(image) < this.minRating) return false;
@@ -645,12 +780,12 @@ class GalleryStore {
     const terms = parseGallerySearch(this.searchQuery);
     const dir = this.sortDir === "asc" ? 1 : -1;
     const byDate = (a: OutputImage, b: OutputImage) => (a.generated_at_ms ?? 0) - (b.generated_at_ms ?? 0);
+    const repeated = this.duplicatesOnly ? this._repeatedKeys() : null;
+    const visualDuplicates = this.visualDuplicatesOnly ? this.visualDuplicateMap : null;
     return this.images
-      .filter((image) => this._passesFilters(image, terms))
+      .filter((image) => this._passesFilters(image, terms, repeated, visualDuplicates))
       .sort((a, b) => {
-        if (this.sortBy === "name") {
-          return dir * a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
-        }
+        if (this.sortBy === "name") return dir * NAME_COLLATOR.compare(a.filename, b.filename);
         if (this.sortBy === "size") return dir * ((a.file_size_bytes ?? 0) - (b.file_size_bytes ?? 0));
         if (this.sortBy === "rating") {
           return dir * (this.getRating(a) - this.getRating(b) || byDate(a, b));
@@ -747,6 +882,103 @@ class GalleryStore {
     this.saveCustomBoards();
   }
 
+  /**
+   * Rename a board: every image on it moves to `to`, which may be an existing
+   * board (the two merge). Returns false when the name is empty, reserved or
+   * unchanged.
+   */
+  renameBoard(from: string, to: string): boolean {
+    const name = to.trim();
+    if (!from || from === "Unsorted" || !name || name === "Unsorted" || name === from) return false;
+    const next: Record<string, string> = {};
+    for (const [key, board] of Object.entries(this.boardAssignments)) {
+      next[key] = board === from ? name : board;
+    }
+    this.customBoards = [...new Set(this.customBoards.map((board) => (board === from ? name : board)).concat(name))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    this.saveCustomBoards();
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+    if (this.boardFilter === from) this.boardFilter = name;
+    return true;
+  }
+
+  /** Delete a board. Its images are kept and go back to Unsorted. */
+  deleteBoard(name: string) {
+    if (!name || name === "Unsorted") return;
+    const next: Record<string, string> = {};
+    for (const [key, board] of Object.entries(this.boardAssignments)) {
+      if (board !== name) next[key] = board;
+    }
+    this.customBoards = this.customBoards.filter((board) => board !== name);
+    this.saveCustomBoards();
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+    if (this.boardFilter === name) this.boardFilter = "all";
+  }
+
+  /** The boards as they stand, to hand back to `restoreBoards` for an Undo. */
+  boardSnapshot(): { assignments: Record<string, string>; boards: string[]; filter: string } {
+    return { assignments: this.boardAssignments, boards: this.customBoards, filter: this.boardFilter };
+  }
+
+  restoreBoards(snapshot: { assignments: Record<string, string>; boards: string[]; filter: string }) {
+    this.customBoards = snapshot.boards;
+    this.saveCustomBoards();
+    this.boardAssignments = snapshot.assignments;
+    this.saveBoardAssignments();
+    this.boardFilter = snapshot.filter;
+  }
+
+  /** Boards Sort by Artist made: they carry the `@artist` name. */
+  get artistBoards(): string[] {
+    return this.boards.filter((board) => board.startsWith("@"));
+  }
+
+  /** Boards named after a saved character, which is what Sort by Character makes. */
+  get characterBoards(): string[] {
+    const names = new Set(this.knownCharacters.map((name) => name.trim()));
+    return this.boards.filter((board) => names.has(board));
+  }
+
+  /** Delete several boards at once. Their images are kept and go back to Unsorted. */
+  removeBoards(names: string[]) {
+    const gone = new Set(names.filter((name) => name && name !== "Unsorted"));
+    if (gone.size === 0) return;
+    const next: Record<string, string> = {};
+    for (const [key, board] of Object.entries(this.boardAssignments)) {
+      if (!gone.has(board)) next[key] = board;
+    }
+    this.customBoards = this.customBoards.filter((board) => !gone.has(board));
+    this.saveCustomBoards();
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+    if (gone.has(this.boardFilter)) this.boardFilter = "all";
+  }
+
+  /** Show every image again: clear the search and every filter. Sort, grouping and view stay. */
+  resetFilters() {
+    this.searchQuery = "";
+    this.boardFilter = "all";
+    this.sourceFilter = "all";
+    this.favouritesOnly = false;
+    this.minRating = 0;
+    this.nsfwFilter = "all";
+    this.duplicatesOnly = false;
+    this.visualDuplicatesOnly = false;
+    this.characterFilter = "all";
+  }
+
+  /** How many loaded images sit on each board, Unsorted included. */
+  get boardCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const image of this.images) {
+      const board = this.getBoard(image);
+      counts[board] = (counts[board] ?? 0) + 1;
+    }
+    return counts;
+  }
+
   getBoard(image: OutputImage): string {
     return this.boardAssignments[this._assignmentKey(image)] || "Unsorted";
   }
@@ -760,6 +992,323 @@ class GalleryStore {
       [key]: value,
     };
     this.saveBoardAssignments();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Repeated generations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * What makes two images the same generation: prompt, negative, seed, model,
+   * sampler settings and size. Null when the image has no seed on record, so
+   * images without metadata are never called duplicates of each other.
+   */
+  duplicateKey(image: OutputImage): string | null {
+    const m = image.metadata;
+    if (!m?.seed) return null;
+    return [
+      m.positive_prompt, m.negative_prompt, m.seed, m.model, m.steps, m.cfg, m.sampler, m.scheduler, m.size,
+      m.mooshie_novelai_characters,
+    ].map((part) => part ?? "").join("\u0000");
+  }
+
+  /**
+   * Keys made by more than one run. Images of one batch share a seed and are
+   * not copies of each other, so a key only counts once a second run has it.
+   */
+  private _repeatedKeys(): Set<string> {
+    const runs = new Map<string, Set<string | OutputImage>>();
+    for (const image of this.images) {
+      const key = this.duplicateKey(image);
+      if (!key) continue;
+      let seen = runs.get(key);
+      if (!seen) runs.set(key, (seen = new Set()));
+      seen.add(image.prompt_id || image);
+    }
+    const repeated = new Set<string>();
+    for (const [key, seen] of runs) if (seen.size > 1) repeated.add(key);
+    return repeated;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Visual near-duplicates (perceptual hash)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Map each active gallery filename to its 0-based visual duplicate group
+   * index, keeping only groups with at least two files still present in
+   * `this.images`.
+   */
+  get visualDuplicateMap(): Map<string, number> {
+    const map = new Map<string, number>();
+    if (this.visualDuplicateGroups.length === 0) return map;
+    const present = new Set<string>();
+    for (const image of this.images) {
+      if (image.gallery_filename && !image.linked_folder) {
+        present.add(image.gallery_filename);
+      }
+    }
+    let groupIndex = 0;
+    for (const group of this.visualDuplicateGroups) {
+      const alive = group.filenames.filter((name) => present.has(name));
+      if (alive.length < 2) continue;
+      for (const name of alive) map.set(name, groupIndex);
+      groupIndex++;
+    }
+    return map;
+  }
+
+  setDuplicatesOnly(enabled: boolean) {
+    this.duplicatesOnly = enabled;
+    if (enabled) this.visualDuplicatesOnly = false;
+  }
+
+  setVisualDuplicatesOnly(enabled: boolean) {
+    this.visualDuplicatesOnly = enabled;
+    if (enabled) {
+      this.duplicatesOnly = false;
+      void this.loadVisualDuplicates();
+    }
+  }
+
+  setVisualDuplicateThreshold(distance: number) {
+    const clamped = Number.isFinite(distance)
+      ? Math.max(0, Math.min(VISUAL_DUPLICATE_MAX_DISTANCE, Math.round(distance)))
+      : DEFAULT_VISUAL_DUPLICATE_DISTANCE;
+    if (clamped === this.visualDuplicateThreshold) return;
+    this.visualDuplicateThreshold = clamped;
+    if (this.visualDuplicatesOnly) void this.loadVisualDuplicates();
+  }
+
+  async loadVisualDuplicates() {
+    const token = ++this._visualDuplicatesToken;
+    this.visualDuplicatesLoading = true;
+    try {
+      const groups = await findGalleryVisualDuplicates(this.visualDuplicateThreshold);
+      if (token !== this._visualDuplicatesToken) return;
+      this.visualDuplicateGroups = groups;
+    } catch (e) {
+      if (token === this._visualDuplicatesToken) {
+        console.error("Failed to find visual duplicates:", e);
+        this.showToast(locale.t("gallery.visual_duplicates_failed"), "error");
+      }
+    } finally {
+      if (token === this._visualDuplicatesToken) this.visualDuplicatesLoading = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Saved character detection
+  // ---------------------------------------------------------------------------
+
+  /** Prepared cards, rebuilt when the saved characters change. */
+  private _detectCardsFor: unknown = null;
+  private _detectCards: ReturnType<typeof prepareCards> = [];
+  /** Card id to the character's display name (a variant reports its parent's). */
+  private _detectNames = new Map<string, string>();
+  private _knownCharacters: string[] = [];
+  /**
+   * Per image: the prompt it was read from, that prompt parsed, and the names
+   * found for the current cards. The prompt is parsed once; only the matching
+   * is redone when the cards or threshold change.
+   */
+  private _characterCache = new WeakMap<
+    OutputImage,
+    {
+      prompt: string | undefined;
+      boxes: string | undefined;
+      units: PromptUnit[];
+      cards: unknown;
+      threshold: number;
+      names: string[];
+    }
+  >();
+  /** What detection reads from the saved characters, so edits to anything else keep the cache. */
+  private _detectSignature = "";
+
+  private _prepareDetection() {
+    const all = savedCharacters.characters;
+    if (this._detectCardsFor === all) return;
+    this._detectCardsFor = all;
+    // A new thumbnail, memory fact or negative prompt changes the list but not
+    // who is who: keep the prepared cards, and with them every cached result.
+    const signature = all.map((c) => `${c.id}\u0000${c.parentId ?? ""}\u0000${c.name}\u0000${c.prompt}`).join("\u0001");
+    if (signature === this._detectSignature) return;
+    this._detectSignature = signature;
+    const byId = new Map(all.map((c) => [c.id, c]));
+    this._detectNames = new Map();
+    const names = new Set<string>();
+    for (const card of all) {
+      const owner = (card.parentId && byId.get(card.parentId)) || card;
+      const name = owner.name.trim();
+      if (!name) continue;
+      this._detectNames.set(card.id, name);
+      names.add(name);
+    }
+    this._detectCards = prepareCards(all.filter((c) => this._detectNames.has(c.id)));
+    this._knownCharacters = [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
+  /** Names of the saved characters (variants folded into their parent), sorted. */
+  get knownCharacters(): string[] {
+    this._prepareDetection();
+    return this._knownCharacters;
+  }
+
+  /**
+   * Names of the saved characters found in an image, best match first. Works
+   * from the prompt saved in the image, so an image without one has none.
+   * Cards with the same name (one per model architecture) count as one character.
+   */
+  charactersIn(image: OutputImage): string[] {
+    this._prepareDetection();
+    if (this._detectCards.length === 0) return [];
+    // An image with no saved prompt is read from the tags a scan found in it.
+    const tagged = hasSavedPrompt(image) ? undefined : this.detectedTags[this._assignmentKey(image)];
+    const metadata = tagged ? { positive_prompt: tagged } : image.metadata;
+    if (!metadata) return [];
+    const prompt = metadata.positive_prompt;
+    const boxes = metadata.mooshie_novelai_characters;
+    const threshold = this.characterMatchThreshold;
+    let cached = this._characterCache.get(image);
+    if (cached && cached.prompt === prompt && cached.boxes === boxes) {
+      if (cached.cards === this._detectCards && cached.threshold === threshold) return cached.names;
+    } else {
+      cached = { prompt, boxes, units: imageUnits(metadata), cards: null, threshold, names: [] };
+      this._characterCache.set(image, cached);
+    }
+    const names: string[] = [];
+    for (const hit of detectInUnits(cached.units, this._detectCards, threshold)) {
+      const name = this._detectNames.get(hit.cardId);
+      if (name && !names.includes(name)) names.push(name);
+    }
+    cached.cards = this._detectCards;
+    cached.threshold = threshold;
+    cached.names = names;
+    return names;
+  }
+
+  /** Tagger output for images with no saved prompt, keyed like board assignments. */
+  detectedTags = $state<Record<string, string>>({});
+  /** A running tagger scan: how far it is. Null when none runs. */
+  tagScan = $state<{ done: number; total: number } | null>(null);
+  private _tagScanStop = false;
+
+  /**
+   * Whether a scan has anything to do for an image: a still in MooshieUI's own
+   * gallery folder with no saved prompt, not scanned before.
+   */
+  needsTagScan(image: OutputImage): boolean {
+    if (!image.gallery_filename || image.linked_folder || isVideoImage(image)) return false;
+    if (hasSavedPrompt(image)) return false;
+    return this.detectedTags[image.gallery_filename] === undefined;
+  }
+
+  /**
+   * Run the tagger over the images in `images` that need it, one at a time,
+   * and keep what it finds. Stops early on `stopTagScan()` or when the tagger
+   * keeps failing. Returns how many images were tagged and the last error.
+   */
+  async scanTags(images: OutputImage[]): Promise<{ scanned: number; error: string | null }> {
+    if (this.tagScan) return { scanned: 0, error: null };
+    const pending = images.filter((image) => this.needsTagScan(image));
+    if (pending.length === 0) return { scanned: 0, error: null };
+    this._tagScanStop = false;
+    this.tagScan = { done: 0, total: pending.length };
+    let scanned = 0;
+    let failures = 0;
+    let error: string | null = null;
+    let unsaved: Record<string, string> = {};
+    const flush = async () => {
+      const batch = unsaved;
+      unsaved = {};
+      if (Object.keys(batch).length > 0) await saveGalleryTags(batch);
+    };
+    try {
+      for (const image of pending) {
+        if (this._tagScanStop) break;
+        const key = image.gallery_filename!;
+        try {
+          const tags = tagsFromInterrogation(await interrogateGalleryImage(key));
+          this.detectedTags = { ...this.detectedTags, [key]: tags };
+          unsaved[key] = tags;
+          scanned++;
+          failures = 0;
+          if (scanned % 20 === 0) await flush();
+        } catch (e) {
+          error = e instanceof Error ? e.message : String(e);
+          // One unreadable file is skipped; a tagger that cannot run at all ends the scan.
+          if (++failures >= 3) break;
+        }
+        this.tagScan = { done: this.tagScan!.done + 1, total: pending.length };
+      }
+    } finally {
+      await flush();
+      this.tagScan = null;
+    }
+    return { scanned, error: failures >= 3 || scanned === 0 ? error : null };
+  }
+
+  stopTagScan() {
+    this._tagScanStop = true;
+  }
+
+  /**
+   * True once a background pass has matched every loaded image against the
+   * saved characters, so counting them is a cache read rather than a freeze.
+   */
+  charactersWarm = $state(false);
+  private _warmRun = 0;
+
+  /** Match the loaded images in small slices between frames. A newer call replaces an older one. */
+  async warmCharacters(): Promise<void> {
+    const run = ++this._warmRun;
+    this.charactersWarm = false;
+    const images = [...this.images];
+    for (let i = 0; i < images.length; i += 200) {
+      if (run !== this._warmRun) return;
+      for (const image of images.slice(i, i + 200)) this.charactersIn(image);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (run === this._warmRun) this.charactersWarm = true;
+  }
+
+  /** How many loaded images each saved character was found in. */
+  get characterCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    if (this.knownCharacters.length === 0) return counts;
+    for (const image of this.images) {
+      for (const name of this.charactersIn(image)) counts[name] = (counts[name] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /**
+   * File `images` into a board named after the character found in each. Only
+   * Unsorted images move, and only when exactly one character was found, so a
+   * board the user chose and a shared picture are both left alone.
+   */
+  sortByCharacter(images: OutputImage[]): { sorted: number; boards: string[] } {
+    const next = { ...this.boardAssignments };
+    const boards = new Set<string>();
+    let sorted = 0;
+    for (const image of images) {
+      const key = this._assignmentKey(image);
+      if (next[key] && next[key] !== "Unsorted") continue;
+      const names = this.charactersIn(image);
+      if (names.length !== 1) continue;
+      const board = names[0]!.trim();
+      if (!board || board === "Unsorted") continue;
+      next[key] = board;
+      boards.add(board);
+      sorted++;
+    }
+    if (sorted > 0) {
+      for (const board of boards) this.addBoard(board);
+      this.boardAssignments = next;
+      this.saveBoardAssignments();
+    }
+    return { sorted, boards: [...boards] };
   }
 
   // ---------------------------------------------------------------------------
@@ -918,13 +1467,24 @@ class GalleryStore {
    * variation is which.
    */
   batchFor(image: OutputImage | null): OutputImage[] {
-    if (!image) return [];
-    return this.sessionImages.filter((i) => i.prompt_id === image.prompt_id);
+    if (!image || !image.prompt_id) return [];
+    const inSession = this.sessionImages.filter((i) => i.prompt_id === image.prompt_id);
+    const list =
+      inSession.length > 0
+        ? inSession
+        : this.images.filter((i) => i.prompt_id === image.prompt_id);
+    if (isMingLayerImage(image) && list.length > 1) {
+      return [...list].sort((a, b) => layerOrderValue(a) - layerOrderValue(b));
+    }
+    return list;
   }
 
-  /** Whether `image` came from a variations run that returned more than one image. */
+  /** Whether `image` came from a variations run or a multi-layer Ming-Image Layer run. */
   batchGridAvailable(image: OutputImage | null): boolean {
-    if (!image || !this.variationBatchIds.includes(image.prompt_id)) return false;
+    if (!image || !image.prompt_id) return false;
+    if (!this.variationBatchIds.includes(image.prompt_id) && !isMingLayerImage(image)) {
+      return false;
+    }
     return this.batchFor(image).length > 1;
   }
 
@@ -1349,6 +1909,7 @@ class GalleryStore {
     blobs?: Blob[],
     metadataMode?: string,
     tempFilenames?: (string | undefined)[],
+    perImageMetadata?: Array<Record<string, string> | undefined>,
   ) {
     if (generation.manualSaveMode) return;
 
@@ -1364,6 +1925,7 @@ class GalleryStore {
 
     for (let i = 0; i < images.length; i++) {
       const img = images[i]!;
+      const imgMetadata = perImageMetadata?.[i] ?? metadata;
       try {
         let galleryFilename: string;
         const blob = blobs?.[i];
@@ -1377,8 +1939,9 @@ class GalleryStore {
               img.filename,
               img.prompt_id,
               img.generation_mode,
-              metadata,
+              imgMetadata,
               metadataMode,
+              generation.invisibleWatermark,
             );
           } catch (tempError) {
             if (!blob) throw tempError;
@@ -1389,8 +1952,9 @@ class GalleryStore {
               img.filename,
               img.prompt_id,
               img.generation_mode,
-              metadata,
+              imgMetadata,
               metadataMode,
+              generation.invisibleWatermark,
             );
           }
         } else if (blob) {
@@ -1401,8 +1965,9 @@ class GalleryStore {
             img.filename,
             img.prompt_id,
             img.generation_mode,
-            metadata,
+            imgMetadata,
             metadataMode,
+            generation.invisibleWatermark,
           );
           console.log("[persistImages] saved → galleryFilename:", galleryFilename);
         } else {
@@ -1411,8 +1976,9 @@ class GalleryStore {
             img.subfolder,
             img.prompt_id,
             img.generation_mode,
-            metadata,
+            imgMetadata,
             metadataMode,
+            generation.invisibleWatermark,
           );
         }
         const sessionKey = this._assignmentKey(img);
@@ -1438,6 +2004,65 @@ class GalleryStore {
     if (isBrowserMode) {
       this.refreshStorageInfo();
     }
+  }
+
+  /** Record a server `image_saved` broadcast for a prompt. */
+  noteSaved(promptId: string, galleryFilename: string) {
+    if (!promptId || !galleryFilename) return;
+    const files = this._savedByPrompt.get(promptId) ?? [];
+    if (!files.includes(galleryFilename)) {
+      this._savedByPrompt.set(promptId, [...files, galleryFilename]);
+    }
+    // Bounded: entries for prompts this page never finishes are dropped oldest first.
+    while (this._savedByPrompt.size > 200) {
+      const oldest = this._savedByPrompt.keys().next().value;
+      if (oldest === undefined) break;
+      this._savedByPrompt.delete(oldest);
+    }
+    const waiters = this._savedWaiters.get(promptId);
+    if (waiters) {
+      this._savedWaiters.delete(promptId);
+      for (const wake of waiters) wake();
+    }
+  }
+
+  /**
+   * Gallery files another client already saved for this prompt, waiting up
+   * to `timeoutMs` for its save to land. Returns null when nobody saved it,
+   * so the caller should save it itself.
+   */
+  async waitForSavedElsewhere(promptId: string, timeoutMs: number): Promise<string[] | null> {
+    if (!this._savedByPrompt.has(promptId)) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, timeoutMs);
+        function done() {
+          clearTimeout(timer);
+          resolve();
+        }
+        this._savedWaiters.set(promptId, [...(this._savedWaiters.get(promptId) ?? []), done]);
+      });
+      this._savedWaiters.delete(promptId);
+    }
+    const files = this._savedByPrompt.get(promptId);
+    this._savedByPrompt.delete(promptId);
+    return files && files.length > 0 ? files : null;
+  }
+
+  /** Point session images at gallery files another client saved for them. */
+  async adoptSavedImages(images: OutputImage[], galleryFilenames: string[]) {
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i]!;
+      const galleryFilename = galleryFilenames[i];
+      if (!galleryFilename) continue;
+      const sessionKey = this._assignmentKey(img);
+      img.gallery_filename = galleryFilename;
+      this._moveAssignments(sessionKey, galleryFilename);
+      img.thumbnailUrl = await thumbnailUrl(galleryFilename);
+      img.fullImageUrl = await fullImageUrl(galleryFilename);
+      img.tempFilename = undefined;
+      img.displayTempFilename = undefined;
+    }
+    this.sessionImages = [...this.sessionImages];
   }
 
   /** Serialize directory reads so an older listing cannot overwrite a newer one. */
@@ -1543,6 +2168,7 @@ class GalleryStore {
         const name = diskImage.gallery_filename!;
         const image = existing.get(name);
         if (!image && beforeNames.has(name)) continue; // Deleted during the scan.
+        if (!image && this._pendingDeleteNames.has(name)) continue; // Waiting out its undo window.
         if (image) {
           const changed = image.file_size_bytes !== diskImage.file_size_bytes
             || image.generated_at_ms !== diskImage.generated_at_ms;
@@ -1591,6 +2217,7 @@ class GalleryStore {
       }
       if (refreshMetadata) this._metadataMisses.clear();
       if (isBrowserMode) void this.refreshStorageInfo();
+      if (this.visualDuplicatesOnly) void this.loadVisualDuplicates();
       const hydration = this.hydrateMetadataInBackground();
       if (refreshMetadata) await hydration;
       return true;
@@ -1898,18 +2525,64 @@ class GalleryStore {
     }
   }
 
+  /**
+   * Write one image (or copy one video) into `dir`, metadata embedded. `used`
+   * holds the lower-cased names already written in this batch; a clash gets a
+   * numbered suffix instead of overwriting the earlier file.
+   */
+  private async _writeToDir(image: OutputImage, dir: string, used?: Set<string>): Promise<void> {
+    const unique = (name: string): string => {
+      if (!used) return name;
+      const dot = name.lastIndexOf(".");
+      const stem = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : "";
+      let candidate = name;
+      for (let n = 2; used.has(candidate.toLowerCase()); n++) candidate = `${stem}_${n}${ext}`;
+      used.add(candidate.toLowerCase());
+      return candidate;
+    };
+    if (isVideoImage(image)) {
+      const videoFilename = await this.resolveGalleryFilename(image);
+      if (!videoFilename) throw new Error("video is not saved to the gallery yet");
+      await copyGalleryFileTo(videoFilename, `${dir}/${unique(image.filename || videoFilename)}`);
+      return;
+    }
+    const webpBytes = await this._resolveWebpBytes(image);
+    let bytes = webpBytes ?? (await this.resolveImagePngBytes(image));
+    const rawName = image.filename || `image_${Date.now()}.png`;
+    const filename =
+      webpBytes !== null ? webpNormalizedFilename(rawName) : pngNormalizedFilename(rawName);
+    if (image.metadata) {
+      bytes = await embedImageMetadataBytes(bytes, image.metadata, generation.metadataMode);
+    }
+    await saveImageFile(bytes, `${dir}/${unique(filename)}`);
+  }
+
+  /** Save copies of several images into one folder. Returns how many were written. */
+  async exportImagesToDir(
+    images: OutputImage[],
+    dir: string,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const used = new Set<string>();
+    let saved = 0;
+    let done = 0;
+    for (const image of images) {
+      try {
+        await this._writeToDir(image, dir, used);
+        saved++;
+      } catch (e) {
+        console.error("Failed to export image:", e);
+      }
+      onProgress?.(++done, images.length);
+    }
+    return saved;
+  }
+
   /** Save an image directly to a specific directory (manual save mode). Embeds metadata. */
   async saveImageToDir(image: OutputImage, dir: string) {
     try {
-      const webpBytes = await this._resolveWebpBytes(image);
-      let bytes = webpBytes ?? (await this.resolveImagePngBytes(image));
-      const rawName = image.filename || `image_${Date.now()}.png`;
-      const filename =
-        webpBytes !== null ? webpNormalizedFilename(rawName) : pngNormalizedFilename(rawName);
-      if (image.metadata) {
-        bytes = await embedImageMetadataBytes(bytes, image.metadata, generation.metadataMode);
-      }
-      await saveImageFile(bytes, `${dir}/${filename}`);
+      await this._writeToDir(image, dir);
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
       console.error("Failed to save image to directory:", e);
@@ -2308,10 +2981,25 @@ class GalleryStore {
    * "Delete all" clears the session's videos without touching its images.
    */
   async deleteAllSessionImages(only?: (image: OutputImage) => boolean) {
-    const targets = new Set(only ? this.sessionImages.filter(only) : this.sessionImages);
-    if (targets.size === 0) return;
+    await this.deleteImages(only ? this.sessionImages.filter(only) : this.sessionImages);
+  }
 
+  /**
+   * Delete several images at once: each file goes to the recycle bin, then the
+   * gallery lists and the stored assignments are updated once for the whole
+   * batch instead of once per image. An image whose file could not be deleted
+   * stays in the gallery. Returns how many were deleted.
+   */
+  async deleteImages(
+    images: OutputImage[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const targets = [...new Set(images)];
+    if (targets.length === 0) return 0;
+
+    const removed = new Set<OutputImage>();
     const deleted: string[] = [];
+    let done = 0;
     for (const image of targets) {
       try {
         // Wait out an in-flight save, as deleteImage() does.
@@ -2323,25 +3011,144 @@ class GalleryStore {
         if (image.url) {
           URL.revokeObjectURL(image.url);
         }
+        removed.add(image);
       } catch (e) {
-        console.error("Failed to delete session image:", e);
+        console.error("Failed to delete image:", e);
       }
+      onProgress?.(++done, targets.length);
     }
 
+    const deletedNames = new Set(deleted);
+    const isTarget = (i: OutputImage) =>
+      removed.has(i) || (!!i.gallery_filename && deletedNames.has(i.gallery_filename));
     this._forgetAssignments(deleted);
-    this.images = this.images.filter((i) => !targets.has(i));
-    this.sessionImages = this.sessionImages.filter((i) => !targets.has(i));
-    if (this.selectedImage && targets.has(this.selectedImage)) {
+    this.images = this.images.filter((i) => !isTarget(i));
+    this.sessionImages = this.sessionImages.filter((i) => !isTarget(i));
+    if (this.selectedImage && isTarget(this.selectedImage)) {
       this.closeLightbox();
     }
-    if (this.lastSelectedImage && targets.has(this.lastSelectedImage)) {
+    if (this.lastSelectedImage && isTarget(this.lastSelectedImage)) {
       this.lastSelectedImage = null;
+    }
+    if (this.comparePin && isTarget(this.comparePin)) this.comparePin = null;
+    return removed.size;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delete with undo
+  // ---------------------------------------------------------------------------
+
+  /** How long a delete can be undone before the files go to the recycle bin. */
+  static readonly UNDO_DELETE_MS = 7000;
+
+  /**
+   * Images taken off the gallery but not yet deleted from disk. Their files
+   * and their board, favourite and rating marks are untouched until the undo
+   * window closes, so Undo only has to put them back in the list.
+   */
+  private _pendingDelete: {
+    images: OutputImage[];
+    session: Set<OutputImage>;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  /** Gallery files held by a pending delete, so a refresh does not list them again. */
+  private _pendingDeleteNames = new Set<string>();
+
+  /**
+   * Remove images from the gallery now and delete their files once the undo
+   * window closes. A toast offers Undo until then. A second delete, a refresh
+   * of the page or leaving it finishes the first one straight away.
+   */
+  deleteImagesWithUndo(images: OutputImage[]) {
+    const targets = new Set(images);
+    if (targets.size === 0) return;
+    void this.finishPendingDelete();
+
+    const session = new Set(this.sessionImages.filter((i) => targets.has(i)));
+    this.images = this.images.filter((i) => !targets.has(i));
+    this.sessionImages = this.sessionImages.filter((i) => !targets.has(i));
+    if (this.selectedImage && targets.has(this.selectedImage)) this.closeLightbox();
+    if (this.lastSelectedImage && targets.has(this.lastSelectedImage)) this.lastSelectedImage = null;
+    if (this.comparePin && targets.has(this.comparePin)) this.comparePin = null;
+
+    const pending = {
+      images: [...targets],
+      session,
+      timer: setTimeout(() => void this.finishPendingDelete(), GalleryStore.UNDO_DELETE_MS),
+    };
+    this._pendingDelete = pending;
+    for (const image of pending.images) {
+      if (image.gallery_filename) this._pendingDeleteNames.add(image.gallery_filename);
+    }
+    this.showToast(locale.t("gallery.bulk.toast_deleted", { count: String(targets.size) }), "success", {
+      durationMs: GalleryStore.UNDO_DELETE_MS,
+      actionLabel: locale.t("gallery.undo"),
+      onAction: () => this.undoPendingDelete(),
+    });
+  }
+
+  /** Put the images of the pending delete back. Nothing was deleted yet. */
+  undoPendingDelete() {
+    const pending = this._pendingDelete;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this._pendingDelete = null;
+    this._releasePendingNames(pending.images);
+    this._restoreImages(pending.images, pending.session);
+  }
+
+  private _releasePendingNames(images: OutputImage[]) {
+    for (const image of images) {
+      if (image.gallery_filename) this._pendingDeleteNames.delete(image.gallery_filename);
+    }
+  }
+
+  private _restoreImages(images: OutputImage[], session: Set<OutputImage>) {
+    const present = new Set(this.images);
+    const back = images.filter((i) => !present.has(i));
+    this.images = [...back, ...this.images];
+    const inSession = new Set(this.sessionImages);
+    const sessionBack = back.filter((i) => session.has(i) && !inSession.has(i));
+    if (sessionBack.length > 0) {
+      this.sessionImages = [...sessionBack, ...this.sessionImages].sort(
+        (a, b) => (b.generated_at_ms ?? 0) - (a.generated_at_ms ?? 0),
+      );
+    }
+  }
+
+  /** Delete the files of the pending delete now. An image that fails comes back. */
+  async finishPendingDelete(): Promise<void> {
+    const pending = this._pendingDelete;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this._pendingDelete = null;
+    const deleted: string[] = [];
+    const failed: OutputImage[] = [];
+    for (const image of pending.images) {
+      try {
+        const galleryFilename = await this.resolveGalleryFilename(image);
+        if (galleryFilename) {
+          await deleteGalleryImage(galleryFilename);
+          deleted.push(galleryFilename);
+        }
+        if (image.url) URL.revokeObjectURL(image.url);
+      } catch (e) {
+        console.error("Failed to delete image:", e);
+        failed.push(image);
+      }
+    }
+    this._releasePendingNames(pending.images);
+    this._forgetAssignments(deleted);
+    if (failed.length > 0) {
+      this._restoreImages(failed, pending.session);
+      this.showToast(locale.t("gallery.bulk.toast_delete_failed", { count: String(failed.length) }), "error");
     }
   }
 
   private inferModeFromFilename(image: OutputImage): GenerationMode {
     const n = `${image.filename} ${image.gallery_filename ?? ""}`.toLowerCase();
     if (n.includes("image_edit")) return "image_edit";
+    if (n.includes("outpaint")) return "outpainting";
     if (n.includes("inpaint") || n.includes("mask")) return "inpainting";
     if (n.includes("img2img") || n.includes("upscale")) return "img2img";
     return "txt2img";

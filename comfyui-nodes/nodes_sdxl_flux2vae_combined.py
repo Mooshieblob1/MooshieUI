@@ -34,7 +34,12 @@ def _wrap_latent_preview():
         try:
             # The previewer keeps only its RGB factors ([3, channels]), not the latent format.
             latent_channels = self.latent_rgb_factors.shape[-1]
-            if latent_channels == 32 and x0.shape[1] == 128:
+            # A previewer with its own reshape already unpacks 128ch to 32ch (stock Flux 2
+            # since ComfyUI added it, and SDXL_Flux2's _maybe_unpack_preview). Unpacking here
+            # too hands it a 32ch latent, which crashes every Flux 2 latent model
+            # (Klein, MOSS-Image, ...) with "shape '[1, 32, 2, 2, H, W]' is invalid".
+            own_reshape = getattr(self, "latent_rgb_factors_reshape", None) is not None
+            if not own_reshape and latent_channels == 32 and x0.shape[1] == 128:
                 x0 = F.pixel_shuffle(x0, 2)  # (N,128,H,W)->(N,32,H*2,W*2)
         except Exception as e:
             log.warning("[sdxl_flux2vae_combined] decode_latent_to_preview patch failed: %s", e)

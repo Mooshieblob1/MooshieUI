@@ -17,8 +17,11 @@
 
   interface Props {
     onOpenSettings?: () => void;
+    /** Phone layout: no bell of its own; the list opens as a bottom sheet
+     *  whenever `notifications.panelOpen` is set (from the "More" sheet). */
+    sheet?: boolean;
   }
-  let { onOpenSettings }: Props = $props();
+  let { onOpenSettings, sheet = false }: Props = $props();
 
   // Full-view modal for a clicked notification (long bodies get clamped in the list).
   let openedNotification = $state<Notification | null>(null);
@@ -87,6 +90,75 @@
 
 </script>
 
+{#snippet panelBody()}
+  <div class="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+    <h3 class="text-sm font-semibold text-neutral-100">{locale.t("notifications.title")}</h3>
+    <div class="flex items-center gap-3">
+      {#if notifications.hasUnread}
+        <button
+          class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+          onclick={() => notifications.markAllRead()}
+        >
+          {locale.t("notifications.mark_all_read")}
+        </button>
+      {/if}
+      {#if notifications.notifications.length > 0}
+        <button
+          class="text-[11px] text-neutral-400 hover:text-neutral-200 transition-colors"
+          onclick={() => notifications.clearAll()}
+        >
+          {locale.t("notifications.clear_all")}
+        </button>
+      {/if}
+    </div>
+  </div>
+  <div class="divide-y divide-neutral-800">
+    {#if notifications.notifications.length === 0}
+      <div class="px-4 py-6 text-center text-xs text-neutral-500">
+        {locale.t("notifications.empty")}
+      </div>
+    {:else}
+      {#each notifications.notifications as notif (notif.id)}
+        {@const body = notificationBody(notif)}
+        <div
+          class="flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-neutral-800/50 {notif.read ? 'opacity-60' : ''}"
+        >
+          <button
+            type="button"
+            class="flex min-w-0 flex-1 items-start gap-2 text-left focus:outline-none"
+            onclick={() => openNotification(notif)}
+          >
+            <span class="text-xs mt-0.5 {kindColor(notif.kind)}">{kindIcon(notif.kind)}</span>
+            <div class="min-w-0 flex-1">
+              <p class="text-xs font-medium text-neutral-200 truncate">{notificationTitle(notif)}</p>
+              {#if body}
+                <p class="text-[11px] text-neutral-400 mt-0.5 line-clamp-2">{body}</p>
+                {#if body.length > READ_MORE_THRESHOLD}
+                  <p class="text-[10px] text-indigo-400 mt-0.5">{locale.t("notifications.read_more")}</p>
+                {/if}
+              {/if}
+              <p class="text-[10px] text-neutral-600 mt-1">{formatNotificationTime(notif.created_at)}</p>
+            </div>
+            {#if !notif.read}
+              <span class="w-2 h-2 rounded-full bg-indigo-400 shrink-0 mt-1.5"></span>
+            {/if}
+          </button>
+          <button
+            type="button"
+            class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            onclick={() => notifications.dismiss(notif.id)}
+            aria-label={locale.t("common.dismiss_notification")}
+            title={locale.t("common.dismiss_notification")}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      {/each}
+    {/if}
+  </div>
+{/snippet}
+
+{#if !sheet}
 <div class="relative mx-auto">
   <button
     class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 relative"
@@ -127,129 +199,90 @@
     <div
       class="absolute bottom-full left-0 mb-2 w-80 max-h-96 overflow-y-auto rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl z-50"
     >
-      <div class="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
-        <h3 class="text-sm font-semibold text-neutral-100">{locale.t("notifications.title")}</h3>
-        <div class="flex items-center gap-3">
-          {#if notifications.hasUnread}
-            <button
-              class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
-              onclick={() => notifications.markAllRead()}
-            >
-              {locale.t("notifications.mark_all_read")}
-            </button>
-          {/if}
-          {#if notifications.notifications.length > 0}
-            <button
-              class="text-[11px] text-neutral-400 hover:text-neutral-200 transition-colors"
-              onclick={() => notifications.clearAll()}
-            >
-              {locale.t("notifications.clear_all")}
-            </button>
-          {/if}
-        </div>
-      </div>
-      <div class="divide-y divide-neutral-800">
-        {#if notifications.notifications.length === 0}
-          <div class="px-4 py-6 text-center text-xs text-neutral-500">
-            {locale.t("notifications.empty")}
-          </div>
-        {:else}
-          {#each notifications.notifications as notif (notif.id)}
-            {@const body = notificationBody(notif)}
-            <div
-              class="flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-neutral-800/50 {notif.read ? 'opacity-60' : ''}"
-            >
-              <button
-                type="button"
-                class="flex min-w-0 flex-1 items-start gap-2 text-left focus:outline-none"
-                onclick={() => openNotification(notif)}
-              >
-                <span class="text-xs mt-0.5 {kindColor(notif.kind)}">{kindIcon(notif.kind)}</span>
-                <div class="min-w-0 flex-1">
-                  <p class="text-xs font-medium text-neutral-200 truncate">{notificationTitle(notif)}</p>
-                  {#if body}
-                    <p class="text-[11px] text-neutral-400 mt-0.5 line-clamp-2">{body}</p>
-                    {#if body.length > READ_MORE_THRESHOLD}
-                      <p class="text-[10px] text-indigo-400 mt-0.5">{locale.t("notifications.read_more")}</p>
-                    {/if}
-                  {/if}
-                  <p class="text-[10px] text-neutral-600 mt-1">{formatNotificationTime(notif.created_at)}</p>
-                </div>
-                {#if !notif.read}
-                  <span class="w-2 h-2 rounded-full bg-indigo-400 shrink-0 mt-1.5"></span>
-                {/if}
-              </button>
-              <button
-                type="button"
-                class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                onclick={() => notifications.dismiss(notif.id)}
-                aria-label={locale.t("common.dismiss_notification")}
-                title={locale.t("common.dismiss_notification")}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </button>
-            </div>
-          {/each}
-        {/if}
-      </div>
-    </div>
-  {/if}
-
-  {#if openedNotification}
-    {@const notif = openedNotification}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      use:portal
-      class="fixed inset-0 z-60 flex items-center justify-center bg-black/70"
-      onmousedown={(e) => { if (e.target === e.currentTarget) openedNotification = null; }}
-      onkeydown={(e) => { if (e.key === "Escape") openedNotification = null; }}
-    >
-      <div class="relative w-full max-w-md max-h-[80vh] overflow-y-auto rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl m-4 p-5 space-y-3">
-        <button
-          class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-neutral-300 hover:text-white hover:bg-black/70 transition-colors text-sm"
-          onclick={() => (openedNotification = null)}
-          aria-label={locale.t("common.close")}
-        >
-          ✕
-        </button>
-        <div class="flex items-start gap-2 pr-8">
-          <span class="text-sm mt-0.5 {kindColor(notif.kind)}">{kindIcon(notif.kind)}</span>
-          <h3 class="text-sm font-semibold text-neutral-100 wrap-break-word">{notificationTitle(notif)}</h3>
-        </div>
-        {#if notificationBody(notif)}
-          <p class="text-xs leading-relaxed text-neutral-300 whitespace-pre-wrap wrap-break-word">{notificationBody(notif)}</p>
-        {/if}
-        <p class="text-[10px] text-neutral-600">{formatNotificationTime(notif.created_at)}</p>
-        <div class="flex items-center justify-end gap-2 pt-1">
-          {#if (isPasswordMigration(notif) || isComfyuiOutdated(notif)) && onOpenSettings}
-            <button
-              class="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
-              onclick={() => {
-                openedNotification = null;
-                notifications.panelOpen = false;
-                onOpenSettings?.();
-              }}
-            >
-              {locale.t("notifications.open_settings")}
-            </button>
-          {/if}
-          {#if isKrea2RefusalLoraMissing(notif) && !models.remote && missingKrea2UncensoredFiles().length}
-            <button
-              class="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              disabled={krea2Installing}
-              onclick={installKrea2RefusalLora}
-            >
-              {locale.t(krea2Installing ? "notifications.krea2_refusal_lora.downloading" : "notifications.krea2_refusal_lora.download")}
-            </button>
-          {/if}
-          <button
-            class="px-3 py-1.5 text-xs rounded-lg border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 transition-colors"
-            onclick={() => (openedNotification = null)}
-          >
-            {locale.t("common.close")}
-          </button>
-        </div>
-      </div>
+      {@render panelBody()}
     </div>
   {/if}
 </div>
+{/if}
+
+{#if sheet && notifications.panelOpen}
+  <!-- Phone layout: the list opens as a bottom sheet over the app. -->
+  <div use:portal class="fixed inset-0 z-[150] flex flex-col justify-end" role="presentation">
+    <button
+      type="button"
+      class="absolute inset-0 h-full w-full cursor-default bg-black/60"
+      tabindex="-1"
+      aria-label={locale.t("common.close")}
+      onclick={() => (notifications.panelOpen = false)}
+    ></button>
+    <div
+      class="relative flex max-h-[80dvh] flex-col overflow-hidden rounded-t-2xl border-t border-neutral-700 bg-neutral-900 pb-[env(safe-area-inset-bottom)] shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-label={locale.t("notifications.title")}
+    >
+      <div class="bottom-sheet-handle shrink-0"></div>
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {@render panelBody()}
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if openedNotification}
+  {@const notif = openedNotification}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    use:portal
+    class="fixed inset-0 z-60 flex items-center justify-center bg-black/70"
+    onmousedown={(e) => { if (e.target === e.currentTarget) openedNotification = null; }}
+    onkeydown={(e) => { if (e.key === "Escape") openedNotification = null; }}
+  >
+    <div class="relative w-full max-w-md max-h-[80vh] overflow-y-auto rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl m-4 p-5 space-y-3">
+      <button
+        class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-neutral-300 hover:text-white hover:bg-black/70 transition-colors text-sm"
+        onclick={() => (openedNotification = null)}
+        aria-label={locale.t("common.close")}
+      >
+        ✕
+      </button>
+      <div class="flex items-start gap-2 pr-8">
+        <span class="text-sm mt-0.5 {kindColor(notif.kind)}">{kindIcon(notif.kind)}</span>
+        <h3 class="text-sm font-semibold text-neutral-100 wrap-break-word">{notificationTitle(notif)}</h3>
+      </div>
+      {#if notificationBody(notif)}
+        <p class="text-xs leading-relaxed text-neutral-300 whitespace-pre-wrap wrap-break-word">{notificationBody(notif)}</p>
+      {/if}
+      <p class="text-[10px] text-neutral-600">{formatNotificationTime(notif.created_at)}</p>
+      <div class="flex items-center justify-end gap-2 pt-1">
+        {#if (isPasswordMigration(notif) || isComfyuiOutdated(notif)) && onOpenSettings}
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+            onclick={() => {
+              openedNotification = null;
+              notifications.panelOpen = false;
+              onOpenSettings?.();
+            }}
+          >
+            {locale.t("notifications.open_settings")}
+          </button>
+        {/if}
+        {#if isKrea2RefusalLoraMissing(notif) && !models.remote && missingKrea2UncensoredFiles().length}
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            disabled={krea2Installing}
+            onclick={installKrea2RefusalLora}
+          >
+            {locale.t(krea2Installing ? "notifications.krea2_refusal_lora.downloading" : "notifications.krea2_refusal_lora.download")}
+          </button>
+        {/if}
+        <button
+          class="px-3 py-1.5 text-xs rounded-lg border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 transition-colors"
+          onclick={() => (openedNotification = null)}
+        >
+          {locale.t("common.close")}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

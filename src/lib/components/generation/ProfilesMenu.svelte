@@ -16,17 +16,28 @@
   let inputRef = $state<HTMLInputElement | null>(null);
   let position = $state({ top: 0, right: 0 });
 
+  function updatePosition() {
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    position = {
+      top: rect.bottom + 6,
+      right: Math.max(8, window.innerWidth - rect.right),
+    };
+  }
+
   function show() {
-    if (anchor) {
-      const rect = anchor.getBoundingClientRect();
-      position = { top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) };
-    }
+    updatePosition();
     nameInput = generationTabs.activeTab?.name ?? "";
     open = true;
-    queueMicrotask(() => {
-      inputRef?.focus();
-      inputRef?.select();
-    });
+    // Skip auto-focus on touch devices so opening the profiles list does not
+    // immediately summon the on-screen keyboard over the saved profiles.
+    const isCoarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+    if (!isCoarsePointer) {
+      queueMicrotask(() => {
+        inputRef?.focus();
+        inputRef?.select();
+      });
+    }
   }
 
   $effect(() => {
@@ -34,7 +45,9 @@
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") open = false;
     };
-    const onResize = () => (open = false);
+    // Reposition instead of closing: opening the mobile on-screen keyboard
+    // resizes the viewport and fires window resize.
+    const onResize = () => updatePosition();
     document.addEventListener("keydown", onKey);
     window.addEventListener("resize", onResize);
     return () => {
@@ -74,9 +87,9 @@
 <button
   bind:this={anchor}
   type="button"
-  class="flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors {open
-    ? 'border-indigo-500/60 bg-neutral-800 text-neutral-100'
-    : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-700 hover:text-neutral-100'}"
+  class="flex h-9 shrink-0 items-center gap-1.5 rounded-[10px] border px-3 text-[13px] transition-colors {open
+    ? 'border-neutral-600 bg-neutral-800/70 text-neutral-50'
+    : 'border-neutral-800 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200'}"
   title={locale.t("generation.profiles.hint")}
   aria-haspopup="dialog"
   aria-expanded={open}
@@ -101,12 +114,11 @@
       onclick={() => (open = false)}
     ></button>
     <div
-      class="absolute flex max-h-[70vh] w-80 flex-col rounded-xl border border-neutral-700 bg-neutral-900 p-3 shadow-2xl shadow-black/40"
+      class="absolute flex max-h-[70vh] w-80 max-w-[calc(100vw-1rem)] flex-col rounded-xl border border-neutral-700 bg-neutral-900 p-3 shadow-2xl shadow-black/40"
       style="top: {position.top}px; right: {position.right}px"
       role="dialog"
       aria-label={locale.t("generation.profiles.button")}
     >
-      <p class="mb-2 text-[11px] leading-snug text-neutral-400">{locale.t("generation.profiles.hint")}</p>
       <div class="flex gap-1">
         <input
           bind:this={inputRef}
@@ -115,6 +127,7 @@
             if (e.key === "Enter") save();
           }}
           placeholder={locale.t("generation.profiles.name_placeholder")}
+          title={locale.t("generation.profiles.hint")}
           class="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-200 focus:border-neutral-500 focus:outline-none"
         />
         <button

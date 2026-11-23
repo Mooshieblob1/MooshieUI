@@ -1,10 +1,12 @@
-import { getConfig, getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
+import { detectH3VideoLoras, getConfig, getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
 import { localOnlyModels } from "../utils/modelAvailability.js";
 
 class ModelsStore {
   checkpoints = $state<string[]>([]);
   vaes = $state<string[]>([]);
   loras = $state<string[]>([]);
+  /** The entries of `loras` that are MiniMax H3 video LoRAs (header-checked). */
+  h3VideoLoras = $state<string[]>([]);
   samplers = $state<string[]>([]);
   schedulers = $state<string[]>([]);
   embeddings = $state<string[]>([]);
@@ -21,7 +23,17 @@ class ModelsStore {
   cacheScope = $state("");
   serverModels = $state<Record<string, string[]>>({});
   localOnly = $state<Record<string, string[]>>({});
+  /**
+   * Whether ComfyUI answered the last model list request: null before the
+   * first answer, false while it is unreachable (starting, restarting after a
+   * node install or an update, or stopped). Until it is true the lists above
+   * are empty because nothing was asked, not because nothing is installed, so
+   * the model picker shows a waiting state instead of offering downloads.
+   */
+  reachable = $state<boolean | null>(null);
   private refreshId = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryAttempt = 0;
 
   private clearInventory() {
     this.serverModels = {};
@@ -29,6 +41,7 @@ class ModelsStore {
     this.checkpoints = [];
     this.vaes = [];
     this.loras = [];
+    this.h3VideoLoras = [];
     this.embeddings = [];
     this.upscaleModels = [];
     this.diffusionModels = [];
@@ -40,6 +53,58 @@ class ModelsStore {
     this.schedulers = [];
   }
 
+  /**
+   * LoRAs for the image model: everything except the H3 video LoRAs. MiniMax-H3-Image
+   * shares the H3 DiT, so its LoRAs (pDMD 2-step among them) can't be told apart
+   * from video ones and it keeps the whole list.
+   */
+  imageLorasFor(family: string): string[] {
+    if (this.h3VideoLoras.length === 0 || family.startsWith("minimaxh3image")) return this.loras;
+    const video = new Set(this.h3VideoLoras);
+    return this.loras.filter((name) => !video.has(name));
+  }
+
+  /**
+   * Sort the LoRA list into image and H3 video LoRAs. Runs after the list is
+   * shown rather than before: it reads every LoRA's header, and a picker that
+   * briefly lists an H3 LoRA among the image ones is better than a late list.
+   */
+  private async classifyLoras(refreshId: number, loras: string[]) {
+    try {
+      const video = loras.length > 0 ? await detectH3VideoLoras(loras) : [];
+      if (refreshId === this.refreshId) this.h3VideoLoras = video;
+    } catch (e) {
+      console.warn("ModelsStore: H3 LoRA detection failed:", e);
+    }
+  }
+
+  /** True once ComfyUI has listed its models since it was last unreachable. */
+  get inventoryReady(): boolean {
+    return this.reachable === true;
+  }
+
+  /**
+   * Try again a few times after a failed refresh, backing off from 5 s to a
+   * minute. A ComfyUI restart that emits no ready event (or one missed while
+   * the app was busy) would otherwise leave the picker empty until the user
+   * restarts the app.
+   */
+  private scheduleRetry() {
+    if (this.retryTimer || this.retryAttempt >= 6) return;
+    const delay = Math.min(60_000, 5_000 * 2 ** this.retryAttempt);
+    this.retryAttempt += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refresh();
+    }, delay);
+  }
+
+  private clearRetry() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retryAttempt = 0;
+  }
+
   async refresh(): Promise<boolean> {
     const refreshId = ++this.refreshId;
     this.loading = true;
@@ -47,7 +112,11 @@ class ModelsStore {
       const config = await getConfig();
       if (refreshId !== this.refreshId) return false;
       const cacheScope = JSON.stringify([config.server_url, config.comfyui_path, config.extra_model_paths]);
-      if (this.cacheScope !== cacheScope) this.clearInventory();
+      if (this.cacheScope !== cacheScope) {
+        // Another server or folder: nothing is known about it until it answers.
+        this.clearInventory();
+        this.reachable = null;
+      }
       this.remote = config.server_mode === "remote";
       this.serverUrl = config.server_url;
       this.cacheScope = cacheScope;
@@ -104,6 +173,7 @@ class ModelsStore {
       this.checkpoints = inventory.checkpoints;
       this.vaes = inventory.vae;
       this.loras = inventory.loras;
+      void this.classifyLoras(refreshId, inventory.loras);
       this.embeddings = inventory.embeddings;
       this.upscaleModels = inventory.upscale_models;
       this.diffusionModels = mergedDiffusionModels;
@@ -113,11 +183,15 @@ class ModelsStore {
       this.modelPatches = inventory.model_patches;
       this.samplers = samplerInfo.samplers;
       this.schedulers = samplerInfo.schedulers;
+      this.reachable = true;
+      this.clearRetry();
       return true;
     } catch (e) {
       console.error("Failed to refresh models:", e);
       if (refreshId === this.refreshId) {
         this.clearInventory();
+        this.reachable = false;
+        this.scheduleRetry();
       }
       return false;
     } finally {

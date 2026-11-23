@@ -62,7 +62,7 @@ pub fn append_segment_chain(
                     // seed+2 is taken by facefix
                     "seed": super::offset_seed(seed, 3 + i as u64),
                     "steps": params.facefix_steps,
-                    "cfg": params.cfg,
+                    "cfg": super::cascade::refiner_cfg(params),
                     "sampler_name": params.sampler_name,
                     "scheduler": params.scheduler,
                     "denoise": segment.creativity,

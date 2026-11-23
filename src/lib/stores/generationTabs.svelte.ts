@@ -13,11 +13,13 @@ const SHARED_KEYS = new Set([
   "naiEnhanceLanguage",
   "naiEnhanceIncludeExisting",
   "naiEnhanceKeepArtists",
+  "naiEnhanceMinorRule",
   "naiEnhanceScaleChoice",
   "naiEnhanceMagnitude",
   "outputBitDepth",
   "outputFormat",
   "metadataMode",
+  "invisibleWatermark",
   "autoQualityTags",
   "customQualityTagsEnabled",
   "customAnimaPositiveQuality",
@@ -31,6 +33,10 @@ const SHARED_KEYS = new Set([
   "modelFamilyOverrides",
   "osNotificationsEnabled",
   "osNotifyOnlyWhenUnfocused",
+  "finishSound",
+  "repeatCount",
+  "repeatDelaySec",
+  "repeatStopOnError",
   "manualSaveMode",
   "advancedMode",
   "resolutionLocked",
@@ -48,7 +54,17 @@ export interface GenerationTab {
   snapshot: Snapshot | null;
   /** Set when the tab was opened from, or saved as, a profile. */
   name?: string;
+  /**
+   * Set on a page's own settings (the Comic page): kept out of the tab strip
+   * and live only while that page is open.
+   */
+  page?: SettingsPage;
+  /** For a page's tab: the strip tab to go back to when the page closes. */
+  returnTo?: string;
 }
+
+/** Pages with their own model and settings, apart from the Generate tabs. */
+export type SettingsPage = "comic";
 
 function newTabId(): string {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -70,9 +86,15 @@ class GenerationTabsStore {
   // Raw: snapshots are plain data, only ever replaced wholesale, never mutated.
   tabs = $state.raw<GenerationTab[]>([{ id: newTabId(), snapshot: null }]);
   activeId = $state(this.tabs[0].id);
+  loaded = $state(false);
+
+  /** The tabs the strip shows: every tab but the pages' own. */
+  get stripTabs(): GenerationTab[] {
+    return this.tabs.filter((tab) => !tab.page);
+  }
 
   get count(): number {
-    return this.tabs.length;
+    return this.stripTabs.length;
   }
 
   get activeIndex(): number {
@@ -103,6 +125,8 @@ class GenerationTabsStore {
           id: tab.id,
           snapshot: tab.snapshot && typeof tab.snapshot === "object" ? tab.snapshot : null,
           ...(typeof tab.name === "string" && tab.name.trim() ? { name: tab.name.trim() } : {}),
+          ...(tab.page === "comic" ? { page: tab.page as SettingsPage } : {}),
+          ...(typeof tab.returnTo === "string" ? { returnTo: tab.returnTo } : {}),
         }));
       const active = tabs.find((tab) => tab.id === saved.activeId);
       if (!active) return;
@@ -112,6 +136,8 @@ class GenerationTabsStore {
       this.activeId = active.id;
     } catch (e) {
       console.error("generationTabs: load failed", e);
+    } finally {
+      this.loaded = true;
     }
   }
 
@@ -184,23 +210,60 @@ class GenerationTabsStore {
     void this.persist();
   }
 
-  /** Step through tabs, wrapping at either end. */
+  /** Step through the strip's tabs, wrapping at either end. */
   cycle(direction: 1 | -1): void {
-    if (this.tabs.length < 2) return;
-    const next = (this.activeIndex + direction + this.tabs.length) % this.tabs.length;
-    this.switchTo(this.tabs[next].id);
+    const strip = this.stripTabs;
+    if (strip.length < 2) return;
+    const index = Math.max(0, strip.findIndex((tab) => tab.id === this.activeId));
+    const next = (index + direction + strip.length) % strip.length;
+    this.switchTo(strip[next].id);
   }
 
   close(id: string): void {
-    if (this.tabs.length < 2) return;
-    const index = this.tabs.findIndex((tab) => tab.id === id);
+    const strip = this.stripTabs;
+    if (strip.length < 2) return;
+    const index = strip.findIndex((tab) => tab.id === id);
     if (index < 0) return;
     if (id === this.activeId) {
-      const neighbour = this.tabs[index + 1] ?? this.tabs[index - 1];
+      const neighbour = strip[index + 1] ?? strip[index - 1];
       this.switchTo(neighbour.id);
     }
     this.tabs = this.tabs.filter((tab) => tab.id !== id);
     void this.persist();
+  }
+
+  /**
+   * Open a page's own settings, parking the current tab. The first visit starts
+   * from a copy of the current tab, after that the page keeps its own.
+   */
+  enterPage(page: SettingsPage): void {
+    const from = this.activeTab;
+    if (from.page === page) return;
+    let tab = this.tabs.find((t) => t.page === page);
+    if (!tab?.snapshot) {
+      tab = { id: tab?.id ?? newTabId(), snapshot: captureSnapshot(), page };
+      const fresh = tab;
+      this.tabs = [...this.tabs.filter((t) => t.id !== fresh.id), fresh];
+    }
+    const returnTo = from.page ? tab.returnTo : from.id;
+    const id = tab.id;
+    this.tabs = this.tabs.map((t) => (t.id === id ? { ...t, returnTo } : t));
+    this.switchTo(id);
+  }
+
+  /** Close a page's own settings and bring back the strip tab it was opened from. */
+  leavePage(): void {
+    const from = this.activeTab;
+    if (!from.page) return;
+    const strip = this.stripTabs;
+    let back = strip.find((t) => t.id === from.returnTo && t.snapshot) ?? strip.find((t) => t.snapshot);
+    if (!back) {
+      // Nothing parked to go back to: start a strip tab from the page's settings.
+      back = { id: newTabId(), snapshot: captureSnapshot() };
+      const fresh = back;
+      this.tabs = [fresh, ...this.tabs];
+    }
+    this.switchTo(back.id);
   }
 }
 

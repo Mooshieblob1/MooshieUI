@@ -177,14 +177,11 @@
           {locale.t('generation.upscale.refine_only_label')}<InfoTip text={locale.t('generation.upscale.refine_only_tip')} />
         </label>
       </div>
-      {#if generation.refineOnly}
-        <p class="text-[11px] text-neutral-500">{locale.t('generation.upscale.refine_only_hint')}</p>
-      {/if}
     {/if}
 
     <!-- Method -->
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.upscale.method')}<InfoTip text={locale.t('generation.upscale.method_tip')} /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.upscale.method')}<InfoTip text={generation.upscaleMethod === "seedvr2" ? locale.t('generation.upscale.seedvr2_note') : locale.t('generation.upscale.method_tip')} /></label>
       <select
         bind:value={generation.upscaleMethod}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -215,7 +212,6 @@
 
     <!-- SeedVR2: one-step restoration model, no tunables beyond scale -->
     {#if generation.upscaleMethod === "seedvr2"}
-      <p class="text-[11px] text-neutral-500">{locale.t('generation.upscale.seedvr2_note')}</p>
       {#if !seedvr2Installed}
         <button
           class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"

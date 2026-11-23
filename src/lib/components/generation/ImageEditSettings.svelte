@@ -8,6 +8,15 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import CameraAnglePicker from "./CameraAnglePicker.svelte";
+  import { architectures } from "../../stores/architectures.svelte.js";
+  import { findFamily, registeredMode, registeredSampling } from "../../utils/architectures.js";
+  import {
+    KREA2_EDIT_LORAS,
+    KREA2_EDIT_METHODS,
+    fitKrea2EditSize,
+    installedKrea2EditLora,
+    type Krea2EditMethod,
+  } from "../../utils/krea2Edit.js";
 
   // Local object-URL previews, indexed by slot. Reference filenames live in the
   // store (generation.editReferenceImages); previews are lost across reloads, in
@@ -29,8 +38,17 @@
     }
     return Math.min(slotCount, Math.max(3, lastFilled + 2));
   });
+  // A registered architecture's edit mode (src-tauri/src/architectures).
+  const registeredEdit = $derived.by(() => {
+    void architectures.version;
+    const found = findFamily(generation.modelFamily);
+    const mode = registeredMode(generation.modelFamily, "image_edit");
+    return found && mode ? { label: found.family.label, arch: found.arch, mode } : null;
+  });
   const familyBadge = $derived(
-    generation.isFlux3
+    registeredEdit
+      ? registeredEdit.label
+      : generation.isFlux3
       ? locale.t("generation.image_edit.family_badge.flux3klein")
       : generation.isQwenEditPlus
       ? locale.t("generation.image_edit.family_badge.qwen_edit_plus")
@@ -40,7 +58,9 @@
           ? locale.t("generation.image_edit.family_badge.qwen_edit")
           : generation.isAnima
             ? locale.t("generation.image_edit.family_badge.anima")
-            : null,
+            : generation.isKrea2
+              ? locale.t("generation.image_edit.family_badge.krea2")
+              : null,
   );
 
   // Anima ReStyler needs the Anima Edit LoRA; the workflow loads it by this exact
@@ -55,6 +75,37 @@
     models.loras.some((m) => m.endsWith(animaEditLora.filename)),
   );
 
+  // Files the registered edit mode loads by fixed name (an edit LoRA) that
+  // are not installed yet. endsWith so a file in a subfolder counts.
+  const missingRequiredFiles = $derived(
+    (registeredEdit?.mode.required_files ?? []).filter((file) => {
+      const installed = file.category === "loras" ? models.loras : (models.serverModels[file.category] ?? []);
+      return !installed.some((m) => m.split(/[\\/]/).pop()?.toLowerCase() === file.filename.toLowerCase());
+    }),
+  );
+    async function downloadRequiredFile(file: { url: string; category: string; filename: string }) {
+    loraDownloadError = null;
+    loraDownloading = true;
+    downloadingFilename = file.filename;
+    try {
+      await downloadModel(file.url, file.category, file.filename);
+      await models.refresh();
+    } catch (e) {
+      loraDownloadError = locale.t("generation.image_edit.camera.download_failed", { error: String(e) });
+    } finally {
+      loraDownloading = false;
+    }
+  }
+
+  // Krea 2 edits through the selected method's edit LoRA (utils/krea2Edit.ts).
+  const krea2Lora = $derived(KREA2_EDIT_LORAS[generation.krea2EditMethod]);
+  const krea2LoraInstalled = $derived(
+    installedKrea2EditLora(models.loras, generation.krea2EditMethod) !== null,
+  );
+  /** Identity and General Edit run on the comfyui-krea2edit nodes and take the fidelity dials. */
+  const krea2UsesPatch = $derived(generation.krea2EditMethod !== "style");
+  let downloadingFilename = $state("");
+
   let loraDownloading = $state(false);
   let loraDownloadError = $state<string | null>(null);
   let dlBytes = $state(0);
@@ -64,8 +115,24 @@
   async function downloadAnimaLora() {
     loraDownloadError = null;
     loraDownloading = true;
+    downloadingFilename = animaEditLora.filename;
     try {
       await downloadModel(animaEditLora.url, animaEditLora.category, animaEditLora.filename);
+      await models.refresh();
+    } catch (e) {
+      loraDownloadError = `Download failed: ${e}`;
+    } finally {
+      loraDownloading = false;
+    }
+  }
+
+  async function downloadKrea2Lora() {
+    const lora = krea2Lora;
+    loraDownloadError = null;
+    loraDownloading = true;
+    downloadingFilename = lora.filename;
+    try {
+      await downloadModel(lora.url, "loras", lora.filename, undefined, lora.sha256);
       await models.refresh();
     } catch (e) {
       loraDownloadError = `Download failed: ${e}`;
@@ -165,6 +232,21 @@
     return Math.max(16, Math.round(value / 16) * 16);
   }
 
+  /**
+   * A registered edit model samples at the reference's aspect, no larger than
+   * the mode's own base size in pixels (MOSS-Image: 1 MP, as Comfy-Org's edit
+   * template scales it), rounded to the model's size multiple.
+   */
+  function fitRegisteredEditSize(width: number, height: number): { width: number; height: number } | null {
+    if (!registeredEdit) return null;
+    const sampling = registeredSampling(generation.modelFamily, "image_edit");
+    const step = Math.max(8, registeredEdit.arch.resolution_multiple || 16);
+    const maxPixels = sampling ? sampling.width * sampling.height : width * height;
+    const scale = Math.min(1, Math.sqrt(maxPixels / (width * height)));
+    const snap = (v: number) => Math.max(step, Math.round((v * scale) / step) * step);
+    return { width: snap(width), height: snap(height) };
+  }
+
   async function uploadToSlot(slot: number, file: File) {
     if (!file.type.startsWith("image/")) return;
     const prepared = await prepareImage(file);
@@ -177,10 +259,20 @@
       generation.editReferenceImages = generation.editReferenceImages.map((v, i) =>
         i === slot ? result.name : v,
       );
-      // Slot 0 owns the output geometry for Qwen (Kontext re-scales internally).
-      if (slot === 0 && prepared.width > 0 && prepared.height > 0) {
-        generation.width = snap16(prepared.width);
-        generation.height = snap16(prepared.height);
+      // Slot 0 owns the output geometry for Qwen (Kontext re-scales internally),
+      // unless Lock resolution is on, which keeps the user's own size. Krea 2
+      // edits stay at or under 2 MP, its trained range.
+      if (slot === 0 && !generation.resolutionLocked && prepared.width > 0 && prepared.height > 0) {
+        const size = registeredEdit
+          ? (fitRegisteredEditSize(prepared.width, prepared.height) ?? {
+              width: snap16(prepared.width),
+              height: snap16(prepared.height),
+            })
+          : generation.isKrea2
+            ? fitKrea2EditSize(prepared.width, prepared.height)
+            : { width: snap16(prepared.width), height: snap16(prepared.height) };
+        generation.width = size.width;
+        generation.height = size.height;
       }
       generation.saveSettings();
     } catch (e) {
@@ -209,6 +301,29 @@
     );
     generation.saveSettings();
   }
+
+  // How Image Edit works, plus the selected family's own rules, behind one tip.
+  const referenceTip = $derived(
+    [
+      locale.t("generation.image_edit.hint"),
+      generation.isFlux3 ? locale.t("generation.image_edit.flux3_note") : null,
+      registeredEdit && registeredEdit.mode.max_references > 1
+        ? locale.t("generation.image_edit.registered_note", {
+            model: registeredEdit.label,
+            n: registeredEdit.mode.max_references,
+          })
+        : null,
+      generation.isAnima ? locale.t("generation.image_edit.anima_note") : null,
+      generation.isKrea2 && krea2UsesPatch
+        ? locale.t("generation.image_edit.krea2_refs_note")
+        : null,
+      generation.isKrea2 && !krea2UsesPatch
+        ? locale.t("generation.image_edit.krea2_style_note")
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
 </script>
 
 <div class="space-y-3" bind:this={dropZone}>
@@ -233,16 +348,42 @@
       {locale.t("generation.image_edit.wrong_model")}
     </div>
   {:else}
-    <p class="text-[11px] text-neutral-500">{locale.t("generation.image_edit.hint")}</p>
-
-    {#if generation.isFlux3}
-      <p class="text-[11px] text-neutral-500">{locale.t("generation.image_edit.flux3_note")}</p>
+    {#each missingRequiredFiles as file (file.filename)}
+      <button
+        class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"
+        disabled={loraDownloading}
+        onclick={() => downloadRequiredFile(file)}
+      >
+        {locale.t("generation.image_edit.required_download", { file: file.filename })}{#if file.size}
+          <span class="text-neutral-400"> ({file.size})</span>{/if}
+      </button>
+    {/each}
+    {#if registeredEdit && loraDownloading}
+      <div class="bg-neutral-800/80 rounded-lg px-3 py-2">
+        <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+          <span class="truncate mr-2">
+            {locale.t("generation.upscale.downloading", { model: downloadingFilename })}
+          </span>
+          {#if dlTotal > 0}
+            <span class="shrink-0 tabular-nums">
+              {locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)
+            </span>
+          {/if}
+        </div>
+        {#if dlTotal > 0}
+          <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+            <div
+              class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
+              style="width: {dlPercent}%"
+            ></div>
+          </div>
+        {/if}
+      </div>
     {/if}
-
+    {#if registeredEdit && loraDownloadError}
+      <p class="text-[11px] text-red-400">{loraDownloadError}</p>
+    {/if}
     {#if generation.isAnima}
-      <p class="text-[11px] text-neutral-500">
-        {locale.t("generation.image_edit.anima_note")}
-      </p>
       {#if !animaLoraInstalled}
         <button
           class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"
@@ -321,17 +462,123 @@
       </label>
     {/if}
 
+    {#if generation.isKrea2}
+      <label class="block text-xs text-neutral-400">
+        <span class="flex items-center mb-1">
+          {locale.t("generation.image_edit.krea2_method")}
+          <InfoTip text={locale.t(`generation.image_edit.krea2_method_tip.${generation.krea2EditMethod}`)} />
+        </span>
+        <select
+          class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none"
+          aria-label={locale.t("generation.image_edit.krea2_method")}
+          value={generation.krea2EditMethod}
+          onchange={(e) =>
+            generation.setKrea2EditMethod(
+              (e.currentTarget as HTMLSelectElement).value as Krea2EditMethod,
+            )}
+        >
+          {#each KREA2_EDIT_METHODS as method (method)}
+            <option value={method}>{locale.t(`generation.image_edit.krea2_method_${method}`)}</option>
+          {/each}
+        </select>
+      </label>
+
+      {#if !krea2LoraInstalled}
+        <button
+          class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"
+          disabled={loraDownloading}
+          onclick={downloadKrea2Lora}
+        >
+          {locale.t("generation.image_edit.krea2_lora_download", {
+            size: locale.formatBytes(krea2Lora.bytes),
+          })}
+        </button>
+      {/if}
+
+      {#if krea2UsesPatch}
+        <div>
+          <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+            <span>
+              {locale.t("generation.image_edit.krea2_ref_boost")}
+              <InfoTip text={locale.t("generation.image_edit.krea2_ref_boost_tip")} />
+            </span>
+            <EditableValue
+              value={generation.krea2EditRefBoostEffective}
+              min={0.5}
+              max={8}
+              step={0.25}
+              decimals={2}
+              onchange={(v) => {
+                generation.krea2EditRefBoost = v;
+                generation.saveSettings();
+              }}
+            />
+          </label>
+          <input
+            type="range"
+            value={generation.krea2EditRefBoostEffective}
+            oninput={(e) =>
+              (generation.krea2EditRefBoost = Number((e.currentTarget as HTMLInputElement).value))}
+            onchange={() => generation.saveSettings()}
+            min="0.5"
+            max="8"
+            step="0.25"
+            class="w-full accent-indigo-500"
+          />
+        </div>
+
+        <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
+          <span class="leading-tight">
+            {locale.t("generation.image_edit.krea2_beside")}
+            <InfoTip text={locale.t("generation.image_edit.krea2_beside_tip")} />
+          </span>
+          <input
+            type="checkbox"
+            bind:checked={generation.krea2EditBeside}
+            onchange={() => generation.saveSettings()}
+            class="accent-indigo-500 w-4 h-4 shrink-0"
+          />
+        </label>
+      {/if}
+    {/if}
+
+    {#if loraDownloading && generation.isKrea2}
+      <div class="bg-neutral-800/80 rounded-lg px-3 py-2">
+        <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+          <span class="truncate mr-2">
+            {locale.t("generation.upscale.downloading", { model: downloadingFilename })}
+          </span>
+          {#if dlTotal > 0}
+            <span class="shrink-0 tabular-nums">
+              {locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)
+            </span>
+          {/if}
+        </div>
+        {#if dlTotal > 0}
+          <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+            <div
+              class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
+              style="width: {dlPercent}%"
+            ></div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+    {#if loraDownloadError && generation.isKrea2}
+      <p class="text-[11px] text-red-400">{loraDownloadError}</p>
+    {/if}
+
     {#each Array(visibleSlotCount) as _, slot (slot)}
       {@const filename = generation.editReferenceImages[slot]}
       {@const preview = previews[slot]}
       <div>
         {#if slotCount > 1}
           <span class="text-xs text-neutral-400 block mb-1.5">
-            {locale.t("generation.image_edit.reference_image_n", { n: slot + 1 })}
+            {locale.t("generation.image_edit.reference_image_n", { n: slot + 1 })}{#if slot === 0}<InfoTip text={referenceTip} />{/if}
           </span>
         {:else}
           <span class="text-xs text-neutral-400 block mb-1.5">
-            {locale.t("generation.image_edit.reference_image")}
+            {locale.t("generation.image_edit.reference_image")}<InfoTip text={referenceTip} />
           </span>
         {/if}
         <!-- svelte-ignore a11y_no_static_element_interactions -->

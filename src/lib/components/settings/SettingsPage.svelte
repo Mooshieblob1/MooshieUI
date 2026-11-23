@@ -1,7 +1,7 @@
 <script lang="ts">
   import { portal } from "../../utils/portal.js";
   import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, lanRequest, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel, eagleStatus } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -9,22 +9,31 @@
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { comfyuiUpdate } from "../../stores/comfyuiUpdate.svelte.js";
+  import { whatsNew } from "../../stores/whatsNew.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { model3d } from "../../stores/model3d.svelte.js";
   import { DEFAULT_NSFW_KEYWORDS, parseNsfwKeywords } from "../../utils/galleryNsfw.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import PromptAssistantSetupModal from "../generation/PromptAssistantSetupModal.svelte";
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import ModelManagerModal from "./ModelManagerModal.svelte";
+  import BackupRestoreModal from "./BackupRestoreModal.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import LlmProviderPanel from "./LlmProviderPanel.svelte";
+  import McpServerPanel from "./McpServerPanel.svelte";
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
+  import NovelAiSavedKeys from "./NovelAiSavedKeys.svelte";
+  import InfoTip from "../ui/InfoTip.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
-  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
+  import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL, type AutoUpdateMode } from "../../utils/updater.js";
+  import { updaterPrefs } from "../../stores/updaterPrefs.svelte.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
+  import { playFinishChime } from "../../utils/finishChime.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
     applyTheme,
@@ -39,14 +48,26 @@
   import DOMPurify from "dompurify";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
   import { appVersion as getAppVersion } from "../../utils/platformInfo.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
+  import {
+    DEFAULT_SHORTCUTS,
+    SHORTCUT_SCOPES,
+    detectConflict,
+    formatCombo,
+    normalizeCombo,
+    splitComboParts,
+    type ShortcutConflict,
+    type ShortcutScope,
+  } from "../../utils/shortcuts.js";
   import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 
   interface Props {
     userRole?: string;
     mobileFriendly?: boolean;
+    requestedCategory?: { key: string; seq: number } | null;
   }
 
-  let { userRole = "admin", mobileFriendly = false }: Props = $props();
+  let { userRole = "admin", mobileFriendly = false, requestedCategory = null }: Props = $props();
 
   // Layout override: only meaningful on a mobile-capable device in browser mode,
   // where the mobile shell exists. The control lets the user flip between the
@@ -63,6 +84,7 @@
   // instead a one-shot flag survives the reload and App.svelte shows the wizard.
   // Reloading also avoids re-running initApp() in the live session.
   let showRerunSetupConfirm = $state(false);
+  let showBackupRestoreModal = $state(false);
   function rerunSetup() {
     localStorage.setItem("mooshieui_force_setup", "1");
     location.reload();
@@ -101,6 +123,20 @@
   const appVersion = getAppVersion();
 
   let config = $state<AppConfig | null>(null);
+  let eagleCheck = $state<{ ok: boolean; text: string } | null>(null);
+  let eagleChecking = $state(false);
+
+  async function testEagle() {
+    eagleChecking = true;
+    try {
+      const version = await eagleStatus();
+      eagleCheck = { ok: true, text: locale.t("settings.connection.eagle_ok", { version: version || "?" }) };
+    } catch {
+      eagleCheck = { ok: false, text: locale.t("settings.connection.eagle_unreachable") };
+    } finally {
+      eagleChecking = false;
+    }
+  }
   let showPromptAssistantSetup = $state(false);
   let loading = $state(true);
   let saving = $state(false);
@@ -539,13 +575,8 @@
     resetError = null;
     resetSuccess = false;
     try {
-      const resp = await fetch("/internal-api/_auth/reset_password", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username: resetTargetUser, temp_password: resetTempPass }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) { resetError = data.error ?? locale.t("settings.lan.reset_failed"); return; }
+      const resp = await lanRequest("reset_password", { username: resetTargetUser, temp_password: resetTempPass });
+      if (!resp.ok) { resetError = resp.data.error ?? locale.t("settings.lan.reset_failed"); return; }
       resetSuccess = true;
       resetTempPass = "";
     } catch (e) {
@@ -588,8 +619,7 @@
 
   async function loadLanAccounts() {
     try {
-      const resp = await fetch("/internal-api/_auth/accounts", { headers: authHeaders() });
-      const data = await resp.json();
+      const { data } = await lanRequest("accounts");
       const raw = data.accounts ?? [];
       // Normalise: backend now returns {username, role, online, created_at, last_online}
       lanAccounts = raw.map((a: any) =>
@@ -604,8 +634,7 @@
 
   async function loadLanInfo() {
     try {
-      const resp = await fetch("/internal-api/_auth/lan_info", { headers: authHeaders() });
-      const data = await resp.json();
+      const { data } = await lanRequest("lan_info");
       lanAddresses = data.addresses ?? [];
       lanHostnameUrl = data.hostname_url ?? null;
       lanListening = data.listening !== false;
@@ -618,8 +647,8 @@
 
   async function loadLanFirewall() {
     try {
-      const resp = await fetch("/internal-api/_auth/lan_firewall", { headers: authHeaders() });
-      lanFirewall = resp.ok ? await resp.json() : null;
+      const resp = await lanRequest("lan_firewall");
+      lanFirewall = resp.ok ? resp.data : null;
     } catch {
       lanFirewall = null;
     }
@@ -630,13 +659,8 @@
     lanFirewallBusy = true;
     lanFirewallError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/lan_firewall", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: "{}",
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (resp.ok) {
+      const { ok, data } = await lanRequest("lan_firewall_allow");
+      if (ok) {
         lanFirewall = data;
       } else {
         lanFirewallError = locale.t(data.code === "cancelled" ? "settings.lan.firewall_cancelled" : "settings.lan.firewall_failed");
@@ -692,14 +716,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/register", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username: lanNewUser.trim(), password: lanNewPass }),
-      });
-      const data = await resp.json();
+      const resp = await lanRequest("register", { username: lanNewUser.trim(), password: lanNewPass });
       if (!resp.ok) {
-        lanAuthError = data.error ?? locale.t("settings.lan.create_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.create_failed");
       } else {
         lanNewUser = "";
         lanNewPass = "";
@@ -716,14 +735,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/delete", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username, keep_data: keepData }),
-      });
+      const resp = await lanRequest("delete", { username, keep_data: keepData });
       if (!resp.ok) {
-        const data = await resp.json();
-        lanAuthError = data.error ?? locale.t("settings.lan.delete_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.delete_failed");
       } else {
         await loadLanAccounts();
       }
@@ -746,14 +760,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/set_role", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username, role: newRole }),
-      });
+      const resp = await lanRequest("set_role", { username, role: newRole });
       if (!resp.ok) {
-        const data = await resp.json();
-        lanAuthError = data.error ?? locale.t("settings.lan.role_update_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.role_update_failed");
       } else {
         await loadLanAccounts();
       }
@@ -768,14 +777,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/set_modelhub_access", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username, allowed: !currentValue }),
-      });
+      const resp = await lanRequest("set_modelhub_access", { username, allowed: !currentValue });
       if (!resp.ok) {
-        const data = await resp.json();
-        lanAuthError = data.error ?? locale.t("settings.lan.modelhub_update_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.modelhub_update_failed");
       } else {
         await loadLanAccounts();
       }
@@ -1137,17 +1141,28 @@
   }
 
   // Update check state
-  type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
+  type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "ready" | "ready_to_install" | "up-to-date" | "error";
   type BrowserUpdateMode = "local" | "lan" | "server";
   let updateState = $state<UpdateCheckState>("idle");
   let updateVersion = $state("");
   let updateError = $state("");
+  /** Set when apt, dnf, zypper or the AUR owns this install. */
+  let managedUpdateCommand = $state("");
+  let packageManagerResolved = $state(!isTauri);
   let updateDownloaded = $state(0);
   let updateTotal = $state(0);
   let browserUpdateMode = $state<BrowserUpdateMode>("local");
-  let updateObj: any | null = null;
+  let isInstallingReady = $state(false);
+  let updateObj: any | null = $state.raw(null);
 
   const updatePercent = $derived(updateTotal > 0 ? Math.round((updateDownloaded / updateTotal) * 100) : 0);
+
+  $effect(() => {
+    if (updateState === "downloading" && updateVersion && updaterPrefs.downloadingVersion === updateVersion) {
+      updateDownloaded = updaterPrefs.downloadProgress;
+      updateTotal = updaterPrefs.downloadTotal;
+    }
+  });
 
   async function refreshBrowserUpdateMode(): Promise<BrowserUpdateMode> {
     let mode: BrowserUpdateMode = "local";
@@ -1176,10 +1191,7 @@
         const resp = await fetch("/internal-api/_check_update", {
           headers: authHeaders(),
         });
-        if (!resp.ok) {
-          const message = await resp.text();
-          throw new Error(message || `Update check failed (${resp.status})`);
-        }
+        if (!resp.ok) throw new Error(await responseErrorText(resp));
         const data = await resp.json();
         if (data.error) throw new Error(String(data.error));
         if (data.update_available) {
@@ -1191,9 +1203,40 @@
         return;
       }
       if (!isTauri) { updateState = "up-to-date"; return; }
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
+      const update = await checkForAppUpdate();
       if (update) {
+        managedUpdateCommand = (await packageManagerUpdateCommand()) ?? "";
+        packageManagerResolved = true;
+        if (updaterPrefs.installedVersion === update.version) {
+          void update.close().catch(() => {});
+          updateVersion = update.version;
+          updateState = "ready";
+          return;
+        }
+        const cached = updaterPrefs.getDownloadedFor(update.version);
+        if (cached) {
+          void update.close().catch(() => {});
+          updateObj = cached;
+          updateVersion = cached.version;
+          updateState = managedUpdateCommand ? "available" : "ready_to_install";
+          return;
+        }
+        if (updaterPrefs.downloadingVersion === update.version && updaterPrefs.inFlightPromise) {
+          void update.close().catch(() => {});
+          updateVersion = update.version;
+          updateState = "downloading";
+          await updaterPrefs.inFlightPromise;
+          const downloaded = updaterPrefs.getDownloadedFor(updateVersion);
+          if (downloaded) {
+            updateObj = downloaded;
+            updateState = managedUpdateCommand ? "available" : "ready_to_install";
+          } else if (updaterPrefs.installedVersion === updateVersion) {
+            updateState = "ready";
+          } else {
+            updateState = "available";
+          }
+          return;
+        }
         updateObj = update;
         updateVersion = update.version;
         updateState = "available";
@@ -1201,6 +1244,30 @@
         updateState = "up-to-date";
       }
     } catch (e) {
+      updateState = "error";
+      updateError = isUpdateServerUnreachable(e)
+        ? locale.t('settings.about.update_server_unreachable')
+        : String(e);
+    }
+  }
+
+  async function installReadyUpdate() {
+    if (!updateObj || isInstallingReady) return;
+    isInstallingReady = true;
+    if (updateVersion) localStorage.setItem("mooshieui_pending_update", updateVersion);
+    try {
+      await updateObj.install();
+      if (updateVersion) updaterPrefs.markInstalled(updateVersion);
+      try { await stopComfyui(); } catch (e) { console.warn("Failed to stop ComfyUI before relaunch:", e); }
+      if (isTauri) {
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } else {
+        window.location.reload();
+      }
+    } catch (e) {
+      localStorage.removeItem("mooshieui_pending_update");
+      isInstallingReady = false;
       updateState = "error";
       updateError = String(e);
     }
@@ -1219,24 +1286,62 @@
       }
       return;
     }
+    if (updateVersion && updaterPrefs.installedVersion === updateVersion) {
+      updateState = "ready";
+      return;
+    }
+    const cached = updateVersion ? updaterPrefs.getDownloadedFor(updateVersion) : null;
+    if (cached) {
+      updateObj = cached;
+      await installReadyUpdate();
+      return;
+    }
+    if (updateVersion && updaterPrefs.downloadingVersion === updateVersion && updaterPrefs.inFlightPromise) {
+      updateState = "downloading";
+      try {
+        await updaterPrefs.inFlightPromise;
+        const downloaded = updaterPrefs.getDownloadedFor(updateVersion);
+        if (downloaded) {
+          updateObj = downloaded;
+          updateState = "ready_to_install";
+        }
+      } catch (e) {
+        updateState = "error";
+        updateError = String(e);
+      }
+      return;
+    }
     if (!updateObj) return;
+    const activeUpdate = updateObj;
+    const targetVersion = updateVersion || activeUpdate.version;
     updateState = "downloading";
-    try {
-      await updateObj.downloadAndInstall((event: DownloadEvent) => {
+    const runPromise = (async () => {
+      await activeUpdate.downloadAndInstall((event: DownloadEvent) => {
         if (event.event === "Started") {
           updateTotal = event.data.contentLength ?? 0;
           updateDownloaded = 0;
+          updaterPrefs.updateProgress(0, updateTotal);
         } else if (event.event === "Progress") {
           updateDownloaded += event.data.chunkLength;
+          updaterPrefs.updateProgress(updateDownloaded);
         } else if (event.event === "Finished") {
           updateState = "ready";
         }
       });
       // Record the expected version so UpdateNotification can verify on the
       // next launch that the update actually applied (mirrors the banner path).
-      if (updateVersion) localStorage.setItem("mooshieui_pending_update", updateVersion);
+      if (targetVersion) {
+        localStorage.setItem("mooshieui_pending_update", targetVersion);
+        updaterPrefs.markInstalled(targetVersion);
+      }
       updateState = "ready";
+    })();
+
+    updaterPrefs.startDownload(targetVersion, runPromise);
+    try {
+      await runPromise;
     } catch (e) {
+      updaterPrefs.clearDownloaded(targetVersion);
       updateState = "error";
       updateError = String(e);
     }
@@ -1258,7 +1363,7 @@
   const sections = [
     { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in lan network remote access share phone ip address local mooshieui.local firewall" },
     { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
-    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color" },
+    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color experimental 3d idol splat image to 3d" },
     { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
     { key: "quality", labelKey: "settings.sections.quality", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", labelKey: "settings.sections.gpu", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
@@ -1266,16 +1371,18 @@
     { key: "modelRequests", labelKey: "settings.sections.model_requests", keywords: "model requests approve deny pending download civitai hub" },
     { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "notifications", labelKey: "settings.sections.notifications", keywords: "notification desktop os system toast alert sound unfocused background window focus" },
+    { key: "shortcuts", labelKey: "settings.sections.shortcuts", keywords: "keyboard shortcuts hotkeys keybindings cheat sheet modal customize reset" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space artist kaloscope saved characters detect llm match" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
-    { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
+    { key: "mcp", labelKey: "settings.sections.mcp", keywords: "mcp model context protocol ai assistant agent claude code desktop cursor codex automation api token tools" },
+    { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key proxy socks5 metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
     { key: "cloud", labelKey: "settings.sections.cloud", keywords: "cloud voice video elevenlabs fal segmind seedance api key tts speech anime scene" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "account", labelKey: "settings.account", keywords: "account password username display name login logout users lan accounts admin moderator role security migration" },
-    { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
+    { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates automatic auto background about troubleshooting logs export diagnostic github report issue backup restore zip import" },
     { key: "developer", labelKey: "settings.developer.title", keywords: "developer dev mode debug unlock" },
   ];
 
@@ -1291,6 +1398,8 @@
   function categoryAllowed(key: string): boolean {
     switch (key) {
       case "appMode": return isAdmin && !mobileFriendly;
+      // The MCP token is a key to the owner's queue and gallery.
+      case "mcp":
       case "connection":
       case "performance":
       case "paths": return isAdmin;
@@ -1316,6 +1425,66 @@
   $effect(() => {
     const keys = visibleCategories.map((sec) => sec.key);
     if (keys.length > 0 && !keys.includes(activeCategory)) activeCategory = keys[0];
+  });
+
+  $effect(() => {
+    const req = requestedCategory;
+    if (req && categoryAllowed(req.key)) {
+      selectCategory(req.key);
+    }
+  });
+
+  const shortcutIsMac =
+    typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
+  const shortcutScopeLabelKey: Record<ShortcutScope, string> = {
+    global: "shortcuts.scope.global",
+    generate: "shortcuts.scope.generate",
+    gallery: "shortcuts.scope.gallery",
+    lightbox: "shortcuts.scope.lightbox",
+    canvas: "shortcuts.scope.canvas",
+    prompt: "shortcuts.scope.prompt",
+    comic: "shortcuts.scope.comic",
+  };
+  let recordingShortcutId = $state<string | null>(null);
+  let pendingShortcutConflict = $state<{
+    actionId: string;
+    combo: string;
+    conflict: ShortcutConflict;
+  } | null>(null);
+
+  function startRecordingShortcut(id: string) {
+    recordingShortcutId = id;
+    pendingShortcutConflict = null;
+  }
+
+  function handleShortcutRecordKeydown(e: KeyboardEvent) {
+    if (!recordingShortcutId) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      recordingShortcutId = null;
+      return;
+    }
+
+    const combo = normalizeCombo(e);
+    if (!combo) return;
+
+    const actionId = recordingShortcutId;
+    recordingShortcutId = null;
+    const conflict = detectConflict(actionId, combo, shortcuts.customBindings);
+    if (conflict) {
+      pendingShortcutConflict = { actionId, combo, conflict };
+      return;
+    }
+    shortcuts.setBinding(actionId, combo);
+  }
+
+  $effect(() => {
+    if (!recordingShortcutId) return;
+    const handler = (e: KeyboardEvent) => handleShortcutRecordKeydown(e);
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   });
 
   // Track original values for restart-needing settings
@@ -1372,6 +1541,21 @@
    */
   let civitaiEnvChoice = $state<boolean | null>(null);
   const civitaiEnvMode = $derived(civitaiEnvChoice ?? isEnvRef(config?.civitai_api_key));
+
+  function isValidCivitaiProxy(raw: string | null | undefined): boolean {
+    const trimmed = raw?.trim() ?? "";
+    if (!trimmed) return true;
+    try {
+      const parsed = new URL(trimmed);
+      return (
+        ["http:", "https:", "socks5:", "socks5h:"].includes(parsed.protocol) &&
+        Boolean(parsed.hostname)
+      );
+    } catch {
+      return false;
+    }
+  }
+  const civitaiProxyInvalid = $derived(!isValidCivitaiProxy(config?.civitai_proxy));
   let novelaiKeySaving = $state(false);
   let novelaiKeyError = $state<string | null>(null);
 
@@ -1569,6 +1753,18 @@
       loadLanInfo();
       void loadLanFirewall();
       void refreshPasswordSecurityStatus();
+    } else if (isTauri) {
+      // The desktop window manages LAN access in-process (lanRequest).
+      loadLanAccounts();
+      loadLanInfo();
+      void loadLanFirewall();
+      void packageManagerUpdateCommand()
+        .then((cmd) => {
+          managedUpdateCommand = cmd ?? "";
+        })
+        .finally(() => {
+          packageManagerResolved = true;
+        });
     }
     startQueuePolling();
   });
@@ -1580,7 +1776,7 @@
 
   // Poll account list every 10s to refresh online/offline indicators (admin/mod).
   $effect(() => {
-    if (!isBrowserMode || !canManageServer) return;
+    if (!(isBrowserMode || (isTauri && config?.lan_enabled)) || !canManageServer) return;
     const id = setInterval(loadLanAccounts, 10_000);
     return () => clearInterval(id);
   });
@@ -1634,6 +1830,7 @@
     config.llm_provider = next.provider;
     config.llm_external_base_url = next.base_url;
     config.llm_external_model = next.model;
+    config.llm_fallback_models = next.fallback_models;
     config.llm_external_enabled = next.enabled;
     // Not secret, so unlike the key these do reach the snapshot and would be
     // reverted by a later autosave if they were left unmirrored.
@@ -2044,17 +2241,17 @@
 <div class="h-full flex flex-col overflow-hidden">
   <!-- Persistent top bar -->
   {#if config}
-    <div class="shrink-0 px-6 py-3 bg-neutral-900 border-b border-neutral-800 flex items-center gap-3">
+    <div class="shrink-0 {mobileFriendly ? 'flex-wrap px-4 gap-x-2 gap-y-2' : 'px-6 gap-3'} py-3 bg-neutral-900 border-b border-neutral-800 flex items-center">
       <h1 class="text-lg font-medium text-neutral-100 shrink-0">{locale.t('settings.title')}</h1>
 
       <input
         type="text"
         bind:value={search}
         placeholder={locale.t('settings.search_placeholder')}
-        class="flex-1 min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+        class="{mobileFriendly ? 'order-last basis-full py-2' : 'flex-1 py-1.5'} min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
       />
 
-      <div class="ml-auto flex items-center gap-3 shrink-0">
+      <div class="ml-auto flex items-center {mobileFriendly ? 'gap-2' : 'gap-3'} shrink-0">
       {#if canManageServer}
       {#if restartNeeded}
         <div class="flex items-center gap-1.5 text-amber-200 text-xs mr-2">
@@ -2198,7 +2395,6 @@
                 {/if}
               </p>
             {/if}
-            {#if config.browser_mode}
               <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
                 <div>
                   <label class="text-xs text-neutral-300 font-medium">{locale.t('settings.lan.enable')}</label>
@@ -2216,6 +2412,7 @@
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
+              {#if config.browser_mode}
               <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
                 <div>
                   <label class="text-xs text-neutral-300 font-medium">{locale.t('settings.browser_shutdown.enable')}</label>
@@ -2233,6 +2430,8 @@
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
+              {/if}
+              {#if config.browser_mode || config.lan_enabled}
               <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
                 <div>
                   <label for="settings-trust-localhost" class="text-xs text-neutral-300 font-medium">{locale.t('settings.trust_localhost.enable')}</label>
@@ -2251,6 +2450,7 @@
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
+              {/if}
               {#if config.lan_enabled}
                 <div class="space-y-3 pt-2 border-t border-neutral-800">
                   <p class="text-xs text-amber-400">
@@ -2417,7 +2617,6 @@
                   >{locale.t('settings.lan.add_account')}</button>
                 </div>
               {/if}
-            {/if}
           </div>
         </section>
         {/if}
@@ -2622,6 +2821,36 @@
               <div class="w-4 h-4 rounded-full bg-white shadow transition-transform {config.auto_start !== false ? 'translate-x-5' : 'translate-x-0.5'}"></div>
             </button>
           </div>
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="text-sm text-neutral-200">{locale.t('settings.connection.idle_unload')}</p>
+              <p class="text-xs text-neutral-500">{locale.t('settings.connection.idle_unload_desc')}</p>
+            </div>
+            <button
+              class="w-10 h-5 shrink-0 rounded-full transition-colors cursor-pointer {config.comfyui_idle_unload ? 'bg-indigo-600' : 'bg-neutral-700'}"
+              onclick={() => { config!.comfyui_idle_unload = !config!.comfyui_idle_unload; autoSave(); }}
+              role="switch"
+              aria-checked={config.comfyui_idle_unload}
+              aria-label={locale.t('settings.connection.idle_unload')}
+            >
+              <div class="w-4 h-4 rounded-full bg-white shadow transition-transform {config.comfyui_idle_unload ? 'translate-x-5' : 'translate-x-0.5'}"></div>
+            </button>
+          </div>
+          {#if config.comfyui_idle_unload}
+          <div class="flex items-center justify-between gap-4 pl-4">
+            <label for="comfyui-idle-unload-minutes" class="text-xs text-neutral-400">{locale.t('settings.connection.idle_unload_after')}</label>
+            <select
+              id="comfyui-idle-unload-minutes"
+              bind:value={config.comfyui_idle_unload_minutes}
+              onchange={() => { autoSave(); }}
+              class="shrink-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+            >
+              {#each [5, 10, 15, 30, 60] as minutes (minutes)}
+                <option value={minutes}>{locale.t('settings.connection.idle_unload_minutes', { minutes })}</option>
+              {/each}
+            </select>
+          </div>
+          {/if}
           {/if}
 
           <div class="grid grid-cols-3 gap-3">
@@ -2649,7 +2878,7 @@
                 max="65535"
               />
             </div>
-            <div>
+            <div class={mobileFriendly ? "col-span-3" : ""}>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.network_proxy')}</label>
               <input
                 type="text"
@@ -2660,7 +2889,7 @@
               />
               <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.network_proxy_desc')}</p>
             </div>
-            <div>
+            <div class={mobileFriendly ? "col-span-3" : ""}>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.pip_index_url')}</label>
               <input
                 type="text"
@@ -2712,6 +2941,38 @@
                 </label>
               </div>
               <p class="text-xs text-neutral-500 mt-1">{locale.t("settings.connection.webhook_events")}</p>
+            </div>
+            <div class="col-span-3 border-t border-neutral-800 pt-4">
+              <label class="inline-flex items-center gap-2 text-sm text-neutral-200">
+                <input type="checkbox" bind:checked={config.eagle_enabled} class="accent-indigo-500" />
+                {locale.t("settings.connection.eagle_enabled")}
+              </label>
+              <p class="text-xs text-neutral-500 mt-1">{locale.t("settings.connection.eagle_hint")}</p>
+              <label class="mt-2 inline-flex items-center gap-2 text-xs text-neutral-400">
+                <input type="checkbox" bind:checked={config.eagle_auto_send} disabled={!config.eagle_enabled} class="accent-indigo-500" />
+                {locale.t("settings.connection.eagle_auto_send")}
+              </label>
+              <div class="mt-2 flex flex-wrap items-end gap-2">
+                <div class="flex-1 min-w-48">
+                  <label class="block text-xs text-neutral-400 mb-1" for="eagle-folder-id">{locale.t("settings.connection.eagle_folder_id")}</label>
+                  <input
+                    id="eagle-folder-id"
+                    type="text"
+                    bind:value={config.eagle_folder_id}
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                    placeholder={locale.t("settings.connection.eagle_folder_placeholder")}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onclick={testEagle}
+                  disabled={eagleChecking}
+                  class="px-3 py-2 rounded-lg text-sm bg-neutral-800 border border-neutral-700 text-neutral-200 hover:bg-neutral-700 disabled:opacity-50 transition-colors"
+                >{locale.t("settings.connection.eagle_test")}</button>
+              </div>
+              {#if eagleCheck}
+                <p class="text-xs mt-1 {eagleCheck.ok ? 'text-emerald-400' : 'text-amber-400'}">{eagleCheck.text}</p>
+              {/if}
             </div>
           </div>
           </div>
@@ -2965,6 +3226,20 @@
             <div>
               <label for="dyslexic-font" class="text-sm text-neutral-200">{locale.t('settings.appearance.dyslexic_font')}</label>
               <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.dyslexic_font_desc')}</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="experimental-model3d"
+              checked={model3d.enabled}
+              onchange={(e) => model3d.setEnabled(e.currentTarget.checked)}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="experimental-model3d" class="text-sm text-neutral-200">{locale.t('settings.appearance.experimental_3d')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.experimental_3d_desc')}</p>
             </div>
           </div>
 
@@ -3619,6 +3894,177 @@
             </div>
             {/if}
 
+            <!-- Finish chime -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.finishSound}
+                  onchange={(e) => {
+                    generation.finishSound = (e.target as HTMLInputElement).checked;
+                    generation.saveSettings();
+                    if (generation.finishSound) playFinishChime();
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.notifications.finish_sound_label')}</span>
+              </label>
+            </div>
+
+          </div>
+        </section>
+        {/if}
+
+        <!-- Keyboard Shortcuts -->
+        {#if activeCategory === "shortcuts"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between gap-3 p-5 text-sm font-medium text-neutral-200 border-b border-neutral-800/80">
+            <div class="flex items-center gap-1.5">
+              <span>{locale.t('settings.shortcuts.title')}</span>
+              <InfoTip text={locale.t('settings.shortcuts.tip')} />
+            </div>
+            <button
+              type="button"
+              disabled={Object.keys(shortcuts.customBindings).length === 0}
+              onclick={() => {
+                recordingShortcutId = null;
+                pendingShortcutConflict = null;
+                shortcuts.resetAll();
+              }}
+              class="px-3 py-1 rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {locale.t('settings.shortcuts.reset_all')}
+            </button>
+          </div>
+
+          <div class="p-5 space-y-5">
+            {#each SHORTCUT_SCOPES as scope (scope)}
+              {@const defs = DEFAULT_SHORTCUTS.filter((d) => d.scope === scope)}
+              {#if defs.length > 0}
+                <div>
+                  <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-300">
+                    {locale.t(shortcutScopeLabelKey[scope])}
+                  </h3>
+                  <div class="divide-y divide-neutral-800/80 rounded-lg border border-neutral-800 bg-neutral-950/40">
+                    {#each defs as def (def.id)}
+                      {@const combo = shortcuts.effectiveCombo(def.id)}
+                      {@const customized = shortcuts.isCustomized(def.id)}
+                      {@const isRecording = recordingShortcutId === def.id}
+                      {@const parts = splitComboParts(combo, shortcutIsMac)}
+                      <div class="px-3.5 py-2.5">
+                        <div class="flex items-center justify-between gap-3">
+                          <div class="flex min-w-0 items-center gap-2">
+                            <span class="truncate text-xs text-neutral-200">{locale.t(def.labelKey)}</span>
+                            {#if def.readOnly}
+                              <span
+                                class="shrink-0 rounded border border-neutral-700/80 bg-neutral-800/80 px-1.5 py-0.5 text-[10px] text-neutral-400"
+                                title={locale.t('shortcuts.read_only_tip')}
+                              >
+                                {locale.t('shortcuts.read_only')}
+                              </span>
+                            {:else if customized}
+                              <span class="shrink-0 rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">
+                                {locale.t('shortcuts.customized')}
+                              </span>
+                            {/if}
+                          </div>
+
+                          <div class="flex shrink-0 items-center gap-2">
+                            {#if def.readOnly}
+                              <div class="flex items-center gap-1 opacity-80">
+                                {#each parts as part, idx (idx)}
+                                  {#if idx > 0}
+                                    <span class="text-[10px] text-neutral-500">+</span>
+                                  {/if}
+                                  <kbd class="inline-flex min-w-6 items-center justify-center rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 font-mono text-[11px] text-neutral-300">
+                                    {part}
+                                  </kbd>
+                                {/each}
+                              </div>
+                            {:else}
+                              <button
+                                type="button"
+                                onclick={() => startRecordingShortcut(def.id)}
+                                title={locale.t('shortcuts.click_to_record')}
+                                class="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition-colors {isRecording
+                                  ? 'border-indigo-400 bg-indigo-500/20 text-indigo-200 animate-pulse'
+                                  : customized
+                                    ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:border-indigo-400'
+                                    : 'border-neutral-700 bg-neutral-800/80 text-neutral-200 hover:border-neutral-500'}"
+                              >
+                                {#if isRecording}
+                                  <span class="font-mono text-[11px]">{locale.t('shortcuts.recording')}</span>
+                                {:else}
+                                  {#each parts as part, idx (idx)}
+                                    {#if idx > 0}
+                                      <span class="text-[10px] text-neutral-500">+</span>
+                                    {/if}
+                                    <kbd class="font-mono text-[11px]">{part}</kbd>
+                                  {/each}
+                                {/if}
+                              </button>
+
+                              {#if customized}
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    if (pendingShortcutConflict?.actionId === def.id) {
+                                      pendingShortcutConflict = null;
+                                    }
+                                    shortcuts.resetBinding(def.id);
+                                  }}
+                                  class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100 transition-colors"
+                                  title={locale.t('common.reset')}
+                                >
+                                  {locale.t('common.reset')}
+                                </button>
+                              {/if}
+                            {/if}
+                          </div>
+                        </div>
+
+                        {#if pendingShortcutConflict?.actionId === def.id}
+                          {@const conflictState = pendingShortcutConflict}
+                          <div class="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                            <span>
+                              {locale.t('shortcuts.conflict', {
+                                combo: formatCombo(conflictState.combo, shortcutIsMac),
+                                action: locale.t(conflictState.conflict.def.labelKey),
+                              })}
+                            </span>
+                            <div class="flex items-center gap-1.5">
+                              {#if !conflictState.conflict.def.readOnly}
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    shortcuts.swapBindings(
+                                      conflictState.actionId,
+                                      conflictState.combo,
+                                      conflictState.conflict.conflictingId,
+                                    );
+                                    pendingShortcutConflict = null;
+                                  }}
+                                  class="rounded bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-amber-500 transition-colors"
+                                >
+                                  {locale.t('shortcuts.swap')}
+                                </button>
+                              {/if}
+                              <button
+                                type="button"
+                                onclick={() => (pendingShortcutConflict = null)}
+                                class="rounded border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700 transition-colors"
+                              >
+                                {locale.t('common.cancel')}
+                              </button>
+                            </div>
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            {/each}
           </div>
         </section>
         {/if}
@@ -3972,6 +4418,23 @@
                 title={locale.t('settings.autocomplete.spellcheck')}
               >
                 <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.spellcheckEnabled ? 'translate-x-5' : ''}"></span>
+              </button>
+            </label>
+
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <p class="text-sm text-neutral-200">{locale.t('settings.autocomplete.lora_keywords')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.autocomplete.lora_keywords_desc')}</p>
+              </div>
+              <button
+                class="relative w-10 h-5 rounded-full transition-colors shrink-0 {autocomplete.loraKeywordsEnabled ? 'bg-indigo-600' : 'bg-neutral-700'}"
+                onclick={() => { autocomplete.loraKeywordsEnabled = !autocomplete.loraKeywordsEnabled; autocomplete.saveSettings(); }}
+                role="switch"
+                aria-checked={autocomplete.loraKeywordsEnabled}
+                aria-label={locale.t('settings.autocomplete.lora_keywords')}
+                title={locale.t('settings.autocomplete.lora_keywords')}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.loraKeywordsEnabled ? 'translate-x-5' : ''}"></span>
               </button>
             </label>
 
@@ -4372,6 +4835,8 @@
                  not by this page's full-config autosave. -->
             <LlmProviderPanel
               bind:enabled={config.llm_external_enabled}
+              bind:fallbackLocal={config.llm_fallback_local}
+              bind:reasoningEffort={config.llm_reasoning_effort}
               {autoSave}
               onstate={onProviderState}
             />
@@ -4380,6 +4845,10 @@
         {/if}
 
         <!-- CivitAI (admin / moderator) -->
+        {#if isAdmin && activeCategory === "mcp"}
+          <McpServerPanel />
+        {/if}
+
         {#if canManageServer && activeCategory === "civitai"}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
           <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
@@ -4421,6 +4890,27 @@
                 />
               {/if}
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
+            </div>
+            <div>
+              <label class="text-xs text-neutral-400 flex items-center gap-1 mb-1" for="civitai-proxy-input">
+                {locale.t('settings.civitai.proxy')}
+                <InfoTip text={locale.t('settings.civitai.proxy_desc')} />
+              </label>
+              <input
+                id="civitai-proxy-input"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                bind:value={config.civitai_proxy}
+                onchange={() => { if (!civitaiProxyInvalid) void autoSave(); }}
+                placeholder={config.civitai_proxy_configured && !config.civitai_proxy
+                  ? locale.t('settings.civitai.proxy_saved_placeholder')
+                  : locale.t('settings.civitai.proxy_placeholder')}
+                class="w-full bg-neutral-800 border rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none transition-colors font-mono {civitaiProxyInvalid ? 'border-red-500 focus:border-red-400' : 'border-neutral-700 focus:border-indigo-500'}"
+              />
+              {#if civitaiProxyInvalid}
+                <span class="text-[11px] text-red-400 mt-1 block">{locale.t('settings.civitai.proxy_invalid')}</span>
+              {/if}
             </div>
           </div>
         </section>
@@ -4480,6 +4970,10 @@
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.novelai.api_key_link')}</p>
             </div>
 
+            {#if isAdmin}
+              <NovelAiSavedKeys />
+            {/if}
+
             {#if novelai.apiKeyConfigured}
               <div class="border-t border-neutral-800 pt-3 space-y-2">
                 <div class="flex items-center justify-between gap-2">
@@ -4507,6 +5001,14 @@
                       ? locale.t('settings.novelai.opus_active')
                       : locale.t('settings.novelai.opus_inactive')}
                   </p>
+                  {#if novelai.paidThrough}
+                    <p class="text-[10px] text-neutral-400">
+                      {locale.t('settings.novelai.paid_through', {
+                        date: novelai.paidThrough.toLocaleDateString(locale.current, { year: 'numeric', month: 'short', day: 'numeric' }),
+                        days: String(novelai.daysPaidThrough ?? 0),
+                      })}
+                    </p>
+                  {/if}
 
                   {#if novelai.opusAllowance}
                     {@const allowance = novelai.opusAllowance}
@@ -4674,17 +5176,25 @@
           </div>
 
           <div class="px-5 pb-5 space-y-4">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-3">
               <div>
                 <p class="text-sm text-neutral-200">{locale.t("app.brand_name")}</p>
                 <p class="text-xs text-neutral-500">{locale.t('settings.about.version')} {appVersion}</p>
               </div>
-              <button
-                onclick={() => (showAboutModal = true)}
-                class="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg border border-neutral-700 transition-colors cursor-pointer"
-              >
-                {locale.t('settings.about.about_button')}
-              </button>
+              <div class="flex items-center gap-2">
+                <button
+                  onclick={() => whatsNew.openManual()}
+                  class="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg border border-neutral-700 transition-colors cursor-pointer"
+                >
+                  {locale.t('settings.about.whats_new_button')}
+                </button>
+                <button
+                  onclick={() => (showAboutModal = true)}
+                  class="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg border border-neutral-700 transition-colors cursor-pointer"
+                >
+                  {locale.t('settings.about.about_button')}
+                </button>
+              </div>
             </div>
 
             <!-- What's New -->
@@ -4755,6 +5265,9 @@
                     {:else}
                       <p class="text-xs text-indigo-200/80">{locale.t('settings.about.redeploy_to_update')}</p>
                     {/if}
+                  {:else if managedUpdateCommand}
+                    <p class="text-xs text-indigo-200/80 mb-1">{locale.t('updater.package_manager_hint')}</p>
+                    <code class="block select-all rounded bg-black/30 px-2 py-1 font-mono text-xs text-indigo-100">{managedUpdateCommand}</code>
                   {:else}
                     <button
                       onclick={downloadAndInstallUpdate}
@@ -4793,18 +5306,56 @@
                   </button>
                 </div>
 
+              {:else if updateState === "ready_to_install"}
+                <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
+                  <p class="text-sm text-emerald-200 mb-2">{locale.t('updater.ready_to_install', { version: updateVersion })}</p>
+                  <button
+                    onclick={installReadyUpdate}
+                    class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
+                  >
+                    {locale.t('updater.install_and_restart')}
+                  </button>
+                </div>
+
               {:else if updateState === "error"}
                 <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg">
                   <p class="text-xs text-red-200">{updateError}</p>
                 </div>
-                <button
-                  onclick={checkForUpdates}
-                  class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
-                >
-                  {locale.t('settings.about.try_again')}
-                </button>
+                <div class="flex items-center gap-3">
+                  <button
+                    onclick={checkForUpdates}
+                    class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                  >
+                    {locale.t('settings.about.try_again')}
+                  </button>
+                  <button
+                    onclick={() => openExternalUrl(RELEASES_PAGE_URL)}
+                    class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                  >
+                    {locale.t('settings.about.open_releases_page')}
+                  </button>
+                </div>
               {/if}
             </div>
+
+            {#if isTauri && packageManagerResolved && !managedUpdateCommand}
+              <div>
+                <label class="text-xs text-neutral-400 flex items-center gap-1 mb-1" for="auto-update-mode">
+                  {locale.t('settings.about.auto_update')}
+                  <InfoTip text={locale.t('settings.about.auto_update_desc')} />
+                </label>
+                <select
+                  id="auto-update-mode"
+                  value={updaterPrefs.autoUpdateMode}
+                  onchange={(e) => updaterPrefs.setAutoUpdateMode((e.currentTarget as HTMLSelectElement).value as AutoUpdateMode)}
+                  class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                >
+                  <option value="off">{locale.t('settings.about.auto_update_off')}</option>
+                  <option value="download">{locale.t('settings.about.auto_update_download')}</option>
+                  <option value="auto">{locale.t('settings.about.auto_update_auto')}</option>
+                </select>
+              </div>
+            {/if}
 
             <!-- Troubleshooting -->
             <div class="space-y-2">
@@ -4829,6 +5380,21 @@
                 <p class="text-xs text-red-400">{logExportError}</p>
               {/if}
               <p class="text-[11px] text-neutral-500">{locale.t('settings.about.export_logs_desc')}</p>
+            </div>
+
+            <!-- Backup & Restore -->
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-950/60 px-3 py-2.5">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs font-medium text-neutral-200">{locale.t('settings.backup.title')}</span>
+                <InfoTip text={locale.t('settings.backup.overview_tip')} />
+              </div>
+              <button
+                type="button"
+                onclick={() => (showBackupRestoreModal = true)}
+                class="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+              >
+                {locale.t('settings.backup.open_button')}
+              </button>
             </div>
 
             <div class="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
@@ -5256,6 +5822,13 @@
 {#if showModelManager}
   <ModelManagerModal mobileFriendly={mobileFriendly} onclose={() => (showModelManager = false)} />
 {/if}
+
+<BackupRestoreModal
+  open={showBackupRestoreModal}
+  isAdmin={isAdmin}
+  onclose={() => (showBackupRestoreModal = false)}
+  onConfigRestored={loadConfig}
+/>
 
 {#if mobileFriendly && showScrollToTop}
   <button

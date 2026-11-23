@@ -11,14 +11,18 @@ import {
   setLlmProvider,
   setLlmApiKey,
   setLlmModel,
+  setLlmFallbackModels,
   setLlmBaseUrl,
   listExternalLlmModels,
   connectLlmOauth,
   setLlmXaiClient,
   callExternalLlm,
+  isLlmCancelled,
+  describeImage,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
+import { CHAT_CLAUSE, splitReply } from "../utils/enhanceChat.js";
 import {
   buildHistory,
   estimateTokens,
@@ -58,11 +62,12 @@ import {
 import {
   NAI_MAX_TOKENS,
   naiRewriteSystemPrompt,
+  naiRewriteSystemPromptParts,
   naiUserPrompt,
 } from "../utils/naiPrompt.js";
-import type { NaiPromptContext } from "../utils/naiPrompt.js";
+import type { NaiPromptContext, NaiVariant } from "../utils/naiPrompt.js";
 import { naiRecipeDirective } from "../utils/naiRecipes.js";
-import { assertAllowedRequest, naiRequestTexts } from "../utils/contentSafety.js";
+import { assertAllowedRequest, naiRequestTexts, promptRequestTexts } from "../utils/contentSafety.js";
 import {
   naiRetryInstruction,
   normalizeNaiResponse,
@@ -94,9 +99,14 @@ import {
   CHARACTER_EXTRACT_RETRY,
   CHARACTER_UPDATE_RETRY,
   CHARACTER_CONVERT_RETRY,
+  CHARACTER_NAMING_RETRY,
+  CHARACTER_SAMPLING,
+  applyCharacterNames,
+  characterNamingRequest,
   characterConvertRequest,
   characterExtractRequest,
   characterUpdateRequest,
+  groundExtracted,
   parseCharacterUpdate,
   parseExtractedCharacters,
   type CharacterPromptStyle,
@@ -119,6 +129,28 @@ import {
   type CharacterMergeInput,
   type CharacterMergeResult,
 } from "../utils/characterMerge.js";
+import {
+  MEMORY_REMEMBER_RETRY,
+  memoryBudgetFor,
+  memoryContext,
+  parseOtherFacts,
+  parseRemember,
+  rememberRequest,
+  splitLearnedMemory,
+  writeMemoryRequest,
+  type LearnedMemory,
+  type LinkedCharacter,
+  type CharacterMemoryFile,
+  type MemoryBudget,
+  type MemoryChange,
+} from "../utils/characterMemory.js";
+import { expressionRequest, parseExpression, type PortraitPromptStyle } from "../utils/portraitExpression.js";
+
+/** A memory request's suggestions: changes to this character's files, and facts for the other characters it read. */
+export interface MemorySuggestions {
+  changes: MemoryChange[];
+  others: LearnedMemory[];
+}
 import type {
   LlmDeviceCode,
   LlmHardware,
@@ -171,15 +203,88 @@ class PromptAssistantStore {
    */
   deviceCode = $state<LlmDeviceCode | null>(null);
 
-  /** True once at least one model is installed. */
+  /** True once at least one model that can serve as the assistant is
+   *  installed. A captioner only describes images, so it does not count. */
   get hasInstalledModel(): boolean {
-    return !!this.status && this.status.installed_models.length > 0;
+    return this.assistantModels.length > 0;
+  }
+
+  /** Installed models that can serve as the assistant (not captioners). */
+  get assistantModels(): string[] {
+    return (this.status?.installed_models ?? []).filter(
+      (id) => this.catalog.find((e) => e.id === id)?.purpose !== "captioner",
+    );
+  }
+
+  /** Installed natural-language local models capable of reading character memory. */
+  get naturalLanguageModels(): string[] {
+    return this.assistantModels.filter(
+      (id) => this.catalog.find((e) => e.id === id)?.purpose !== "tag_upsampler",
+    );
+  }
+
+  /** Whether at least one bundled natural-language instruct model is installed. */
+  get hasNaturalLanguageModel(): boolean {
+    return this.naturalLanguageModels.length > 0;
+  }
+
+  /** Active or selected bundled natural-language model id, if any. */
+  get activeLocalModelId(): string | null {
+    const nl = this.naturalLanguageModels;
+    const active = this.status?.active_model;
+    if (active && nl.includes(active)) return active;
+    if (this.selectedModelId && nl.includes(this.selectedModelId)) return this.selectedModelId;
+    return nl[0] ?? null;
+  }
+
+  /** Catalog models that can see images, for Describe in Interrogate. */
+  get visionCatalog(): LlmCatalogEntry[] {
+    return this.catalog.filter((e) => e.variants.length > 0 && e.variants.every((v) => !!v.mmproj));
+  }
+
+  /** Whether a bundled model that sees images is installed. */
+  get hasVisionModel(): boolean {
+    const installed = this.status?.installed_models ?? [];
+    return this.visionCatalog.some((e) => installed.includes(e.id));
+  }
+
+  /** Active route for `Describe image` (external vision, bundled JoyCaption/VLM, or none). */
+  get describeTarget():
+    | { kind: "external" }
+    | { kind: "local"; modelId: string; name: string }
+    | { kind: "none" }
+    | null {
+    const st = this.status;
+    if (!st) return null;
+    if (st.external_enabled && st.external_vision !== false) {
+      return { kind: "external" };
+    }
+    const localId = st.describe_model ?? null;
+    if (localId) {
+      const entry = this.catalog.find((e) => e.id === localId);
+      return { kind: "local", modelId: localId, name: entry?.name ?? localId };
+    }
+    return { kind: "none" };
   }
 
   /** True when the assistant can run: a local model is installed, or an external
    *  OpenAI-compatible endpoint is configured. Gates the enhance/compose actions. */
   get isAvailable(): boolean {
     return this.hasInstalledModel || !!this.status?.external_enabled;
+  }
+
+  /**
+   * Whether the assistant reads and suggests character memory files: enabled
+   * for external providers and bundled natural-language local models (with
+   * tighter context budgets and review-before-save on local models).
+   */
+  get canUseMemory(): boolean {
+    return this.usesExternal || this.hasNaturalLanguageModel;
+  }
+
+  /** Character memory context budget for the active backend and model. */
+  get memoryBudget(): MemoryBudget {
+    return memoryBudgetFor(this.usesExternal, this.activeLocalModelId);
   }
 
   /** Launch-time bootstrap: detect hardware, load catalog + status, pre-select. */
@@ -196,7 +301,7 @@ class PromptAssistantStore {
       this.recommendedModelId = hw.recommended_model_id;
       // Pre-select: installed model > recommended.
       this.selectedModelId =
-        st.installed_models[0] ?? hw.recommended_model_id ?? null;
+        this.assistantModels[0] ?? hw.recommended_model_id ?? null;
     } catch (e) {
       console.warn("[promptAssistant] init failed", e);
     }
@@ -227,7 +332,7 @@ class PromptAssistantStore {
     return chosen?.quant ? `gguf:${chosen.quant}` : "gguf:Q4_K_M";
   }
 
-  async download(modelId: string, variantKey: string): Promise<void> {
+  async download(modelId: string, variantKey: string, select = true): Promise<void> {
     this.isDownloading = true;
     this.downloadProgress = null;
     const unlisten = await ipcListen("llm:download_progress", (event: any) => {
@@ -235,7 +340,7 @@ class PromptAssistantStore {
       this.downloadProgress = p.done ? null : p;
     });
     try {
-      await downloadLlmModel(modelId, variantKey);
+      await downloadLlmModel(modelId, variantKey, select);
       await this.refreshStatus();
     } finally {
       unlisten();
@@ -299,6 +404,10 @@ class PromptAssistantStore {
 
   async saveModel(model: string): Promise<void> {
     await this.mutateProvider(() => setLlmModel(model));
+  }
+
+  async saveFallbackModels(models: string[]): Promise<void> {
+    await this.mutateProvider(() => setLlmFallbackModels(models));
   }
 
   async saveBaseUrl(baseUrl: string): Promise<void> {
@@ -365,6 +474,19 @@ class PromptAssistantStore {
     } finally {
       unlisten();
       this.stage = null;
+    }
+  }
+
+  /** Describe an interrogated image in words (see `describeImage`). */
+  async describe(imageToken: string, length: "short" | "detailed"): Promise<string> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    this.isGenerating = true;
+    const probePending = !!this.status?.external_enabled && this.status.external_vision == null;
+    try {
+      return await this.withStageListener(() => describeImage(imageToken, length));
+    } finally {
+      this.isGenerating = false;
+      if (probePending) void this.refreshStatus();
     }
   }
 
@@ -484,10 +606,42 @@ class PromptAssistantStore {
         let user = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
           const parsed = parseExtractedCharacters(
-            await callExternalLlm(request.system, user, request.maxTokens),
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
           );
-          if (parsed) return parsed;
+          // Held to the prompt: what the prompt does not say is dropped.
+          if (parsed) return groundExtracted(parsed, prompt, negative);
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
+        }
+        throw new Error("invalid_character_extract");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Name characters already read from NovelAI character boxes (and say which
+   * saved card each one is, if any). The prompts themselves are never sent
+   * back changed. One retry when the reply is not the JSON asked for.
+   */
+  async nameCharacters(
+    characters: ExtractedCharacter[],
+    saved: SavedCharacterHint[] = [],
+  ): Promise<ExtractedCharacter[]> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    assertAllowedRequest(characters.map((c) => c.prompt));
+    const request = characterNamingRequest(characters, saved);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const named = applyCharacterNames(
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
+            characters,
+          );
+          if (named) return named;
+          user = `${request.prompt}\n\n${CHARACTER_NAMING_RETRY}`;
         }
         throw new Error("invalid_character_extract");
       });
@@ -534,18 +688,21 @@ class PromptAssistantStore {
     character: { name: string; prompt: string; negative: string },
     prompt: string,
     negative: string,
+    memory: readonly CharacterMemoryFile[] | null = null,
   ): Promise<CharacterUpdate | "missing"> {
     if (this.isGenerating) throw new Error("busy_generation");
-    assertAllowedRequest([character.prompt, prompt]);
-    const request = characterUpdateRequest(character, prompt, negative);
+    const files = memory && this.canUseMemory ? memory : null;
+    assertAllowedRequest([character.prompt, prompt], [files ? memoryContext(files, 0) : ""]);
+    const request = characterUpdateRequest(character, prompt, negative, files);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
         let user = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
           const parsed = parseCharacterUpdate(
-            await callExternalLlm(request.system, user, request.maxTokens),
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
             character.negative,
+            files,
           );
           if (parsed) return parsed;
           user = `${request.prompt}\n\n${CHARACTER_UPDATE_RETRY}`;
@@ -577,7 +734,7 @@ class PromptAssistantStore {
         let user = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
           const parsed = parseCharacterUpdate(
-            await callExternalLlm(request.system, user, request.maxTokens),
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
             character.negative,
           );
           if (parsed && parsed !== "missing") return parsed;
@@ -597,7 +754,8 @@ class PromptAssistantStore {
    */
   async mergeCharacter(input: CharacterMergeInput): Promise<CharacterMergeResult> {
     if (this.isGenerating) throw new Error("busy_generation");
-    assertAllowedRequest([input.prompt, input.character.prompt, ...(input.box?.boxes ?? [])]);
+    if (!this.canUseMemory) input = { ...input, memory: "" };
+    assertAllowedRequest([input.prompt, input.character.prompt, ...(input.box?.boxes ?? [])], [input.memory ?? ""]);
     const request = characterMergeRequest(input);
     this.isGenerating = true;
     try {
@@ -613,6 +771,104 @@ class PromptAssistantStore {
           user = `${request.prompt}\n\n${CHARACTER_MERGE_RETRY}`;
         }
         throw new Error("invalid_character_merge");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * File something the user wants remembered into a character's memory
+   * files. Returns the suggested changes for the user to review; an empty
+   * list means it is already there. One retry when the reply is not the JSON
+   * asked for.
+   */
+  async rememberForCharacter(
+    character: { name: string; prompt: string; negative: string },
+    files: readonly CharacterMemoryFile[],
+    fact: string,
+    linked: readonly LinkedCharacter[] = [],
+  ): Promise<MemorySuggestions> {
+    if (!fact.trim()) throw new Error("invalid_character_memory");
+    return this.memoryChanges(
+      [fact],
+      [character.prompt, memoryContext(files, 0), ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
+      rememberRequest(character, files, fact, linked),
+      files,
+    );
+  }
+
+  /**
+   * Memory files written by the external provider from canon, the card's
+   * prompt and `brief` (what the user wants covered, may be empty), as
+   * changes to review.
+   */
+  async writeCharacterMemory(
+    character: { name: string; prompt: string; negative: string },
+    files: readonly CharacterMemoryFile[],
+    brief: string,
+    linked: readonly LinkedCharacter[] = [],
+  ): Promise<MemorySuggestions> {
+    return this.memoryChanges(
+      [brief],
+      [character.prompt, memoryContext(files, 0), ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
+      writeMemoryRequest(character, files, brief, linked),
+      files,
+    );
+  }
+
+  /**
+   * The facial expression for a portrait of a saved character, picked by the
+   * external provider from their memory notes or canon.
+   */
+  async portraitExpression(
+    character: { name: string; prompt: string },
+    notes: string,
+    style: PortraitPromptStyle,
+  ): Promise<string> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    if (!this.canUseMemory) throw new Error("memory_needs_external");
+    // Only a face is asked for, so the card is background: it can make the
+    // request a minor one, never a sexual one.
+    assertAllowedRequest([], [character.prompt, notes]);
+    const request = expressionRequest(character, notes, style);
+    this.isGenerating = true;
+    try {
+      const face = parseExpression(await callExternalLlm(request.system, request.prompt, request.maxTokens), style);
+      if (!face) throw new Error("invalid_expression");
+      return face;
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Send a memory request and parse its suggested changes, and the matching
+   * facts for other characters, retrying once. `texts` is what the user typed
+   * for it; `background` is the card, its files and linked characters, which
+   * can make the request a minor one but never a sexual one (see
+   * `assertAllowedRequest`).
+   */
+  private async memoryChanges(
+    texts: string[],
+    background: string[],
+    request: { system: string; prompt: string; maxTokens: number },
+    files: readonly CharacterMemoryFile[],
+  ): Promise<MemorySuggestions> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    if (!this.canUseMemory) throw new Error("memory_needs_external");
+    assertAllowedRequest(texts, background);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const reply = await callExternalLlm(request.system, user, request.maxTokens);
+          const changes = parseRemember(reply, files);
+          if (changes) return { changes, others: parseOtherFacts(reply) };
+          user = `${request.prompt}\n\n${MEMORY_REMEMBER_RETRY}`;
+        }
+        throw new Error("invalid_character_memory");
       });
     } finally {
       this.isGenerating = false;
@@ -636,32 +892,57 @@ class PromptAssistantStore {
     family: string;
     opts: PromptAssistantOpts;
     images: string[];
-  }): Promise<{ prompt: string; sessionUser: string }> {
+    /** Aborting it stops the request on the backend too (see `runPromptAssistant`). */
+    signal?: AbortSignal;
+    /** From the Enhance chat: the answer may carry a reply, or be one alone. */
+    chat?: boolean;
+    /** Generation tab owning this request, so history reads/writes stay scoped to it. */
+    tabId?: string;
+  }): Promise<{ prompt: string; reply: string; sessionUser: string; learned: LearnedMemory[] }> {
     const text = req.text.trim();
     const existing = req.existing?.trim() || null;
     const images = req.images;
+    // The same refusal the V5 rewrite makes, before anything is sent. Earlier
+    // turns count because they go out as history with this one.
+    assertAllowedRequest(
+      promptRequestTexts(text, existing, enhancerSessions.turns("enhance", req.tabId).map((turn) => turn.user)),
+    );
     this.isGenerating = true;
     try {
-      const history = this.sessionHistory("enhance", {
-        systemTokens: RUST_SYSTEM_RESERVE_TOKENS,
-        userText: existing ? `${existing}\n${text}` : text,
-        maxOutputTokens: 384,
-      });
-      const prompt = await this.withStageListener(() =>
+      const history = this.sessionHistory(
+        "enhance",
+        {
+          systemTokens: RUST_SYSTEM_RESERVE_TOKENS + estimateTokens(req.opts.character_notes ?? ""),
+          userText: existing ? `${existing}\n${text}` : text,
+          maxOutputTokens: req.chat ? 640 : 384,
+        },
+        req.tabId,
+      );
+      const opts = req.chat ? { ...req.opts, chat: true } : req.opts;
+      const answer = await this.withStageListener(() =>
         existing
           ? enhancePrompt(
               existing,
               req.family,
-              { ...req.opts, instruction: text || undefined },
+              { ...opts, instruction: text || undefined },
               history.messages,
               images,
+              req.signal,
             )
-          : composePrompt(text, req.family, req.opts, history.messages, images),
+          : composePrompt(text, req.family, opts, history.messages, images, req.signal),
       );
+      // The backend puts the chat reply first and has already split it off
+      // before repairing the prompt; this only separates the two again.
+      const { reply, prompt: answerPrompt } = req.chat
+        ? splitReply(answer)
+        : { reply: "", prompt: answer };
+      // Facts to save to a saved character's memory come after the prompt
+      // when character notes went out (see `character_notes`).
+      const { prompt, learned } = splitLearnedMemory(answerPrompt);
       // The pasted current prompt is left out, like the V5 session: the next
       // turn sends whatever the prompt box holds by then.
       const sessionUser = withImageMarker(text || existing || "", images.length, "reference");
-      return { prompt, sessionUser };
+      return { prompt, reply, sessionUser, learned: req.opts.character_notes ? learned : [] };
     } finally {
       this.isGenerating = false;
     }
@@ -669,16 +950,30 @@ class PromptAssistantStore {
 
   /** Context the history has to share: the local model's `-c`, or the API allowance. */
   private get historyContextTokens(): number {
-    return this.provider?.enabled ? REMOTE_CONTEXT_TOKENS : LOCAL_CONTEXT_TOKENS;
+    if (!this.usesExternal) return LOCAL_CONTEXT_TOKENS;
+    // With "fall back to a local model" on, the same request can land on the
+    // bundled server when the provider is down, so it has to fit there too.
+    return this.provider?.fallback_local && this.hasInstalledModel
+      ? LOCAL_CONTEXT_TOKENS
+      : REMOTE_CONTEXT_TOKENS;
+  }
+
+  /**
+   * Whether requests go to an external provider. A plain user of a shared
+   * server cannot read the provider settings, so `provider` stays null for
+   * them; the status, which everyone can read, answers then.
+   */
+  get usesExternal(): boolean {
+    return this.provider ? this.provider.enabled : !!this.status?.external_enabled;
   }
 
   /** The flow's saved session, trimmed to fit, with the drop count published for the UI. */
-  private sessionHistory(flow: EnhancerFlow, budget: Omit<HistoryBudget, "contextTokens">) {
-    const built = buildHistory(enhancerSessions.turns(flow), {
+  private sessionHistory(flow: EnhancerFlow, budget: Omit<HistoryBudget, "contextTokens">, tabId?: string) {
+    const built = buildHistory(enhancerSessions.turns(flow, tabId), {
       ...budget,
       contextTokens: this.historyContextTokens,
     });
-    enhancerSessions.noteDropped(flow, built.droppedTurns);
+    enhancerSessions.noteDropped(flow, built.droppedTurns, tabId);
     return built;
   }
 
@@ -690,6 +985,8 @@ class PromptAssistantStore {
   private get llmBackendId(): string {
     const p = this.provider;
     if (p?.enabled) return `${p.provider}/${p.model || "default"}`;
+    // Provider settings unreadable (see `usesExternal`): still not the local model.
+    if (this.usesExternal) return "external/default";
     return `local/${this.status?.active_model ?? this.status?.installed_models[0] ?? "default"}`;
   }
 
@@ -706,6 +1003,7 @@ class PromptAssistantStore {
   private async ensureH3Skill(
     ctx: H3PromptContext,
     hasImage: boolean,
+    signal?: AbortSignal,
   ): Promise<string | null> {
     const key = h3SkillKey(this.llmBackendId, ctx, hasImage);
     const cached = loadH3Skill(key);
@@ -716,6 +1014,10 @@ class PromptAssistantStore {
           h3SkillAuthoringSystem(),
           h3SkillAuthoringUser(ctx, hasImage),
           H3_SKILL_MAX_TOKENS,
+          null,
+          null,
+          [],
+          signal,
         ),
       );
       // Cached even when empty: that is a verdict on this model, not a miss.
@@ -723,6 +1025,8 @@ class PromptAssistantStore {
       saveH3Skill(key, skill);
       return skill || null;
     } catch (e) {
+      // Cancelled: stop here rather than carry on to the rewrite itself.
+      if (isLlmCancelled(e)) throw e;
       console.warn("[promptAssistant] H3 skill authoring failed", e);
       return null;
     }
@@ -762,15 +1066,21 @@ class PromptAssistantStore {
       existing?: string | null;
       /** Extra images from the Enhance modal: base64 plus optional label. */
       references?: { base64: string; label: string }[];
+      /** Aborting it stops the request on the backend too. */
+      signal?: AbortSignal;
+      /** From the Enhance chat: the answer may carry a reply, or be one alone. */
+      chat?: boolean;
+      /** Generation tab owning this request, so history reads/writes stay scoped to it. */
+      tabId?: string;
     } = {},
-  ): Promise<H3RewriteResult & { sessionUser: string }> {
+  ): Promise<H3RewriteResult & { sessionUser: string; reply: string }> {
     const usesFirstFrame =
       ctx.taskType === "i2va" || ctx.taskType === "fl2va";
     const image = (usesFirstFrame && firstFrameFilename) || null;
     // Only an external provider sees images, so the bundled model is not told
     // about any. The cap mirrors `MAX_VISION_IMAGES` in Rust: the first frame
     // takes a slot first, so the manifest names only images that arrive.
-    const refs = this.provider?.enabled
+    const refs = this.usesExternal
       ? (extra.references ?? []).slice(0, image ? 3 : 4)
       : [];
     const text = prompt.trim();
@@ -780,27 +1090,38 @@ class PromptAssistantStore {
     const idea = text || existing;
     const idle = detectH3IdleIntent(idea);
     const validate = idle ? validateH3IdleResponse : validateH3Response;
+    // Before the skill authoring call too, as in the V5 rewrite.
+    assertAllowedRequest(
+      promptRequestTexts(text, existing, enhancerSessions.turns("h3", extra.tabId).map((turn) => turn.user)),
+    );
 
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
-        const skill = await this.ensureH3Skill(ctx, !!image);
+        const skill = await this.ensureH3Skill(ctx, !!image, extra.signal);
         const baseSystem =
           h3SystemWithSkill(
             idle
               ? h3IdleRewriteSystemPrompt(ctx, !!image)
               : h3RewriteSystemPrompt(ctx, !!image),
             skill,
-          ) + (refs.length ? `\n\n${h3ReferenceNote(refs.length, !!image)}` : "");
+          ) +
+          (refs.length ? `\n\n${h3ReferenceNote(refs.length, !!image)}` : "") +
+          (extra.chat ? `\n\n${CHAT_CLAUSE}` : "");
+        const maxTokens = H3_MAX_TOKENS + (extra.chat ? 256 : 0);
         const request = idle ? h3IdleUserPrompt(idea, ctx) : idea;
         const user =
           (existing && text ? h3EditUserPrompt(existing, request) : request) +
           h3ReferenceManifest(refs.map((r) => r.label));
-        const history = this.sessionHistory("h3", {
-          systemTokens: estimateTokens(withSessionClause(baseSystem, 1)),
-          userText: user,
-          maxOutputTokens: H3_MAX_TOKENS,
-        });
+        const history = this.sessionHistory(
+          "h3",
+          {
+            systemTokens: estimateTokens(withSessionClause(baseSystem, 1)),
+            userText: user,
+            maxOutputTokens: maxTokens,
+          },
+          extra.tabId,
+        );
         const system = withSessionClause(baseSystem, history.sentTurns);
         const sessionUser = withImageMarker(
           withImageMarker(idea, image ? 1 : 0, "first-frame"),
@@ -808,25 +1129,42 @@ class PromptAssistantStore {
           "reference",
         );
         const imageData = refs.map((r) => r.base64);
-        const first = (
-          await callExternalLlm(system, user, H3_MAX_TOKENS, image, imageData, history.messages)
-        ).trim();
-        const check = validate(first, ctx);
-        if (check.ok || !check.rule) {
-          return { text: first, ok: check.ok, rule: check.rule, idle, sessionUser };
-        }
-        const second = (
+        const split = (raw: string) =>
+          extra.chat ? splitReply(raw) : { reply: "", prompt: raw.trim() };
+        const firstAnswer = split(
           await callExternalLlm(
             system,
-            h3RetryInstruction(check.rule, first),
-            H3_MAX_TOKENS,
+            user,
+            maxTokens,
             image,
             imageData,
             history.messages,
-          )
-        ).trim();
+            extra.signal,
+          ),
+        );
+        const first = firstAnswer.prompt;
+        const reply = firstAnswer.reply;
+        // A reply with no prompt is an answer to a question: nothing to check.
+        if (!first && reply) {
+          return { text: "", ok: true, rule: null, idle, sessionUser, reply };
+        }
+        const check = validate(first, ctx);
+        if (check.ok || !check.rule) {
+          return { text: first, ok: check.ok, rule: check.rule, idle, sessionUser, reply };
+        }
+        const second = split(
+          await callExternalLlm(
+            system,
+            h3RetryInstruction(check.rule, first),
+            maxTokens,
+            image,
+            imageData,
+            history.messages,
+            extra.signal,
+          ),
+        ).prompt;
         const recheck = validate(second, ctx);
-        if (recheck.ok) return { text: second, ok: true, rule: null, idle, sessionUser };
+        if (recheck.ok) return { text: second, ok: true, rule: null, idle, sessionUser, reply };
         // Prefer whichever attempt produced something; the second can come back
         // empty when the model gives up on the correction.
         return {
@@ -835,6 +1173,7 @@ class PromptAssistantStore {
           rule: recheck.rule ?? check.rule,
           idle,
           sessionUser,
+          reply,
         };
       });
     } finally {
@@ -851,7 +1190,15 @@ class PromptAssistantStore {
    * alone. A model that answers with something unusable has that recorded too,
    * so it is not asked again before every rewrite.
    */
-  private async ensureNaiSkill(ctx: NaiPromptContext): Promise<string | null> {
+  /**
+   * The working notes the backend wrote for itself for V5 prompts, the same
+   * ones Enhance uses, so other V5 writers (the comic page) follow them too.
+   */
+  naiWorkingNotes(variant: NaiVariant, signal?: AbortSignal): Promise<string | null> {
+    return this.ensureNaiSkill({ variant }, signal);
+  }
+
+  private async ensureNaiSkill(ctx: Pick<NaiPromptContext, "variant">, signal?: AbortSignal): Promise<string | null> {
     const key = naiSkillKey(this.llmBackendId, ctx.variant);
     const cached = loadNaiSkill(key);
     if (cached !== null) return cached || null;
@@ -861,6 +1208,10 @@ class PromptAssistantStore {
           naiSkillAuthoringSystem(),
           naiSkillAuthoringUser(ctx),
           NAI_SKILL_MAX_TOKENS,
+          null,
+          null,
+          [],
+          signal,
         ),
       );
       // Cached even when empty: that is a verdict on this model, not a miss.
@@ -868,6 +1219,7 @@ class PromptAssistantStore {
       saveNaiSkill(key, skill);
       return skill || null;
     } catch (e) {
+      if (isLlmCancelled(e)) throw e;
       console.warn("[promptAssistant] NAI skill authoring failed", e);
       return null;
     }
@@ -894,53 +1246,75 @@ class PromptAssistantStore {
     prompt: string,
     ctx: NaiPromptContext,
     referenceData: string[] = [],
-  ): Promise<NaiRewriteResult & { raw: string; sessionUser: string }> {
+    signal?: AbortSignal,
+    /** From the Enhance chat: the answer may carry a reply, or be one alone. */
+    chat = false,
+    tabId?: string,
+  ): Promise<NaiRewriteResult & { raw: string; sessionUser: string; reply: string }> {
     // Before anything is sent, the skill authoring call included. The rating
     // also picks the vocabulary block, so an SFW request never carries the
     // explicit tag list.
+    const pastUsers = enhancerSessions.turns("nai", tabId).map((turn) => turn.user);
     ctx = {
       ...ctx,
       rating: assertAllowedRequest(
-        naiRequestTexts(prompt, ctx.existing, enhancerSessions.turns("nai").map((turn) => turn.user)),
+        naiRequestTexts(prompt, ctx.existing, pastUsers),
       ),
     };
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
-        const skill = await this.ensureNaiSkill(ctx);
+        const skill = await this.ensureNaiSkill(ctx, signal);
         // Budgeted against every recorded turn, the most the session can send.
         const sessionCtx = {
           ...ctx,
           inSession: true,
           recipes: naiRecipeDirective([
             prompt,
-            ...enhancerSessions.turns("nai").map((turn) => turn.user),
+            ...pastUsers,
           ]),
         };
-        const sessionSystem = naiSystemWithSkill(naiRewriteSystemPrompt(sessionCtx), skill);
+        // The chat rules go last, after the output contract they make an exception to.
+        const chatClause = chat ? `\n\n${CHAT_CLAUSE}` : "";
+        const maxTokens = NAI_MAX_TOKENS + (chat ? 256 : 0);
+        const sessionParts = naiRewriteSystemPromptParts(sessionCtx);
+        const sessionSystem =
+          naiSystemWithSkill(
+            [sessionParts.cached, sessionParts.dynamic].filter(Boolean).join("\n\n"),
+            skill,
+          ) + chatClause;
         const sessionUserTurn = naiUserPrompt(prompt, sessionCtx);
-        const history = this.sessionHistory("nai", {
-          systemTokens: estimateTokens(sessionSystem),
-          userText: sessionUserTurn,
-          maxOutputTokens: NAI_MAX_TOKENS,
-        });
+        const history = this.sessionHistory(
+          "nai",
+          {
+            systemTokens: estimateTokens(sessionSystem),
+            userText: sessionUserTurn,
+            maxOutputTokens: maxTokens,
+          },
+          tabId,
+        );
         // With history the turn is a revision of the newest answer; without it,
         // the ordinary rewrite from this text alone.
         const user =
           history.sentTurns > 0 ? sessionUserTurn : naiUserPrompt(prompt, { ...ctx, inSession: false });
         // The SESSION block only when history actually goes out: telling the
         // model about earlier turns it cannot see would be the opposite lie.
+        const singleParts =
+          history.sentTurns > 0
+            ? sessionParts
+            : naiRewriteSystemPromptParts({
+                ...ctx,
+                inSession: false,
+                recipes: naiRecipeDirective([prompt]),
+              });
         const system =
           history.sentTurns > 0
             ? sessionSystem
             : naiSystemWithSkill(
-                naiRewriteSystemPrompt({
-                  ...ctx,
-                  inSession: false,
-                  recipes: naiRecipeDirective([prompt]),
-                }),
+                [singleParts.cached, singleParts.dynamic].filter(Boolean).join("\n\n"),
                 skill,
-              );
+              ) + chatClause;
+        const systemCachePrefix = singleParts.cached;
         // Saved without the pasted current prompt: the next turn sends that fresh.
         const sessionUser = withImageMarker(prompt, referenceData.length, "reference");
 
@@ -948,40 +1322,63 @@ class PromptAssistantStore {
         // the model how it writes V5 prompts in general, and the answer is
         // cached per backend and variant, so feeding one user's references into
         // it would bias every later rewrite.
-        const firstRaw = await callExternalLlm(
-          system,
-          user,
-          NAI_MAX_TOKENS,
-          null,
-          referenceData,
-          history.messages,
+        const split = (raw: string) => (chat ? splitReply(raw) : { reply: "", prompt: raw });
+        const firstAnswer = split(
+          await callExternalLlm(
+            system,
+            user,
+            maxTokens,
+            null,
+            referenceData,
+            history.messages,
+            signal,
+            undefined,
+            systemCachePrefix,
+          ),
         );
+        const firstRaw = firstAnswer.prompt;
+        const reply = firstAnswer.reply;
+        // A reply with no prompt answers a question: there are no fields to
+        // parse, and parsing nothing would only produce a validator problem.
+        if (!firstRaw.trim() && reply) {
+          return { parsed: parseNaiResponse(""), problems: [], raw: "", sessionUser, reply };
+        }
         const first = normalizeNaiResponse(parseNaiResponse(firstRaw));
         const problems = validateNaiResponse(first);
         if (problems.length === 0) {
-          return { parsed: first, problems: [], raw: firstRaw, sessionUser };
+          return { parsed: first, problems: [], raw: firstRaw, sessionUser, reply };
         }
 
-        const secondRaw = await callExternalLlm(
+        // The first answer goes back as a turn of its own, so the correction
+        // is an edit of that text and not a second attempt from nothing, which
+        // tends to fix the named problem and break something that was fine.
+        const secondRaw = split(await callExternalLlm(
           system,
-          `${user}
-
-${naiRetryInstruction(problems)}`,
-          NAI_MAX_TOKENS,
+          naiRetryInstruction(problems),
+          maxTokens,
           null,
           referenceData,
-          history.messages,
-        );
+          [
+            // The local context has no room for the session and the first
+            // answer both, and the first answer already reflects the session.
+            ...(this.historyContextTokens === LOCAL_CONTEXT_TOKENS ? [] : history.messages),
+            { role: "user", content: user },
+            { role: "assistant", content: firstRaw },
+          ],
+          signal,
+          undefined,
+          systemCachePrefix,
+        )).prompt;
         const second = normalizeNaiResponse(parseNaiResponse(secondRaw));
         const recheck = validateNaiResponse(second);
         if (recheck.length === 0) {
-          return { parsed: second, problems: [], raw: secondRaw, sessionUser };
+          return { parsed: second, problems: [], raw: secondRaw, sessionUser, reply };
         }
-        // Prefer whichever attempt produced a base prompt; the second can come
-        // back empty when the model gives up on the correction.
-        return second.base.trim()
-          ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser }
-          : { parsed: first, problems, raw: firstRaw, sessionUser };
+        // Neither passed: keep the one with fewer problems, the correction on a
+        // tie. The second can also come back empty when the model gives up.
+        return second.base.trim() && recheck.length <= problems.length
+          ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser, reply }
+          : { parsed: first, problems, raw: firstRaw, sessionUser, reply };
       });
     } finally {
       this.isGenerating = false;

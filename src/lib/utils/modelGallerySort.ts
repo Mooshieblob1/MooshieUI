@@ -1,5 +1,6 @@
 import type { CheckpointCivitaiInfo, LoraCivitaiInfo } from "./api.js";
 import { MODEL_FAMILIES } from "./modelFamily.js";
+import { registeredFamilies } from "./architectures.js";
 import type { ModelFamily } from "./modelFamily.js";
 
 export type ModelGallerySort = "name" | "folder" | "family" | "tree";
@@ -29,9 +30,14 @@ export function inferLoraFamily(
   return (info?.family as ModelFamily | undefined) ?? "unknown";
 }
 
+/** Hand-written families in list order, then registered ones, then `unknown`. */
 function familyRank(family: ModelFamily): number {
-  const idx = FAMILY_ORDER.indexOf(family);
-  return idx >= 0 ? idx : FAMILY_ORDER.length;
+  const known = FAMILY_ORDER.filter((f) => f !== "unknown");
+  const idx = known.indexOf(family);
+  if (idx >= 0) return idx;
+  const registered = registeredFamilies().indexOf(family);
+  if (registered >= 0) return known.length + registered;
+  return known.length + registeredFamilies().length;
 }
 
 /** Sort model filenames for gallery display. Active model stays first when `active` is set. */

@@ -43,11 +43,28 @@ pub async fn generate(
     // `[Errno 21] Is a directory: '<input_dir>/'`, which surfaces as a generic
     // execution error far away from the actual cause.
     templates::validate_generation_params(&params).map_err(AppError::InvalidWorkflow)?;
+    crate::comfyui::nodes::verify_snapref_for_generation(
+        &state.http_client,
+        &state.base_url().await,
+        &params,
+    )
+    .await
+    .map_err(AppError::InvalidWorkflow)?;
+    crate::comfyui::nodes::verify_architecture_nodes_for_generation(
+        &state.http_client,
+        &state.base_url().await,
+        &params,
+    )
+    .await
+    .map_err(AppError::InvalidWorkflow)?;
     // A remote ComfyUI lists and loads its own model files, so the local
     // install is only consulted when the app launched the server itself.
     let models_are_local = {
         let config = state.config.read().await;
         crate::commands::api::validate_generation_loras(&config, &params.loras)?;
+        if params.mode == "video" {
+            crate::commands::api::validate_generation_loras(&config, &params.video_loras)?;
+        }
         crate::commands::api::generation_models_are_local(&config)
     };
 
@@ -136,6 +153,7 @@ pub async fn generate(
         false
     };
 
+    crate::mcp::setups::remember(&params);
     let workflow = templates::build_workflow(&params, seed, video_metadata_supported);
     crate::comfyui::process::mark_legacy_worker_idle(state.inner()).await;
     log::info!(

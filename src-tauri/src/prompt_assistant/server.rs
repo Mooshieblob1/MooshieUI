@@ -10,10 +10,10 @@ use crate::comfyui::process::tokio_command_no_window;
 use crate::error::AppError;
 
 /// Pinned llama.cpp release. Update this constant to roll the binary forward.
-/// b7100 is the newest release that still ships `.zip` assets on every platform
-/// (b7300+ switched Linux/macOS to `.tar.gz`) and supports the `qwen3`
-/// architecture, which the previous pin (b4585) could not load.
-const LLAMA_RELEASE: &str = "b7100";
+/// b12500 loads the `qwen35` / `qwen35moe` architectures (Qwen3.5 to 3.8),
+/// which the previous pin (b7100) could not. Since b7300 the Linux and macOS
+/// assets are `.tar.gz` (Windows stays `.zip`); [`extract_all_into`] takes both.
+const LLAMA_RELEASE: &str = "b12500";
 const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download";
 
 /// Context window the bundled llama-server is started with. llama.cpp's
@@ -22,30 +22,87 @@ const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/dow
 /// `LOCAL_CONTEXT_TOKENS` in `enhancerSession.ts` must match.
 pub const LOCAL_CONTEXT_TOKENS: u32 = 16384;
 
+/// Temperature every chat request is sent with unless the caller asks for
+/// another through [`with_sampling`].
+pub const DEFAULT_TEMPERATURE: f64 = 0.7;
+
+/// Sampling a caller can ask for on one request, for jobs that should copy
+/// rather than create (pulling characters out of a prompt, say), where the
+/// usual 0.7 lets a small model drop and invent details.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Sampling {
+    /// Overrides [`DEFAULT_TEMPERATURE`], clamped to 0..=2.
+    pub temperature: Option<f64>,
+    /// Constrain the bundled llama-server to a JSON object. Only the bundled
+    /// server gets it: external OpenAI-compatible servers differ in which
+    /// `response_format` they accept, and some reject the request outright.
+    pub json: bool,
+}
+
+tokio::task_local! {
+    static SAMPLING: Sampling;
+    static SYSTEM_CACHE_PREFIX: Option<String>;
+}
+
+/// Run `work` with `sampling` applied to every chat request it sends. A
+/// task-local rather than one more argument on every chat function between
+/// the command and the wire, since only a few callers ever set it.
+pub async fn with_sampling<F: std::future::Future>(sampling: Sampling, work: F) -> F::Output {
+    SAMPLING.scope(sampling, work).await
+}
+
+/// Run `work` with a static system-prompt prefix marked for prompt caching on
+/// providers that support it (Anthropic and OpenRouter Anthropic models).
+pub async fn with_system_cache_prefix<F: std::future::Future>(
+    prefix: Option<String>,
+    work: F,
+) -> F::Output {
+    SYSTEM_CACHE_PREFIX.scope(prefix, work).await
+}
+
+/// The sampling in force for the current request.
+fn sampling() -> Sampling {
+    SAMPLING.try_with(|s| *s).unwrap_or_default()
+}
+
+/// The static cacheable prefix of the current system prompt, if any.
+fn system_cache_prefix() -> Option<String> {
+    SYSTEM_CACHE_PREFIX.try_with(|p| p.clone()).ok().flatten()
+}
+
+/// The temperature to send, rounded to two places so an f32 from IPC does not
+/// show up as 0.20000000298.
+fn temperature() -> f64 {
+    match sampling().temperature {
+        Some(t) if t.is_finite() => (t.clamp(0.0, 2.0) * 100.0).round() / 100.0,
+        _ => DEFAULT_TEMPERATURE,
+    }
+}
+
 /// SHA-256 of every `LLAMA_RELEASE` asset [`assets_for`] can pick. The binary
 /// is executed, so a download that does not match is never extracted. Bumping
 /// `LLAMA_RELEASE` means replacing every entry; an asset missing from here is
 /// refused rather than installed unverified.
 const LLAMA_ASSET_SHA256: &[(&str, &str)] = &[
     (
-        "llama-b7100-bin-win-vulkan-x64.zip",
-        "9670903b9821777f08fa4875603c872626cff8d9a37cd6a80c16cd6b22da0daa",
+        "llama-b12500-bin-win-vulkan-x64.zip",
+        "61ca034bacfdc93f1504d4e8b7eaad7faae87fd0dd85f0b9fdb58660402cb282",
     ),
     (
-        "llama-b7100-bin-win-cpu-x64.zip",
-        "a530dfaf4928f40d08f5f5eb4e6350f37409ce5310f56240d725c3b84aca93ee",
+        "llama-b12500-bin-win-cpu-x64.zip",
+        "d6ba4bf776d22ad9c8eca1ad1217addf9654321e3fe8e23113096b4dd8f31ddb",
     ),
     (
-        "llama-b7100-bin-ubuntu-x64.zip",
-        "a34d005333ede5f4f1c327667cce2546ef77ced1263b666199d97896b8e1e09e",
+        "llama-b12500-bin-ubuntu-x64.tar.gz",
+        "decd26836af2cb9e0925e3bd5c79f7aa3740df9f2dbe88bbc57b1b4249cfd7ea",
     ),
     (
-        "llama-b7100-bin-macos-arm64.zip",
-        "c54e7997d8dc4bc85d2166de14619cdafdd82aba34aadc15046668320e78ed63",
+        "llama-b12500-bin-macos-arm64.tar.gz",
+        "afe4188c1ffab52b9b39ea688c8fa49f1012b826282b5c11eee5e9b9c757e1aa",
     ),
     (
-        "llama-b7100-bin-macos-x64.zip",
-        "fec57f35bf4c0bfb3bbd12e5d4a73de27d7a9938737aedb41e436adae215ab0c",
+        "llama-b12500-bin-macos-x64.tar.gz",
+        "480a5ab691ccd1eb41c7a982852fd7b499789f32608e18a2d6efcb6ce49bb4e6",
     ),
 ];
 
@@ -103,7 +160,7 @@ fn assets_for(backend: Backend) -> String {
     #[cfg(target_os = "linux")]
     {
         let _ = backend;
-        format!("llama-{t}-bin-ubuntu-x64.zip")
+        format!("llama-{t}-bin-ubuntu-x64.tar.gz")
     }
     #[cfg(target_os = "macos")]
     {
@@ -113,7 +170,7 @@ fn assets_for(backend: Backend) -> String {
         } else {
             "x64"
         };
-        format!("llama-{t}-bin-macos-{arch}.zip")
+        format!("llama-{t}-bin-macos-{arch}.tar.gz")
     }
 }
 
@@ -332,8 +389,10 @@ impl LlamaServer {
         &self,
         client: &reqwest::Client,
         model_path: &Path,
+        mmproj_path: Option<&Path>,
         model_id: &str,
         n_gpu_layers: i32,
+        cpu_moe: bool,
     ) -> Result<u16, AppError> {
         // One start at a time; see `start_lock`. A second caller waits here and
         // then finds the server the first one started.
@@ -372,7 +431,21 @@ impl LlamaServer {
             .arg(n_gpu_layers.to_string())
             .arg("--no-webui")
             .arg("-c")
-            .arg(LOCAL_CONTEXT_TOKENS.to_string())
+            .arg(LOCAL_CONTEXT_TOKENS.to_string());
+        if cpu_moe {
+            // Expert weights stay in system RAM; attention and the KV cache
+            // still run on the GPU.
+            cmd.arg("--cpu-moe");
+        }
+        if let Some(mmproj) = mmproj_path {
+            cmd.arg("--mmproj").arg(mmproj);
+            // On CPU the projector follows the weights, or a busy GPU this
+            // was kept off would still get the vision encoder.
+            if n_gpu_layers == 0 {
+                cmd.arg("--no-mmproj-offload");
+            }
+        }
+        cmd
             // Passed through the environment rather than `--api-key`: another
             // local account can read a process's command line, but not its
             // environment. llama-server reads `LLAMA_API_KEY` as `--api-key`.
@@ -442,6 +515,8 @@ impl LlamaServer {
     }
 
     /// POST a single chat completion and return the assistant message content.
+    // The external `chat_*` functions take the same turn fields.
+    #[allow(clippy::too_many_arguments)]
     pub async fn chat(
         &self,
         client: &reqwest::Client,
@@ -450,6 +525,7 @@ impl LlamaServer {
         history: &[super::history::ChatMessage],
         user: &str,
         max_tokens: u32,
+        images: &[super::vision::VisionImage],
     ) -> Result<String, AppError> {
         // Mark a request in flight so the idle watchdog leaves the server alone
         // until generation finishes. CPU inference of a 7B model routinely runs
@@ -472,17 +548,27 @@ impl LlamaServer {
         let api_key = self.api_key.lock().unwrap().clone();
         self.touch();
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
-        let body = json!({
-            "messages": super::history::openai_messages(system, history, json!(user)),
-            "temperature": 0.7,
+        // Callers pass images only to a model loaded with its projector.
+        let mut body = json!({
+            "messages": super::history::openai_messages(system, history, openai_user_content(user, images)),
+            "temperature": temperature(),
             "max_tokens": max_tokens,
-            "stream": false
+            "stream": false,
+            // Qwen3.5 and later think by default, which would spend the
+            // small budgets these requests ask for before answering. Models
+            // whose template has no thinking switch ignore it.
+            "chat_template_kwargs": { "enable_thinking": false }
         });
-        let resp = match client
+        if sampling().json {
+            // llama-server turns this into a grammar, so a small model cannot
+            // wander off into prose or leave the object unclosed.
+            body["response_format"] = json!({ "type": "json_object" });
+        }
+        let mut resp = match client
             .post(&url)
             .bearer_auth(&api_key)
             .json(&body)
-            .timeout(Duration::from_secs(120))
+            .timeout(chat_timeout(!images.is_empty(), false))
             .send()
             .await
         {
@@ -510,9 +596,18 @@ impl LlamaServer {
             }
         };
         if !resp.status().is_success() {
-            return Err(AppError::LlmError(format!(
-                "llama-server returned {}",
-                resp.status()
+            // Our own child on loopback, so its body is always safe to quote,
+            // and it is the only place the reason is given: "the request
+            // exceeds the available context size" reads very differently
+            // from a bare 400.
+            let status = resp.status();
+            let body = read_limited(&mut resp, ERROR_BODY_LIMIT)
+                .await
+                .map(|(bytes, _)| bytes)
+                .unwrap_or_default();
+            return Err(AppError::LlmError(local_status_error(
+                status.as_u16(),
+                &String::from_utf8_lossy(&body),
             )));
         }
         let v = bounded_json(resp, RESPONSE_LIMIT, "llama-server response").await?;
@@ -592,13 +687,24 @@ fn external_models_urls(base_url: &str) -> Vec<String> {
 ///
 /// A vision turn ships up to four ~1 MP JPEGs and asks for a long answer, and
 /// hosted models routinely take well over two minutes on that; a text-only
-/// turn that has not answered in two minutes is not going to.
-fn chat_timeout(has_images: bool) -> Duration {
-    if has_images {
+/// turn that has not answered in two minutes is not going to, unless the
+/// model reasons first. xAI's own guidance is to allow reasoning calls far
+/// longer than two minutes, and one cut off early is reported as the model
+/// being unavailable, which hands the turn to a fallback for no reason.
+fn chat_timeout(has_images: bool, reasons: bool) -> Duration {
+    if has_images || reasons {
         Duration::from_secs(300)
     } else {
         Duration::from_secs(120)
     }
+}
+
+/// The message for a non-success answer from the bundled llama-server.
+fn local_status_error(status: u16, body: &str) -> String {
+    format!(
+        "llama-server returned {status}{}",
+        crate::http_error::detail_suffix(status, body)
+    )
 }
 
 /// The whole cause chain of an error, outermost first.
@@ -646,11 +752,121 @@ async fn send_external_chat(
         req = req.bearer_auth(api_key);
     }
     req.send().await.map_err(|e| {
-        AppError::LlmError(format!(
+        AppError::LlmUnavailable(format!(
             "External LLM request failed: {}",
             describe_request_error(&e, timeout)
         ))
     })
+}
+
+/// Whether an HTTP status means the provider is down or busy rather than that
+/// it refused this request: 408 and 429, any 5xx, and Cloudflare's 52x and
+/// Anthropic's 529 overload (both in the 5xx range). A 4xx refusal (bad key,
+/// unknown model, a policy block) is the same on the next model, so it ends
+/// the fallback chain instead of being retried.
+fn status_is_unavailable(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 429) || status.is_server_error()
+}
+
+/// The error for a non-success status, typed by [`status_is_unavailable`].
+fn status_error(status: reqwest::StatusCode, message: String) -> AppError {
+    if status_is_unavailable(status) {
+        AppError::LlmUnavailable(message)
+    } else {
+        AppError::LlmError(message)
+    }
+}
+
+/// Whether an OpenAI-compatible provider/model supports Anthropic-style
+/// `cache_control` content blocks in the system message.
+pub fn supports_openai_system_cache(provider_id: &str, model: &str) -> bool {
+    provider_id == "openrouter" && model.trim().to_ascii_lowercase().starts_with("anthropic/")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CustomBodyShape {
+    /// Default OpenAI-compatible request (no extra thinking/reasoning fields).
+    Bare,
+    /// Thinking-off: send all common switches (`enable_thinking`, `think`,
+    /// `chat_template_kwargs`, `reasoning_effort: "none"`).
+    ThinkingOffAll,
+    /// Thinking-off: `chat_template_kwargs: { "enable_thinking": false }` only.
+    ThinkingOffTemplateKwargs,
+    /// Thinking-off: top-level `enable_thinking: false` only.
+    ThinkingOffFlag,
+    /// Thinking-off: `reasoning_effort: "none"` only.
+    ThinkingOffEffortNone,
+    /// Explicit `reasoning_effort` (`Medium` / `High` or hosted provider effort).
+    ReasoningEffort,
+}
+
+const CUSTOM_SHAPE_CACHE_MAX: usize = 256;
+type CustomShapeKey = (String, String, bool);
+static CUSTOM_SHAPE_CACHE: std::sync::Mutex<
+    Option<std::collections::HashMap<CustomShapeKey, CustomBodyShape>>,
+> = std::sync::Mutex::new(None);
+
+fn custom_shape_key(base_url: &str, model: &str, is_off: bool) -> CustomShapeKey {
+    (
+        base_url.trim().trim_end_matches('/').to_ascii_lowercase(),
+        model.trim().to_ascii_lowercase(),
+        is_off,
+    )
+}
+
+fn cached_custom_shape(base_url: &str, model: &str, is_off: bool) -> Option<CustomBodyShape> {
+    let guard = CUSTOM_SHAPE_CACHE.lock().ok()?;
+    guard
+        .as_ref()?
+        .get(&custom_shape_key(base_url, model, is_off))
+        .copied()
+}
+
+fn record_custom_shape(base_url: &str, model: &str, tuning: &Tuning, shape: CustomBodyShape) {
+    use super::reasoning::CustomThinking;
+    let is_off = match tuning.custom_thinking {
+        CustomThinking::Untouched => return,
+        CustomThinking::Off => true,
+        CustomThinking::Effort => false,
+    };
+    if let Ok(mut guard) = CUSTOM_SHAPE_CACHE.lock() {
+        let map = guard.get_or_insert_with(std::collections::HashMap::new);
+        if map.len() >= CUSTOM_SHAPE_CACHE_MAX {
+            map.clear();
+        }
+        map.insert(custom_shape_key(base_url, model, is_off), shape);
+    }
+}
+
+fn custom_shapes_for(base_url: &str, model: &str, tuning: &Tuning) -> Vec<CustomBodyShape> {
+    use super::reasoning::CustomThinking;
+    match tuning.custom_thinking {
+        CustomThinking::Untouched => vec![if tuning.effort.is_some() {
+            CustomBodyShape::ReasoningEffort
+        } else {
+            CustomBodyShape::Bare
+        }],
+        CustomThinking::Off => {
+            const ORDER: &[CustomBodyShape] = &[
+                CustomBodyShape::ThinkingOffAll,
+                CustomBodyShape::ThinkingOffTemplateKwargs,
+                CustomBodyShape::ThinkingOffFlag,
+                CustomBodyShape::ThinkingOffEffortNone,
+                CustomBodyShape::Bare,
+            ];
+            let start = cached_custom_shape(base_url, model, true)
+                .and_then(|s| ORDER.iter().position(|&c| c == s))
+                .unwrap_or(0);
+            ORDER[start..].to_vec()
+        }
+        CustomThinking::Effort => {
+            if cached_custom_shape(base_url, model, false) == Some(CustomBodyShape::Bare) {
+                vec![CustomBodyShape::Bare]
+            } else {
+                vec![CustomBodyShape::ReasoningEffort, CustomBodyShape::Bare]
+            }
+        }
+    }
 }
 
 /// Send a chat completion to an external OpenAI-compatible endpoint (LM Studio,
@@ -677,36 +893,26 @@ pub async fn chat_external(
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
+    tuning: &Tuning,
 ) -> Result<String, AppError> {
-    // A bare string when there is nothing to look at: the array form is legal
-    // either way, but some OpenAI-compatible servers only accept the string.
-    let user_content = if images.is_empty() {
-        json!(user)
+    let user_content = openai_user_content(user, images);
+    let cache_prefix = if tuning.cache_system {
+        system_cache_prefix()
     } else {
-        // Text first, then the images in the order the caller listed them --
-        // the user turn refers to them by position ("image 2"), so the order
-        // here is part of the contract rather than an implementation detail.
-        let mut parts = vec![json!({ "type": "text", "text": user })];
-        parts.extend(images.iter().map(|img| {
-            json!({
-                "type": "image_url",
-                "image_url": {
-                    "url": format!("data:{};base64,{}", img.media_type, img.base64)
-                }
-            })
-        }));
-        json!(parts)
+        None
     };
-    let body = json!({
-        "model": model,
-        "messages": super::history::openai_messages(system, history, user_content),
-        "temperature": 0.7,
-        "max_tokens": max_tokens,
-        "stream": false
-    });
+    let messages = super::history::openai_messages_with_cache(
+        system,
+        cache_prefix.as_deref(),
+        history,
+        user_content,
+    );
+    let shapes = custom_shapes_for(base_url, model, tuning);
     let urls = external_chat_urls(base_url);
-    let timeout = chat_timeout(!images.is_empty());
-    let mut resp = send_external_chat(client, &urls[0], api_key, &body, timeout).await?;
+    let timeout = chat_timeout(!images.is_empty(), tuning.reasons);
+    let first_body = openai_body_with_shape(model, &messages, max_tokens, tuning, shapes[0]);
+    let mut active_url = &urls[0];
+    let mut resp = send_external_chat(client, active_url, api_key, &first_body, timeout).await?;
     if resp.status().as_u16() == 404 && urls.len() > 1 {
         // A user-entered base URL can carry credentials (`user:pass@`) or a
         // `?key=` query, and this log ends up in exported diagnostics.
@@ -715,7 +921,19 @@ pub async fn chat_external(
             crate::commands::api::redact_url_secrets(&urls[0]),
             crate::commands::api::redact_url_secrets(&urls[1])
         );
-        resp = send_external_chat(client, &urls[1], api_key, &body, timeout).await?;
+        active_url = &urls[1];
+        resp = send_external_chat(client, active_url, api_key, &first_body, timeout).await?;
+    }
+    let mut used_shape = shapes[0];
+    if shapes.len() > 1 && matches!(resp.status().as_u16(), 400 | 422) {
+        for &next_shape in &shapes[1..] {
+            let body = openai_body_with_shape(model, &messages, max_tokens, tuning, next_shape);
+            used_shape = next_shape;
+            resp = send_external_chat(client, active_url, api_key, &body, timeout).await?;
+            if !matches!(resp.status().as_u16(), 400 | 422) {
+                break;
+            }
+        }
     }
     if !resp.status().is_success() {
         let status = resp.status();
@@ -725,12 +943,226 @@ pub async fn chat_external(
         } else {
             ""
         };
-        return Err(AppError::LlmError(format!(
-            "External LLM returned {status}{detail}{hint}"
-        )));
+        return Err(status_error(
+            status,
+            format!("External LLM returned {status}{detail}{hint}"),
+        ));
     }
+    record_custom_shape(base_url, model, tuning, used_shape);
     let v = bounded_json(resp, RESPONSE_LIMIT, "external LLM response").await?;
     completion_content(&v, "The external model")
+}
+
+/// Per-model adjustments to an OpenAI-style chat request for a model that
+/// reasons. The default leaves the request exactly as it always was.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tuning {
+    /// The effort to ask for, if any.
+    pub effort: Option<String>,
+    /// OpenRouter's `reasoning: {effort}` rather than the top-level
+    /// `reasoning_effort` xAI and OpenAI take.
+    pub nested: bool,
+    /// An OpenAI reasoning model: `max_completion_tokens` instead of
+    /// `max_tokens`, and no `temperature`, both of which it rejects.
+    pub openai_reasoning: bool,
+    /// Tokens added to `max_tokens` so thinking does not eat the answer.
+    pub headroom: u32,
+    /// The model reasons, so it gets the longer timeout.
+    pub reasons: bool,
+    /// How a custom OpenAI-compatible server handles thinking/reasoning, with
+    /// safe fallback when unknown fields are rejected.
+    pub custom_thinking: super::reasoning::CustomThinking,
+    /// Whether this `(provider, model)` accepts Anthropic-style `cache_control`
+    /// blocks on the system message (OpenRouter Anthropic models).
+    pub cache_system: bool,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            effort: None,
+            nested: false,
+            openai_reasoning: false,
+            headroom: 0,
+            reasons: false,
+            custom_thinking: super::reasoning::CustomThinking::Untouched,
+            cache_system: false,
+        }
+    }
+}
+
+/// The tuning for `model` on `provider_id`. See [`super::reasoning`].
+pub async fn tuning_for(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base: &str,
+    model: &str,
+    setting: super::reasoning::Setting,
+) -> Tuning {
+    use super::reasoning as r;
+    if super::providers::is_custom_endpoint(provider_id) {
+        let custom_thinking = r::custom(setting);
+        let (effort, headroom) = match custom_thinking {
+            r::CustomThinking::Effort => {
+                let level = match setting {
+                    r::Setting::Medium => "medium",
+                    r::Setting::High => "high",
+                    _ => "low",
+                };
+                (Some(level.to_string()), r::headroom(Some(level)))
+            }
+            r::CustomThinking::Off | r::CustomThinking::Untouched => (None, 0),
+        };
+        return Tuning {
+            reasons: true,
+            effort,
+            headroom,
+            custom_thinking,
+            ..Tuning::default()
+        };
+    }
+    match provider_id {
+        // xAI does not count reasoning against `max_tokens` (Grok 4.5 has
+        // been answering inside a 96-token budget at its default `high`), so
+        // no headroom; only the effort and the timeout change.
+        "xai" | "xai-oauth" => {
+            let efforts = r::xai(model);
+            Tuning {
+                effort: efforts.as_ref().and_then(|e| r::pick(setting, e)),
+                reasons: r::xai_reasons(model),
+                ..Tuning::default()
+            }
+        }
+        "openai" => match r::openai(model) {
+            Some(efforts) => {
+                let effort = r::pick(setting, &efforts);
+                let level = r::effective(effort.as_deref(), &efforts).unwrap_or("medium");
+                Tuning {
+                    headroom: r::headroom(Some(level)),
+                    effort,
+                    openai_reasoning: true,
+                    reasons: true,
+                    ..Tuning::default()
+                }
+            }
+            None => Tuning::default(),
+        },
+        "openrouter" => {
+            let cache_system = supports_openai_system_cache(provider_id, model);
+            match r::openrouter(client, base, model).await {
+                Some(m) if m.on_by_default => {
+                    let effort = r::pick(setting, &m.efforts);
+                    let level = r::effective(effort.as_deref(), &m.efforts).unwrap_or("medium");
+                    Tuning {
+                        headroom: r::headroom(Some(level)),
+                        effort,
+                        nested: true,
+                        reasons: true,
+                        cache_system,
+                        ..Tuning::default()
+                    }
+                }
+                _ => Tuning {
+                    cache_system,
+                    ..Tuning::default()
+                },
+            }
+        }
+        _ => Tuning::default(),
+    }
+}
+
+/// The JSON body of an OpenAI-style chat completion.
+#[cfg_attr(not(test), allow(dead_code))]
+fn openai_body(
+    model: &str,
+    messages: serde_json::Value,
+    max_tokens: u32,
+    tuning: &Tuning,
+) -> serde_json::Value {
+    let shape = match tuning.custom_thinking {
+        super::reasoning::CustomThinking::Off => CustomBodyShape::ThinkingOffAll,
+        super::reasoning::CustomThinking::Effort | super::reasoning::CustomThinking::Untouched => {
+            if tuning.effort.is_some() {
+                CustomBodyShape::ReasoningEffort
+            } else {
+                CustomBodyShape::Bare
+            }
+        }
+    };
+    openai_body_with_shape(model, &messages, max_tokens, tuning, shape)
+}
+
+fn openai_body_with_shape(
+    model: &str,
+    messages: &serde_json::Value,
+    max_tokens: u32,
+    tuning: &Tuning,
+    shape: CustomBodyShape,
+) -> serde_json::Value {
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+        "stream": false
+    });
+    let limit = max_tokens.saturating_add(tuning.headroom);
+    if tuning.openai_reasoning {
+        body["max_completion_tokens"] = json!(limit);
+    } else {
+        body["temperature"] = json!(temperature());
+        body["max_tokens"] = json!(limit);
+    }
+    match shape {
+        CustomBodyShape::Bare => {}
+        CustomBodyShape::ThinkingOffAll => {
+            body["enable_thinking"] = json!(false);
+            body["think"] = json!(false);
+            body["chat_template_kwargs"] = json!({ "enable_thinking": false });
+            body["reasoning_effort"] = json!("none");
+        }
+        CustomBodyShape::ThinkingOffTemplateKwargs => {
+            body["chat_template_kwargs"] = json!({ "enable_thinking": false });
+        }
+        CustomBodyShape::ThinkingOffFlag => {
+            body["enable_thinking"] = json!(false);
+        }
+        CustomBodyShape::ThinkingOffEffortNone => {
+            body["reasoning_effort"] = json!("none");
+        }
+        CustomBodyShape::ReasoningEffort => {
+            if let Some(effort) = &tuning.effort {
+                if tuning.nested {
+                    body["reasoning"] = json!({ "effort": effort });
+                } else {
+                    body["reasoning_effort"] = json!(effort);
+                }
+            }
+        }
+    }
+    body
+}
+
+/// The user turn of an OpenAI-style chat request, with any images inlined.
+///
+/// A bare string when there is nothing to look at: the array form is legal
+/// either way, but some OpenAI-compatible servers only accept the string.
+fn openai_user_content(user: &str, images: &[super::vision::VisionImage]) -> serde_json::Value {
+    if images.is_empty() {
+        return json!(user);
+    }
+    // Text first, then the images in the order the caller listed them --
+    // the user turn refers to them by position ("image 2"), so the order
+    // here is part of the contract rather than an implementation detail.
+    let mut parts = vec![json!({ "type": "text", "text": user })];
+    parts.extend(images.iter().map(|img| {
+        json!({
+            "type": "image_url",
+            "image_url": {
+                "url": format!("data:{};base64,{}", img.media_type, img.base64)
+            }
+        })
+    }));
+    json!(parts)
 }
 
 /// Pull the assistant text out of a chat completion, naming why it can be missing.
@@ -800,12 +1232,7 @@ async fn error_detail(mut resp: reqwest::Response) -> String {
         Ok((bytes, _)) => bytes,
         Err(_) => return String::new(),
     };
-    let detail: String = String::from_utf8_lossy(&body).chars().take(300).collect();
-    if detail.trim().is_empty() {
-        String::new()
-    } else {
-        format!(": {detail}")
-    }
+    crate::http_error::detail_suffix(resp.status().as_u16(), &String::from_utf8_lossy(&body))
 }
 
 /// Whether the body of `resp` may be quoted back in an error message. Checks
@@ -930,6 +1357,7 @@ pub async fn chat_anthropic(
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
+    effort: super::reasoning::Setting,
 ) -> Result<String, AppError> {
     if api_key.trim().is_empty() {
         return Err(AppError::LlmError(
@@ -958,14 +1386,18 @@ pub async fn chat_anthropic(
         parts.push(json!({ "type": "text", "text": user }));
         json!(parts)
     };
-    let body = json!({
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": system,
-        "temperature": 0.7,
-        "messages": super::history::anthropic_messages(history, user_content)
-    });
-    let timeout = chat_timeout(!images.is_empty());
+    let claude = super::reasoning::anthropic(model);
+    let cache_prefix = system_cache_prefix();
+    let body = anthropic_body_cached(
+        &claude,
+        effort,
+        model,
+        system,
+        cache_prefix.as_deref(),
+        super::history::anthropic_messages(history, user_content),
+        max_tokens,
+    );
+    let timeout = chat_timeout(!images.is_empty(), claude.thinks);
     let resp = client
         .post(anthropic_url(base_url, "messages"))
         .header("x-api-key", api_key)
@@ -975,7 +1407,7 @@ pub async fn chat_anthropic(
         .send()
         .await
         .map_err(|e| {
-            AppError::LlmError(format!(
+            AppError::LlmUnavailable(format!(
                 "Anthropic request failed: {}",
                 describe_request_error(&e, timeout)
             ))
@@ -983,12 +1415,69 @@ pub async fn chat_anthropic(
     if !resp.status().is_success() {
         let status = resp.status();
         let detail = error_detail(resp).await;
-        return Err(AppError::LlmError(format!(
-            "Anthropic returned {status}{detail}"
-        )));
+        return Err(status_error(
+            status,
+            format!("Anthropic returned {status}{detail}"),
+        ));
     }
     let v = bounded_json(resp, RESPONSE_LIMIT, "Anthropic response").await?;
     anthropic_text(&v)
+}
+
+/// The JSON body of a Messages API request, shaped for the model.
+///
+/// Claude models from Opus 4.7 on reject a non-default `temperature`, so it
+/// is only sent to the ones that still take it. Models that think unasked
+/// (the 5 generation on) get the chosen effort and room in `max_tokens` for
+/// the thinking, which Anthropic counts against the same limit as the answer.
+#[cfg_attr(not(test), allow(dead_code))]
+fn anthropic_body(
+    claude: &super::reasoning::Claude,
+    effort: super::reasoning::Setting,
+    model: &str,
+    system: &str,
+    messages: serde_json::Value,
+    max_tokens: u32,
+) -> serde_json::Value {
+    anthropic_body_cached(claude, effort, model, system, None, messages, max_tokens)
+}
+
+fn anthropic_body_cached(
+    claude: &super::reasoning::Claude,
+    effort: super::reasoning::Setting,
+    model: &str,
+    system: &str,
+    cache_prefix: Option<&str>,
+    messages: serde_json::Value,
+    max_tokens: u32,
+) -> serde_json::Value {
+    use super::history::{split_system, system_cache_blocks, SystemPrompt};
+    use super::reasoning as r;
+    let system_val = match split_system(system, cache_prefix) {
+        SystemPrompt::Plain(s) => json!(s),
+        SystemPrompt::Cached { prefix, suffix } => system_cache_blocks(prefix, suffix),
+    };
+    let mut body = json!({
+        "model": model,
+        "system": system_val,
+        "messages": messages
+    });
+    let mut limit = max_tokens;
+    if claude.sampling {
+        body["temperature"] = json!(temperature());
+    }
+    if claude.thinks {
+        let picked = r::pick(effort, &claude.efforts);
+        limit = limit.saturating_add(r::headroom(r::effective(
+            picked.as_deref(),
+            &claude.efforts,
+        )));
+        if let Some(level) = picked {
+            body["output_config"] = json!({ "effort": level });
+        }
+    }
+    body["max_tokens"] = json!(limit);
+    body
 }
 
 /// Pull the answer out of a Messages API response.
@@ -1048,17 +1537,19 @@ pub async fn chat_provider(
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
+    effort: &str,
 ) -> Result<String, AppError> {
+    let effort = super::reasoning::Setting::parse(effort);
     let base = super::providers::effective_base_url(provider_id, base_url);
     match super::providers::wire_for(provider_id) {
         super::providers::Wire::Companion => {
             // One text turn per request, so the session is written into it.
             let user = super::history::single_turn_text(history, user);
-            super::companion::chat(provider_id, model, system, &user, images, None).await
+            super::companion::chat(provider_id, model, system, &user, images, None, effort).await
         }
         super::providers::Wire::Anthropic => {
             chat_anthropic(
-                client, &base, api_key, model, system, history, user, max_tokens, images,
+                client, &base, api_key, model, system, history, user, max_tokens, images, effort,
             )
             .await
         }
@@ -1069,12 +1560,80 @@ pub async fn chat_provider(
                         .into(),
                 ));
             }
+            let tuning = tuning_for(client, provider_id, &base, model, effort).await;
             chat_external(
-                client, &base, api_key, model, system, history, user, max_tokens, images,
+                client, &base, api_key, model, system, history, user, max_tokens, images, &tuning,
             )
             .await
         }
     }
+}
+
+/// The models to try in order: the configured one, then each fallback that is
+/// not blank and not already listed.
+pub fn model_chain(primary: &str, fallbacks: &[String]) -> Vec<String> {
+    let mut chain = vec![primary.trim().to_string()];
+    for m in fallbacks {
+        let m = m.trim();
+        if !m.is_empty() && !chain.iter().any(|c| c == m) {
+            chain.push(m.to_string());
+        }
+    }
+    chain
+}
+
+/// [`chat_provider`] down a chain of models on the same provider.
+///
+/// `effort` is `AppConfig::llm_reasoning_effort`; see [`super::reasoning`].
+///
+/// The next model is tried only when the previous one was unavailable (see
+/// [`AppError::is_llm_unavailable`]); any other failure is returned at once,
+/// since a refused request would be refused again. When every model is
+/// unavailable the last error is returned, still typed as unavailable, so the
+/// caller can fall back further to the bundled local model.
+// Same argument list as `chat_provider`, with the model list in place of one model.
+#[allow(clippy::too_many_arguments)]
+pub async fn chat_provider_chain(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base_url: &str,
+    api_key: &str,
+    models: &[String],
+    system: &str,
+    history: &[super::history::ChatMessage],
+    user: &str,
+    max_tokens: u32,
+    images: &[super::vision::VisionImage],
+    effort: &str,
+) -> Result<String, AppError> {
+    let mut last = None;
+    for (i, model) in models.iter().enumerate() {
+        if i > 0 {
+            log::warn!(
+                "[prompt-assistant] {} unavailable, trying fallback model {model}",
+                models[i - 1]
+            );
+        }
+        match chat_provider(
+            client,
+            provider_id,
+            base_url,
+            api_key,
+            model,
+            system,
+            history,
+            user,
+            max_tokens,
+            images,
+            effort,
+        )
+        .await
+        {
+            Err(e) if e.is_llm_unavailable() => last = Some(e),
+            other => return other,
+        }
+    }
+    Err(last.unwrap_or_else(|| AppError::LlmError("No external LLM model is set.".into())))
 }
 
 /// List the model ids a provider exposes.
@@ -1307,9 +1866,82 @@ async fn download_with_progress(
     }
 }
 
+/// Extract a release archive flatly into `dir`: `.tar.gz` (Linux and macOS
+/// since b7300) or `.zip` (Windows).
+fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
+    let is_tar_gz = archive_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".tar.gz"));
+    if is_tar_gz {
+        #[cfg(unix)]
+        return extract_tar_gz_into(archive_path, dir);
+        #[cfg(not(unix))]
+        return Err(AppError::LlmError(
+            "llama.cpp .tar.gz archives are only used on Linux and macOS".into(),
+        ));
+    }
+    extract_zip_into(archive_path, dir)
+}
+
+/// Remove whatever an earlier release left at `path` (a file or a symlink),
+/// so writing the new one never follows an old link.
+fn clear_path(path: &Path) -> Result<(), AppError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => std::fs::remove_file(path).map_err(AppError::from),
+        Err(_) => Ok(()),
+    }
+}
+
+/// Extract every file and symlink of a `.tar.gz` flatly into `dir` (strip
+/// directories). The Linux and macOS builds ship their shared libraries as
+/// version symlinks (`libllama.so.1 -> libllama.so.1.0.0`), which the binary
+/// loads by the short name, so links are recreated pointing at their target's
+/// file name in the same folder, never anywhere else.
+#[cfg(unix)]
+fn extract_tar_gz_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
+    use std::os::unix::fs::PermissionsExt;
+    let file = std::fs::File::open(archive_path)?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    let bad = |e: std::io::Error| AppError::LlmError(format!("Bad tar.gz: {e}"));
+    for entry in archive.entries().map_err(bad)? {
+        let mut entry = entry.map_err(bad)?;
+        let kind = entry.header().entry_type();
+        let path = entry.path().map_err(bad)?.into_owned();
+        let Some(name) = path.file_name().map(|f| f.to_owned()) else {
+            continue;
+        };
+        let out_path = dir.join(&name);
+        if kind.is_symlink() {
+            let Some(target) = entry
+                .link_name()
+                .map_err(bad)?
+                .and_then(|t| t.file_name().map(|f| f.to_owned()))
+            else {
+                continue;
+            };
+            clear_path(&out_path)?;
+            std::os::unix::fs::symlink(target, &out_path)?;
+        } else if kind.is_file() {
+            clear_path(&out_path)?;
+            let mut out = std::fs::File::create(&out_path)?;
+            std::io::copy(&mut entry, &mut out)?;
+            // Readable by the owner always; executable only where the
+            // archive says so, and always for the server itself.
+            let mode = if out_path.file_name().and_then(|n| n.to_str()) == Some(SERVER_BIN) {
+                0o755
+            } else {
+                (entry.header().mode().unwrap_or(0o644) | 0o644) & 0o755
+            };
+            std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode))?;
+        }
+    }
+    Ok(())
+}
+
 /// Extract every file from a zip archive flatly into `dir` (strip directories),
 /// preserving executable bits on unix.
-fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
+fn extract_zip_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
     let file = std::fs::File::open(archive_path)?;
     let mut zip =
         zip::ZipArchive::new(file).map_err(|e| AppError::LlmError(format!("Bad zip: {e}")))?;
@@ -1381,9 +2013,25 @@ mod tests {
     }
 
     #[test]
+    fn a_local_error_quotes_the_servers_reason() {
+        let err = super::local_status_error(
+            400,
+            r#"{"error":{"message":"the request exceeds the available context size"}}"#,
+        );
+        assert!(err.starts_with("llama-server returned 400"), "{err}");
+        assert!(err.contains("exceeds the available context size"), "{err}");
+        assert_eq!(
+            super::local_status_error(500, ""),
+            "llama-server returned 500"
+        );
+    }
+
+    #[test]
     fn vision_requests_get_a_longer_budget() {
-        assert!(chat_timeout(true) > chat_timeout(false));
-        assert_eq!(chat_timeout(false), Duration::from_secs(120));
+        assert!(chat_timeout(true, false) > chat_timeout(false, false));
+        assert_eq!(chat_timeout(false, false), Duration::from_secs(120));
+        // A model that reasons first gets the long budget too.
+        assert_eq!(chat_timeout(false, true), chat_timeout(true, false));
     }
 
     #[test]
@@ -1477,7 +2125,54 @@ mod hardening_tests {
             assert_eq!(digest.len(), 64, "{asset}");
             assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "{asset}");
         }
-        assert!(pinned_sha256("llama-b7100-bin-evil.zip").is_none());
+        assert!(pinned_sha256("llama-b12500-bin-evil.zip").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tar_gz_releases_extract_flat_with_their_library_links() {
+        let root = std::env::temp_dir().join(format!("mooshie-llama-tar-{}", random_api_key()));
+        let out = root.join("bin");
+        std::fs::create_dir_all(&out).unwrap();
+        let archive = root.join("llama-test-bin-ubuntu-x64.tar.gz");
+        {
+            let gz = flate2::write::GzEncoder::new(
+                std::fs::File::create(&archive).unwrap(),
+                flate2::Compression::fast(),
+            );
+            let mut tar = tar::Builder::new(gz);
+            let mut add = |path: &str, body: &[u8], mode: u32| {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(body.len() as u64);
+                h.set_mode(mode);
+                h.set_cksum();
+                tar.append_data(&mut h, path, body).unwrap();
+            };
+            add("llama-test/llama-server", b"bin", 0o755);
+            add("llama-test/libllama.so.1.0.0", b"lib", 0o644);
+            let mut link = tar::Header::new_gnu();
+            link.set_entry_type(tar::EntryType::Symlink);
+            link.set_size(0);
+            link.set_cksum();
+            // A link that tries to leave the folder still lands inside it.
+            tar.append_link(
+                &mut link,
+                "llama-test/libllama.so.1",
+                "../../libllama.so.1.0.0",
+            )
+            .unwrap();
+            tar.into_inner().unwrap().finish().unwrap();
+        }
+        // An old release left a regular file where the new one has a link.
+        std::fs::write(out.join("libllama.so.1"), b"old").unwrap();
+        super::extract_all_into(&archive, &out).unwrap();
+        assert_eq!(std::fs::read(out.join("llama-server")).unwrap(), b"bin");
+        assert_eq!(
+            std::fs::read_link(out.join("libllama.so.1")).unwrap(),
+            std::path::PathBuf::from("libllama.so.1.0.0")
+        );
+        assert_eq!(std::fs::read(out.join("libllama.so.1")).unwrap(), b"lib");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -1493,7 +2188,7 @@ mod hardening_tests {
         // Nothing is listening and no port is published: the check must fail
         // before any connection is attempted, and release its in-flight slot.
         let err = server
-            .chat(&reqwest::Client::new(), 9, "s", &[], "u", 16)
+            .chat(&reqwest::Client::new(), 9, "s", &[], "u", 16, &[])
             .await
             .unwrap_err()
             .to_string();
@@ -1605,5 +2300,487 @@ mod hardening_tests {
         .to_string();
         assert!(err.contains("token budget"), "{err}");
         assert!(anthropic_text(&serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn only_busy_or_failing_statuses_are_unavailable() {
+        for code in [408u16, 429, 500, 502, 503, 504, 524, 529] {
+            let status = reqwest::StatusCode::from_u16(code).unwrap();
+            assert!(status_is_unavailable(status), "{code}");
+        }
+        for code in [400u16, 401, 403, 404, 422] {
+            let status = reqwest::StatusCode::from_u16(code).unwrap();
+            assert!(!status_is_unavailable(status), "{code}");
+        }
+    }
+
+    #[test]
+    fn the_chain_starts_with_the_primary_and_skips_blanks_and_repeats() {
+        let fallbacks = vec![
+            " b ".to_string(),
+            String::new(),
+            "a".to_string(),
+            "c".to_string(),
+            "b".to_string(),
+        ];
+        assert_eq!(model_chain(" a ", &fallbacks), ["a", "b", "c"]);
+        assert_eq!(model_chain("a", &[]), ["a"]);
+    }
+
+    /// An OpenAI-compatible server that answers per model: `busy` with 429,
+    /// `refuses` with 400, anything else with its own name.
+    async fn chain_server() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(
+                |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    use axum::response::IntoResponse;
+                    let model = body["model"].as_str().unwrap_or("").to_string();
+                    match model.as_str() {
+                        "busy" => {
+                            (axum::http::StatusCode::TOO_MANY_REQUESTS, "slow down").into_response()
+                        }
+                        "refuses" => (axum::http::StatusCode::BAD_REQUEST, "no").into_response(),
+                        _ => axum::Json(serde_json::json!({
+                            "choices": [{ "message": { "content": model } }]
+                        }))
+                        .into_response(),
+                    }
+                },
+            ),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{address}/v1")
+    }
+
+    async fn run_chain(base: &str, models: &[&str]) -> Result<String, AppError> {
+        let models: Vec<String> = models.iter().map(|m| m.to_string()).collect();
+        chat_provider_chain(
+            &reqwest::Client::new(),
+            "custom",
+            base,
+            "",
+            &models,
+            "s",
+            &[],
+            "u",
+            16,
+            &[],
+            "low",
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_busy_model_hands_over_to_the_next_one() {
+        let base = chain_server().await;
+        assert_eq!(run_chain(&base, &["busy", "spare"]).await.unwrap(), "spare");
+        assert_eq!(
+            run_chain(&base, &["first", "spare"]).await.unwrap(),
+            "first"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_ends_the_chain() {
+        let base = chain_server().await;
+        let err = run_chain(&base, &["refuses", "spare"]).await.unwrap_err();
+        assert!(!err.is_llm_unavailable(), "{err}");
+        assert!(err.to_string().contains("400"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_exhausted_chain_stays_unavailable() {
+        let base = chain_server().await;
+        let err = run_chain(&base, &["busy", "busy"]).await.unwrap_err();
+        assert!(err.is_llm_unavailable(), "{err}");
+        // Nothing listening at all counts as unavailable too.
+        let err = run_chain("http://127.0.0.1:9/v1", &["any"])
+            .await
+            .unwrap_err();
+        assert!(err.is_llm_unavailable(), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod reasoning_body_tests {
+    use super::super::reasoning::{anthropic, Setting};
+    use super::{
+        anthropic_body, openai_body, tuning_for, with_sampling, Sampling, Tuning,
+        DEFAULT_TEMPERATURE,
+    };
+    use serde_json::json;
+
+    fn tuning(provider: &str, model: &str, setting: Setting) -> Tuning {
+        // xAI and OpenAI never touch the network to decide.
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(tuning_for(
+                &reqwest::Client::new(),
+                provider,
+                "",
+                model,
+                setting,
+            ))
+    }
+
+    #[test]
+    fn a_requested_temperature_applies_only_inside_its_scope() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let t = Tuning::default();
+        let low = Sampling {
+            temperature: Some(0.2),
+            json: true,
+        };
+        let body = rt.block_on(with_sampling(low, async {
+            openai_body("qwen3:8b", json!([]), 96, &t)
+        }));
+        assert_eq!(body["temperature"], 0.2);
+        // External servers never get the JSON constraint.
+        assert!(body.get("response_format").is_none());
+        let wild = Sampling {
+            temperature: Some(9.0),
+            json: false,
+        };
+        let body = rt.block_on(with_sampling(wild, async {
+            openai_body("qwen3:8b", json!([]), 96, &t)
+        }));
+        assert_eq!(body["temperature"], 2.0);
+        assert_eq!(
+            openai_body("qwen3:8b", json!([]), 96, &t)["temperature"],
+            DEFAULT_TEMPERATURE
+        );
+    }
+
+    #[test]
+    fn grok_gets_low_effort_and_the_long_timeout_but_no_extra_tokens() {
+        let t = tuning("xai-oauth", "grok-4.7", Setting::Low);
+        assert_eq!(t.effort.as_deref(), Some("low"));
+        assert!(t.reasons && !t.nested && t.headroom == 0);
+        let body = openai_body("grok-4.7", json!([]), 192, &t);
+        assert_eq!(body["reasoning_effort"], "low");
+        assert_eq!(body["max_tokens"], 192);
+        assert_eq!(body["temperature"], 0.7);
+        // The model default sends no effort at all.
+        let t = tuning("xai", "grok-4.7", Setting::ModelDefault);
+        assert!(openai_body("grok-4.7", json!([]), 192, &t)
+            .get("reasoning_effort")
+            .is_none());
+        // A non-reasoning Grok is left as it was.
+        assert_eq!(
+            tuning("xai", "grok-4.20-non-reasoning", Setting::Low),
+            Tuning::default()
+        );
+    }
+
+    #[test]
+    fn openai_reasoning_models_get_the_shape_they_accept() {
+        let t = tuning("openai", "gpt-5.5", Setting::Low);
+        let body = openai_body("gpt-5.5", json!([]), 192, &t);
+        assert_eq!(body["reasoning_effort"], "low");
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("temperature").is_none());
+        assert_eq!(body["max_completion_tokens"], 192 + 2048);
+        // gpt-4o-mini keeps the request it always had.
+        let t = tuning("openai", "gpt-4o-mini", Setting::Low);
+        let body = openai_body("gpt-4o-mini", json!([]), 192, &t);
+        assert_eq!(body["max_tokens"], 192);
+        assert_eq!(body["temperature"], 0.7);
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn custom_servers_disable_thinking_by_default_and_leave_model_default_untouched() {
+        use super::super::reasoning::CustomThinking;
+        let low = tuning("custom", "qwen3:8b", Setting::Low);
+        assert_eq!(
+            low,
+            Tuning {
+                reasons: true,
+                custom_thinking: CustomThinking::Off,
+                ..Tuning::default()
+            }
+        );
+        let body = openai_body("qwen3:8b", json!([]), 96, &low);
+        assert_eq!(body["max_tokens"], 96);
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["enable_thinking"], false);
+        assert_eq!(body["think"], false);
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({ "enable_thinking": false })
+        );
+        assert_eq!(body["reasoning_effort"], "none");
+
+        // ModelDefault leaves the request body untouched.
+        let default_mode = tuning("custom", "qwen3:8b", Setting::ModelDefault);
+        assert_eq!(
+            default_mode,
+            Tuning {
+                reasons: true,
+                custom_thinking: CustomThinking::Untouched,
+                ..Tuning::default()
+            }
+        );
+        let bare = openai_body("qwen3:8b", json!([]), 96, &default_mode);
+        assert!(bare.get("enable_thinking").is_none());
+        assert!(bare.get("chat_template_kwargs").is_none());
+        assert!(bare.get("reasoning_effort").is_none());
+
+        assert_eq!(
+            tuning("nous", "hermes-4-405b", Setting::Low),
+            Tuning::default()
+        );
+    }
+
+    #[test]
+    fn openrouter_effort_is_nested() {
+        let t = Tuning {
+            effort: Some("low".into()),
+            nested: true,
+            headroom: 2048,
+            reasons: true,
+            ..Tuning::default()
+        };
+        let body = openai_body("x-ai/grok-4.7", json!([]), 96, &t);
+        assert_eq!(body["reasoning"], json!({ "effort": "low" }));
+        assert_eq!(body["max_tokens"], 96 + 2048);
+    }
+
+    #[test]
+    fn prompt_caching_applies_to_anthropic_and_openrouter_anthropic_only() {
+        use super::{anthropic_body_cached, supports_openai_system_cache};
+        let sonnet5 = anthropic("claude-sonnet-5");
+        let body = anthropic_body_cached(
+            &sonnet5,
+            Setting::Low,
+            "claude-sonnet-5",
+            "STATIC_SPEC\n\nDYNAMIC_PART",
+            Some("STATIC_SPEC"),
+            json!([]),
+            192,
+        );
+        assert_eq!(
+            body["system"],
+            json!([
+                {
+                    "type": "text",
+                    "text": "STATIC_SPEC",
+                    "cache_control": { "type": "ephemeral" }
+                },
+                {
+                    "type": "text",
+                    "text": "DYNAMIC_PART"
+                }
+            ])
+        );
+        assert!(supports_openai_system_cache(
+            "openrouter",
+            "anthropic/claude-sonnet-4"
+        ));
+        assert!(!supports_openai_system_cache(
+            "openrouter",
+            "openai/gpt-4o-mini"
+        ));
+        assert!(!supports_openai_system_cache(
+            "openai",
+            "anthropic/claude-sonnet-4"
+        ));
+        assert!(!supports_openai_system_cache(
+            "custom",
+            "anthropic/claude-sonnet-4"
+        ));
+    }
+
+    #[tokio::test]
+    async fn custom_server_thinking_off_falls_back_when_unknown_fields_are_rejected() {
+        use std::sync::{Arc, Mutex};
+        let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_clone = Arc::clone(&seen);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let seen = Arc::clone(&seen_clone);
+                async move {
+                    use axum::response::IntoResponse;
+                    seen.lock().unwrap().push(body.clone());
+                    // Reject top-level `enable_thinking`/`think`/`reasoning_effort`,
+                    // accept `chat_template_kwargs` only (like strict vLLM).
+                    if body.get("enable_thinking").is_some()
+                        || body.get("think").is_some()
+                        || body.get("reasoning_effort").is_some()
+                    {
+                        return (
+                            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                            "Extra inputs are not permitted",
+                        )
+                            .into_response();
+                    }
+                    axum::Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "ok" } }]
+                    }))
+                    .into_response()
+                }
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}/v1");
+        let t = tuning_for(&client, "custom", &base, "qwen3-strict", Setting::Low).await;
+        let out = super::chat_external(
+            &client,
+            &base,
+            "",
+            "qwen3-strict",
+            "sys",
+            &[],
+            "hi",
+            64,
+            &[],
+            &t,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "ok");
+
+        // Second call reuses the cached winning shape (no wasted 422).
+        let out2 = super::chat_external(
+            &client,
+            &base,
+            "",
+            "qwen3-strict",
+            "sys",
+            &[],
+            "hi2",
+            64,
+            &[],
+            &t,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out2, "ok");
+        let reqs = seen.lock().unwrap();
+        assert_eq!(reqs.len(), 3);
+        assert!(reqs[0].get("enable_thinking").is_some());
+        assert_eq!(
+            reqs[1]["chat_template_kwargs"],
+            json!({ "enable_thinking": false })
+        );
+        assert!(reqs[1].get("enable_thinking").is_none());
+        assert_eq!(
+            reqs[2]["chat_template_kwargs"],
+            json!({ "enable_thinking": false })
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_server_falls_back_all_the_way_to_bare_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(
+                |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    use axum::response::IntoResponse;
+                    if body.get("enable_thinking").is_some()
+                        || body.get("think").is_some()
+                        || body.get("chat_template_kwargs").is_some()
+                        || body.get("reasoning_effort").is_some()
+                    {
+                        return (axum::http::StatusCode::BAD_REQUEST, "unknown field")
+                            .into_response();
+                    }
+                    axum::Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "bare-ok" } }]
+                    }))
+                    .into_response()
+                },
+            ),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}/v1");
+        let t = tuning_for(&client, "custom", &base, "strict-proxy", Setting::Low).await;
+        let out = super::chat_external(
+            &client,
+            &base,
+            "",
+            "strict-proxy",
+            "sys",
+            &[],
+            "hi",
+            64,
+            &[],
+            &t,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "bare-ok");
+    }
+
+    #[test]
+    fn claude_bodies_follow_the_model() {
+        let sonnet5 = anthropic("claude-sonnet-5");
+        let body = anthropic_body(
+            &sonnet5,
+            Setting::Low,
+            "claude-sonnet-5",
+            "s",
+            json!([]),
+            192,
+        );
+        assert!(body.get("temperature").is_none());
+        assert_eq!(body["output_config"], json!({ "effort": "low" }));
+        assert_eq!(body["max_tokens"], 192 + 2048);
+        // Model default: no effort, but room for its default `high` thinking.
+        let body = anthropic_body(
+            &sonnet5,
+            Setting::ModelDefault,
+            "claude-sonnet-5",
+            "s",
+            json!([]),
+            192,
+        );
+        assert!(body.get("output_config").is_none());
+        assert_eq!(body["max_tokens"], 192 + 16384);
+        // Opus 4.7: no temperature, no thinking, budget unchanged.
+        let opus47 = anthropic("claude-opus-4-7");
+        let body = anthropic_body(
+            &opus47,
+            Setting::Low,
+            "claude-opus-4-7",
+            "s",
+            json!([]),
+            192,
+        );
+        assert!(body.get("temperature").is_none() && body.get("output_config").is_none());
+        assert_eq!(body["max_tokens"], 192);
+        // Sonnet 4.6 keeps the request it always had.
+        let sonnet46 = anthropic("claude-sonnet-4-6");
+        let body = anthropic_body(
+            &sonnet46,
+            Setting::Low,
+            "claude-sonnet-4-6",
+            "s",
+            json!([]),
+            192,
+        );
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["max_tokens"], 192);
     }
 }

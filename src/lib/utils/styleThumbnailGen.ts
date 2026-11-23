@@ -1,7 +1,7 @@
 import { generation } from "../stores/generation.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
-import { fragmentForStyles, styles } from "../stores/styles.svelte.js";
+import { fragmentForStyles, negativeForStyles, styles } from "../stores/styles.svelte.js";
 import { classifyGenerationError } from "./generationErrors.js";
 import { submitGeneration } from "./generationSubmit.js";
 
@@ -26,6 +26,7 @@ export async function generateStyleThumbnail(styleId: string): Promise<void> {
       [{ artists: style.artists, overallWeight: style.overallWeight }],
       generation.isNovelAi,
     ),
+    extraNegative: negativeForStyles([style]) || undefined,
     skipActiveStyles: true,
     overrides: { mode: "txt2img", input_image: null, mask_image: null },
   });

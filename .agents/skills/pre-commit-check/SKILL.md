@@ -26,9 +26,10 @@ If empty → report "Nothing to check" and stop.
 
 | Step | When | Command |
 |------|------|---------|
-| Frontend | svelte / store / ts / package.json changed | `npm run build` — PASS if output ends with `✓ built in` |
+| Frontend | svelte / store / ts / package.json changed | `npm run check` — runs `vite build`, `check:i18n`, `check:portals`, and `svelte-check` |
 | Rust compile | rust / rust-deps / config changed | `cargo check --manifest-path src-tauri/Cargo.toml` |
 | Rust server build | rust / rust-deps / config changed | `cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server` — the server binary does not link `tauri`, so the desktop check above cannot catch a `tauri` reference that escaped a `#[cfg(feature = "desktop")]` gate |
+| Rust tests | rust / rust-deps changed | `cargo test --manifest-path src-tauri/Cargo.toml` |
 | Rust fmt | any `.rs` changed | `cd src-tauri; cargo fmt --check` — only **blocking** if diffs overlap **your** changed lines |
 
 If a build gate fails → report full error and **STOP** (skip convention audit).
@@ -43,6 +44,7 @@ Inspect only `+` lines in `git diff HEAD`. Full rule tables: [reference.md](refe
 
 **Blocking convention errors:**
 - Svelte: `<style>` blocks; legacy `on:click` / `on:input`; unpinned `installPipPackage("pkg")` (must contain `==`)
+- Svelte overlays: `fixed inset-0` without `use:portal` (unless `<!-- portal-exempt: reason -->`)
 - Stores: imports from `svelte/store`
 - Utils: duplicate exports
 - Rust commands: `#[tauri::command]` must return `Result<T, AppError>`
@@ -58,6 +60,8 @@ Inspect only `+` lines in `git diff HEAD`. Full rule tables: [reference.md](refe
 ## Cross-file [NON-BLOCKING]
 
 If `commands/*.rs` or `lib.rs` changed: matching wrapper in `src/lib/utils/api.ts` using `ipcInvoke()` (not raw `invoke()`).
+
+If `GenerationParams`, a generation mode, the gallery save path, or `comfyui:*` event names changed: check the MCP surface in `src-tauri/src/mcp/` (`setups::snapshot` clears per-image inputs, `Overrides` and the `generate_image` schema cover what assistants should set, `jobs.rs` still follows the events). Flag a missing MCP decision as a warning.
 
 ## Report format
 

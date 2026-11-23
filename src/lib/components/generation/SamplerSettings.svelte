@@ -4,6 +4,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import MoodyMossCard from "./MoodyMossCard.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import {
@@ -16,11 +17,15 @@
     ANIMA_SAMPLING,
     BETA57_SCHEDULER,
     JUICE_SAMPLING,
+    MOODY_MOSS_SAMPLING,
     NANOSAUR_SAMPLING,
     type SamplingRecommendation,
   } from "../../utils/samplingRecommendation.js";
   import { connection } from "../../stores/connection.svelte.js";
-  import { checkNodeAvailable, downloadModel } from "../../utils/api.js";
+  import { architectures } from "../../stores/architectures.svelte.js";
+  import { registeredSampling } from "../../utils/architectures.js";
+  import { checkNodeAvailable, downloadModel, getWatermarkStatus, prepareWatermark } from "../../utils/api.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
   import { ipcListen } from "../../utils/ipc.js";
   import {
     KREA_FEW_STEP_LORAS,
@@ -33,6 +38,12 @@
     type KreaTurboSteps,
   } from "../../utils/kreaFewStep.js";
   import { onMount } from "svelte";
+
+  interface Props {
+    showBatchSize?: boolean;
+    showSeed?: boolean;
+  }
+  let { showBatchSize = true, showSeed = true }: Props = $props();
 
   const RDBT_ANIMA_FILENAME = "rdbt_v1.0_anima_b1_16-step.safetensors";
   const RDBT_ANIMA_URL =
@@ -61,6 +72,11 @@
   );
 
   const isKreaTurbo = $derived(generation.modelFamily === "krea2" && generation.hasTurboModelVariant);
+  // Sampling a registered architecture declares for this model and mode.
+  const registered = $derived.by(() => {
+    void architectures.version;
+    return registeredSampling(generation.modelFamily, generation.mode);
+  });
   const kreaSteps = $derived(activeKreaTurboSteps(generation.loras));
   let kreaRecOpen = $state(true);
   let kreaDownloadingFile = $state<string | null>(null);
@@ -274,6 +290,9 @@
     if (dmd2Enabled) return { min: 4, max: 8 };
     // Upstream advice for more quality is more steps at full strength.
     if (isKreaTurbo && kreaSteps < 8) return { min: kreaSteps, max: kreaSteps * 2 };
+    if (registered) {
+      return { min: Math.round(registered.steps * 0.8), max: Math.round(registered.steps * 1.2) };
+    }
     const sampler = generation.samplerName.toLowerCase();
     if (sampler.includes("euler")) return { min: 18, max: 28 };
     if (sampler.includes("dpmpp")) return { min: 24, max: 36 };
@@ -285,6 +304,16 @@
     if (dmd2Enabled) return { min: 1.0, max: 1.5, target: 1.0 };
     if (isKreaTurbo && kreaSteps < 8) return { min: KREA_TURBO_CFG, max: KREA_TURBO_CFG, target: KREA_TURBO_CFG };
     if (isCfgPpSampler(generation.samplerName)) return { min: 1.5, max: 2.2, target: 1.8 };
+    // Moody Moss Mix runs at CFG 3, below the generic band, which would
+    // otherwise flag it and "fix" to 6.
+    if (generation.isMoodyMossMix && generation.mode !== "image_edit") {
+      return { min: 2.5, max: 3.5, target: MOODY_MOSS_SAMPLING.cfg };
+    }
+    // A registered architecture's own CFG for this mode (MOSS-Image: 2.5, and
+    // 4 with its edit LoRA), with some room either side.
+    if (registered) {
+      return { min: registered.cfg * 0.8, max: registered.cfg * 1.4, target: registered.cfg };
+    }
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
 
@@ -298,13 +327,29 @@
     generation.cfg < recommendedCfgRange().min || generation.cfg > recommendedCfgRange().max
   );
 
-  const metadataUpgradedToBoth = $derived(
-    generation.outputBitDepth === "16bit" && generation.metadataMode === "stealth"
-  );
+  let watermarkPreparing = $state(false);
 
-  const effectiveMetadataMode = $derived(
-    metadataUpgradedToBoth ? "both" : generation.metadataMode
-  );
+  /** Turning the watermark on downloads its models the first time. */
+  async function setWatermark(on: boolean) {
+    if (!on) {
+      generation.invisibleWatermark = false;
+      generation.saveSettings();
+      return;
+    }
+    watermarkPreparing = true;
+    try {
+      const ready = (await getWatermarkStatus()) || (await prepareWatermark());
+      generation.invisibleWatermark = ready;
+      if (!ready) gallery.showToast(locale.t('generation.sampler.watermark_failed'), "error");
+    } catch (e) {
+      console.error("Watermark setup failed:", e);
+      generation.invisibleWatermark = false;
+      gallery.showToast(locale.t('generation.sampler.watermark_failed'), "error");
+    } finally {
+      watermarkPreparing = false;
+      generation.saveSettings();
+    }
+  }
 
   /** CFG++ samplers use an alternative guidance method that works best at low CFG (~1-2). */
   function isCfgPpSampler(name: string): boolean {
@@ -358,6 +403,10 @@
 </script>
 
 <div class="space-y-3">
+  {#if generation.isMoodyMossMix}
+    <MoodyMossCard onApply={() => applyRecommendation(MOODY_MOSS_SAMPLING)} />
+  {/if}
+
   {#if hasAnimaRecommendation}
     <div class="rounded-lg border border-indigo-700/50 bg-indigo-900/15 overflow-hidden">
       <button
@@ -512,12 +561,12 @@
                   : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}"
                 disabled={kreaDownloadingFile !== null}
                 onclick={() => setKreaSteps(option)}
+                title={locale.t(`generation.sampler.krea_steps_${option}_hint`)}
               >
                 {locale.t(`generation.sampler.krea_steps_${option}`)}
               </button>
             {/each}
           </div>
-          <p class="text-[11px] text-neutral-400">{locale.t(`generation.sampler.krea_steps_${kreaSteps}_hint`)}</p>
         </div>
         {#if kreaDownloadingFile}
           <div class="mx-2.5 mb-2.5 bg-neutral-900/60 rounded-lg px-3 py-2">
@@ -751,7 +800,18 @@
     {/if}
   </div>
 
-  {#if generation.cfg <= 1.0}
+  {#if generation.cfg <= 1.0 && generation.advancedMode}
+    <!-- Advanced Mode: one line, details on hover (#915). -->
+    <p class="flex items-center gap-1 text-[10px] text-amber-300 -mt-1" title={locale.t('generation.sampler.cfg1_warning_body')}>
+      <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" class="w-3 h-3 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </svg>
+      <span class="truncate">{locale.t('generation.sampler.cfg1_warning_title')}</span>
+      <InfoTip text={locale.t('generation.sampler.cfg1_warning_body')} />
+    </p>
+  {:else if generation.cfg <= 1.0}
     <div class="flex items-start gap-2 rounded-lg border border-amber-600/60 bg-amber-950/30 px-3 py-2 mt-1">
       <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" class="w-4 h-4 mt-0.5 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
@@ -766,7 +826,9 @@
   {/if}
 
   <!-- Seed + Batch Size -->
-  <div class="grid grid-cols-2 gap-2">
+  {#if showSeed || showBatchSize}
+  <div class="grid {showSeed && showBatchSize ? 'grid-cols-2' : 'grid-cols-1'} gap-2">
+    {#if showSeed}
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.seed')}<InfoTip text={locale.t('generation.sampler.seed_tip')} /></span>
@@ -782,7 +844,7 @@
           {/if}
           <button
             class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
-              ? 'bg-indigo-600 text-white'
+              ? 'bg-neutral-700 text-neutral-50'
               : 'bg-neutral-700 text-neutral-300'} transition-colors"
             onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? "0") : "-1")}
           >
@@ -806,6 +868,8 @@
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
       />
     </div>
+    {/if}
+    {#if showBatchSize}
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.batch')}<InfoTip text={locale.t('generation.sampler.batch_tip')} /></span>
@@ -820,7 +884,9 @@
         class="w-full accent-indigo-500"
       />
     </div>
+    {/if}
   </div>
+  {/if}
 
   <!-- Bit Depth + Metadata -->
   <div class="grid grid-cols-2 gap-2">
@@ -833,7 +899,7 @@
             disabled={depthLocked}
             title={depthLocked ? locale.t('generation.sampler.bit_16_webp_disabled') : undefined}
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {generation.outputBitDepth === depth
-              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'} {depthLocked ? 'opacity-40 cursor-not-allowed hover:border-neutral-700' : ''}"
             onclick={() => generation.outputBitDepth = depth as "8bit" | "16bit"}
           >
@@ -848,7 +914,7 @@
         {#each ["png", "jxl", "webp"] as fmt}
           <button
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {generation.outputFormat === fmt
-              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
             onclick={() => {
               generation.outputFormat = fmt as "png" | "jxl" | "webp";
@@ -868,26 +934,22 @@
   </div>
   <div class="grid grid-cols-1 gap-2">
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.metadata')}<InfoTip text={locale.t('generation.sampler.metadata_tip')} /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.watermark')}<InfoTip text={locale.t('generation.sampler.watermark_tip')} /></label>
       <div class="flex gap-1">
-        {#each [["text_chunk", locale.t('generation.sampler.metadata_text')], ["stealth", locale.t('generation.sampler.metadata_stealth')], ["both", locale.t('generation.sampler.metadata_both')]] as [value, label]}
+        {#each [[false, locale.t('generation.sampler.watermark_off')], [true, locale.t('generation.sampler.watermark_on')]] as [value, label]}
           <button
-            class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {effectiveMetadataMode === value
-              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+            class="flex-1 py-1 text-[11px] rounded-lg border transition-colors disabled:opacity-60 {generation.invisibleWatermark === value
+              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
-            onclick={() => generation.metadataMode = value as "text_chunk" | "stealth" | "both"}
+            disabled={watermarkPreparing}
+            onclick={() => setWatermark(value as boolean)}
           >
-            {label}
+            {value && watermarkPreparing ? '…' : label}
           </button>
         {/each}
       </div>
     </div>
   </div>
-  {#if metadataUpgradedToBoth}
-    <p class="text-[10px] text-indigo-300 -mt-1">
-      {locale.t('generation.sampler.metadata_upgraded')}
-    </p>
-  {/if}
 
   <!-- Smart Guidance toggle (hidden for Flux models which use FluxGuidance instead) -->
   {#if generation.isFlux}
@@ -1079,7 +1141,7 @@
     {/if}
   {/if}
 
-  {#if generation.mode === "txt2img" && !generation.isNovelAi}
+  {#if generation.mode === "txt2img" && !generation.isNovelAi && !generation.isCascade}
     <!-- Pause at step: stop partway so prompt, CFG, sampler or LoRAs can change before the rest of the schedule runs. -->
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">

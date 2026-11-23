@@ -6,6 +6,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
+  import { imageEditor } from "../../stores/imageEditor.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "../../stores/naiImageEnhance.svelte.js";
   import { generate, uploadImageBytes, downloadModel, saveVideoToGalleryManual } from "../../utils/api.js";
   import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput, imageUrlToPngBytes } from "../../utils/galleryActions.js";
@@ -21,11 +22,56 @@
   import VideoPlayer from "../video/VideoPlayer.svelte";
   import type { GenerationParams } from "../../types/index.js";
   import { untrack } from "svelte";
+  import {
+    CHECKERBOARD_CLASS,
+    detectImageAlpha,
+    isTransparentImage,
+  } from "../../utils/transparentBackdrop.js";
 
   let currentTipIndex = $state(0);
-  let progressPercent = $state(0);
-  let autoPlayInterval: ReturnType<typeof setInterval> | null = null;
   let suppressOpenUntil = 0;
+
+  // The box takes the shape of what it shows, so a landscape or portrait
+  // result fills the free space instead of sitting letterboxed in a square.
+  // A loaded image or video reports its own size; before that (empty,
+  // generating with no preview yet) the requested size stands in.
+  let mediaAspect = $state<number | null>(null);
+  const hasMedia = $derived(
+    !!progress.lastOutputVideo || (!progress.lastUnsavedVideoPath && !!progress.displayImage),
+  );
+  const boxAspect = $derived.by(() => {
+    if (hasMedia && mediaAspect) return mediaAspect;
+    const { width, height } = generation;
+    return width > 0 && height > 0 ? width / height : 1;
+  });
+  // Fit the box to the frame (a size container in GenerationPage) at that
+  // aspect. The floors keep the hover actions and the tips readable: when an
+  // extreme shape would make the box narrower or shorter than that, the box
+  // stops shrinking and the media letterboxes inside it instead.
+  const boxStyle = $derived(
+    `--preview-aspect: ${boxAspect};` +
+      " width: clamp(min(100cqw, 22rem), 100cqh * var(--preview-aspect), 100cqw);" +
+      " height: clamp(min(100cqh, 16rem), 100cqw / var(--preview-aspect), 100cqh);",
+  );
+
+  // load/loadedmetadata don't bubble, so this runs on the capture phase to
+  // catch both the preview <img> and VideoPlayer's <video>.
+  let previewHasAlpha = $state(false);
+  function handleMediaLoad(e: Event) {
+    const el = e.target;
+    let w = 0;
+    let h = 0;
+    if (el instanceof HTMLImageElement) {
+      w = el.naturalWidth;
+      h = el.naturalHeight;
+      previewHasAlpha = detectImageAlpha(el);
+    } else if (el instanceof HTMLVideoElement) {
+      w = el.videoWidth;
+      h = el.videoHeight;
+      previewHasAlpha = false;
+    }
+    if (w > 0 && h > 0) mediaAspect = w / h;
+  }
 
   // Right-click context menu for the output preview. Restores right-click-to-save
   // that the global native-menu suppressor (#392) removed, in desktop and browser.
@@ -75,9 +121,10 @@
     saveVideoError = null;
   }
 
-  const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
-  const TIP_UPDATE_INTERVAL = 50; // Update progress bar every 50ms
-
+  // Each tip shows for 6.5 s. The progress bar is a compositor-only CSS
+  // animation (`tip-progress` in app.css) whose end advances the carousel, so
+  // the empty preview does no per-frame layout and stops entirely while the
+  // app is resting (`.app-resting` pauses every animation).
   const baseTips = [
     // Prompt tips
     { category: "preview.tips.prompts", text: "preview.tip.prompt_clear" },
@@ -103,42 +150,12 @@
       : [...baseTips, { category: "preview.tips.quality", text: "preview.tip.quality_tags" }]
   );
 
-  function startAutoPlay() {
-    progressPercent = 0;
-    let elapsedTime = 0;
-    autoPlayInterval = setInterval(() => {
-      elapsedTime += TIP_UPDATE_INTERVAL;
-      progressPercent = (elapsedTime / TIP_DISPLAY_TIME) * 100;
-      
-      if (elapsedTime >= TIP_DISPLAY_TIME) {
-        nextTip();
-        elapsedTime = 0;
-        progressPercent = 0;
-      }
-    }, TIP_UPDATE_INTERVAL);
-  }
-
-  function stopAutoPlay() {
-    if (autoPlayInterval) {
-      clearInterval(autoPlayInterval);
-      autoPlayInterval = null;
-    }
-  }
-
-  function resetAutoPlay() {
-    stopAutoPlay();
-    progressPercent = 0;
-    startAutoPlay();
-  }
-
   function nextTip() {
     currentTipIndex = (currentTipIndex + 1) % tips.length;
-    resetAutoPlay();
   }
 
   function prevTip() {
     currentTipIndex = (currentTipIndex - 1 + tips.length) % tips.length;
-    resetAutoPlay();
   }
 
   function handleWheel(e: WheelEvent) {
@@ -149,16 +166,6 @@
       prevTip();
     }
   }
-
-  $effect(() => {
-    // Start auto-play when component mounts or when not generating
-    if (!progress.isGenerating && !progress.displayImage && !progress.lastOutputVideo) {
-      startAutoPlay();
-    } else {
-      stopAutoPlay();
-    }
-    return () => stopAutoPlay();
-  });
 
   /** Make sure the default refine upscale model is installed, downloading it
    *  on first use (~1.6 MB). Returns false if it can't be made available. */
@@ -264,6 +271,41 @@
       gallery.showToast(locale.t("generation.toast.loaded_inpaint"), "success");
     } catch (e) {
       console.error("Send to inpaint failed:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  async function sendToOutpaint() {
+    try {
+      let rawBytes: number[];
+      let fallbackFilename = `outpaint_${Date.now()}.png`;
+      const savedImage = getActiveSavedImage();
+      if (savedImage) {
+        const source = await loadOutputImageForGenerationInput(savedImage, fallbackFilename);
+        rawBytes = source.bytes;
+        fallbackFilename = source.filename;
+      } else {
+        const sourceUrl = previewSrc ?? progress.lastOutputImage;
+        if (!sourceUrl) {
+          gallery.showToast(locale.t("preview.not_available"), "info");
+          return;
+        }
+        rawBytes = await imageUrlToPngBytes(sourceUrl);
+      }
+
+      const normalized = await normalizeGenerationInputBytes(rawBytes, fallbackFilename);
+      const upload = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = upload.name;
+      generation.width = normalized.width;
+      generation.height = normalized.height;
+      generation.denoise = 1.0;
+      generation.mode = "outpainting";
+      canvas.isCanvasMode = false;
+      canvas.setReferenceImage(normalized.previewUrl);
+      progress.setLastOutputForMode("outpainting", null);
+      gallery.showToast(locale.t("generation.toast.loaded_outpaint"), "success");
+    } catch (e) {
+      console.error("Send to outpaint failed:", e);
       gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
     }
   }
@@ -398,10 +440,24 @@
    *  For JXL gallery files, always use the blob URL: WebView2 cannot natively
    *  decode JXL so the gallery:// URL would render nothing. */
   const previewSrc = $derived.by(() => {
+    if (progress.isGenerating && progress.previewImage) return progress.previewImage;
     const saved = getActiveSavedImage();
     const isJxlGallery = saved?.gallery_filename?.endsWith(".jxl") ?? false;
     if (saved?.fullImageUrl && !isJxlGallery) return saved.fullImageUrl;
     return progress.displayImage;
+  });
+
+  $effect(() => {
+    void previewSrc;
+    previewHasAlpha = false;
+  });
+
+  const previewIsTransparent = $derived.by(() => {
+    if (previewHasAlpha) return true;
+    const saved = getActiveSavedImage();
+    if (isTransparentImage(saved)) return true;
+    // While streaming/before metadata attaches, honor the active transparency modes.
+    return progress.isGenerating && (generation.transparentBackgroundActive || generation.modelFamily === "mingimagelayer");
   });
 
   /** Total generation time for the currently shown output, ms (badge). */
@@ -413,14 +469,19 @@
   function openPreviewLightbox() {
     if (Date.now() < suppressOpenUntil) return;
 
-    const url = progress.displayImage;
-    if (!url) return;
+    if (progress.isGenerating && progress.previewImage) {
+      gallery.openLightboxUrl(progress.previewImage);
+      return;
+    }
 
-    const savedImage = getSavedImageForUrl(url);
+    const savedImage = getActiveSavedImage();
     if (savedImage) {
       gallery.openLightbox(savedImage);
       return;
     }
+
+    const url = progress.displayImage;
+    if (!url) return;
 
     gallery.openLightboxUrl(url);
   }
@@ -468,6 +529,14 @@
     suppressOpenUntil = Date.now() + 500;
   }
 
+  /** Open the built-in editor on the shown output, saved or not. */
+  function openEditor() {
+    const saved = getActiveSavedImage();
+    const url = progress.displayImage;
+    if (saved) imageEditor.open(saved, url);
+    else if (url) imageEditor.openUrl(url, `preview_${Date.now()}.png`);
+  }
+
   function openPreviewContextMenu(e: MouseEvent) {
     if (!progress.displayImage) return;
     e.preventDefault();
@@ -479,6 +548,8 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.send_to_img2img"), action: () => void sendToImg2img() },
       { label: locale.t("gallery.send_to_inpaint"), action: () => void sendToInpaint() },
+      { label: locale.t("gallery.send_to_outpaint"), action: () => void sendToOutpaint() },
+      { label: locale.t("gallery.edit"), action: () => openEditor() },
     ];
     if (!progress.wasUpscaled) {
       items.push({ label: refineLabel, action: () => void upscaleImage() });
@@ -500,7 +571,11 @@
   }
 </script>
 
-<div class="relative w-full aspect-square bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
+<div
+  style={boxStyle}
+  onloadcapture={handleMediaLoad}
+  onloadedmetadatacapture={handleMediaLoad}
+  class="relative shrink-0 bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
   {#if progress.lastOutputVideo}
     <!-- A finished video wins over the last sampled still frame. No context
          menu: openPreviewContextMenu is image-scoped, and the player's own
@@ -543,7 +618,7 @@
     </div>
   {:else if progress.displayImage}
     <button
-      class="w-full h-full cursor-pointer"
+      class="w-full h-full flex items-center justify-center cursor-pointer"
       onclick={openPreviewLightbox}
       oncontextmenu={openPreviewContextMenu}
       ondragenter={suppressPreviewOpenOnFileDrop}
@@ -553,7 +628,7 @@
       <img
         src={previewSrc}
         alt={locale.t("preview.alt")}
-        class="w-full h-full object-contain"
+        class="max-w-full max-h-full object-contain {previewIsTransparent ? CHECKERBOARD_CLASS : ''}"
       />
     </button>
     {#if activeGenerationTimeMs != null}
@@ -602,21 +677,28 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
         </button>
         <button
+          onclick={openEditor}
+          class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+          {locale.t('gallery.edit')}
+        </button>
+        <button
           onclick={handleSave}
-          class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          class="flex items-center justify-center w-8 h-8 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={gallery.saving}
           title={locale.t('preview.save_as')}
+          aria-label={locale.t('preview.save_as')}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          {locale.t('preview.save')}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <button
           onclick={handleCopy}
-          class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
+          class="flex items-center justify-center w-8 h-8 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg shadow-lg transition-colors"
           title={locale.t('preview.copy_clipboard')}
+          aria-label={locale.t('preview.copy_clipboard')}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          {locale.t('preview.copy')}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
       </div>
     {/if}
@@ -635,10 +717,12 @@
         
         <!-- Progress Bar -->
         <div class="w-full h-0.5 bg-neutral-200 dark:bg-neutral-700 rounded-full overflow-hidden mt-2">
-          <div 
-            class="h-full bg-indigo-600 dark:bg-indigo-500 transition-all ease-linear"
-            style="width: {progressPercent}%"
-          />
+          {#key currentTipIndex}
+            <div
+              class="h-full origin-left bg-indigo-600 dark:bg-indigo-500 animate-[tip-progress_6.5s_linear_forwards]"
+              onanimationend={nextTip}
+            ></div>
+          {/key}
         </div>
       </div>
       

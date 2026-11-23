@@ -32,8 +32,22 @@ pub enum AppError {
     #[error("Prompt assistant error: {0}")]
     LlmError(String),
 
+    /// An external LLM that could not answer right now: no response, a
+    /// timeout, a rate limit or a server-side failure. Worded exactly like
+    /// `LlmError` for the user; kept apart so the fallback chain can tell a
+    /// provider that is down or busy from one that refused the request.
+    #[error("Prompt assistant error: {0}")]
+    LlmUnavailable(String),
+
     #[error("{0}")]
     Other(String),
+}
+
+impl AppError {
+    /// Whether the next model in the LLM fallback chain should be tried.
+    pub fn is_llm_unavailable(&self) -> bool {
+        matches!(self, AppError::LlmUnavailable(_))
+    }
 }
 
 impl From<String> for AppError {

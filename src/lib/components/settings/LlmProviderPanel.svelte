@@ -22,13 +22,29 @@
     /** `config.llm_external_enabled`. The one field the provider commands do
      *  not own, because a keyless self-hosted endpoint has no key to imply it. */
     enabled: boolean;
-    /** SettingsPage's autosave, used only by the enable toggle. */
+    /** `config.llm_fallback_local`. Not secret and not part of the provider
+     *  row, so like `enabled` it rides the full-config autosave. */
+    fallbackLocal?: boolean;
+    /** `config.llm_reasoning_effort`: "low", "medium", "high" or "default".
+     *  Rides the full-config autosave like `fallbackLocal`. */
+    reasoningEffort?: string;
+    /** SettingsPage's autosave, used only by the toggles and the effort picker. */
     autoSave: () => Promise<void>;
     /** Re-sync SettingsPage's cached config from the authoritative snapshot. */
     onstate: (state: LlmProviderState) => void;
   }
 
-  let { enabled = $bindable(), autoSave, onstate }: Props = $props();
+  let {
+    enabled = $bindable(),
+    fallbackLocal = $bindable(false),
+    reasoningEffort = $bindable("low"),
+    autoSave,
+    onstate,
+  }: Props = $props();
+
+  /** Providers whose models take a reasoning effort or thinking-off toggle. */
+  const EFFORT_PROVIDERS = ["chatgpt", "gemini-cli", "anthropic", "openai", "xai", "xai-oauth", "openrouter", "custom"];
+  const EFFORT_LEVELS = ["low", "medium", "high", "default"] as const;
 
   /** The key field holds an environment variable name, not a key. */
   let llmEnvMode = $state(false);
@@ -107,6 +123,32 @@
     } catch (e) {
       error = String(e);
     }
+  }
+
+  async function onReasoningEffort(next: string) {
+    reasoningEffort = next;
+    error = null;
+    try {
+      await autoSave();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function onToggleFallbackLocal(next: boolean) {
+    fallbackLocal = next;
+    error = null;
+    try {
+      await autoSave();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** Comma or line separated, as typed; Rust drops blanks, repeats and the
+   *  primary model, and caps the list. */
+  function parseModelList(value: string): string[] {
+    return value.split(/[,\n]/).map((m) => m.trim()).filter((m) => m.length > 0);
   }
 
   async function onToggleEnabled(next: boolean) {
@@ -345,6 +387,78 @@
       </datalist>
       <p class="text-[10px] text-neutral-500 mt-1">{locale.t(isCompanion ? 'settings.prompt_assistant.companion_model_hint' : 'settings.prompt_assistant.model_hint')}</p>
     </div>
+
+    <!-- Fallbacks only follow the API wire formats: a sign-in companion does
+         not report whether it was busy or refused, so nothing would trigger them. -->
+    {#if !isCompanion}
+      <div>
+        <label for="llm-fallback-models" class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.fallback_models')}</label>
+        <input
+          id="llm-fallback-models"
+          type="text"
+          value={(provider?.fallback_models ?? []).join(", ")}
+          disabled={promptAssistant.providerBusy}
+          onchange={(e) => {
+            const models = parseModelList(e.currentTarget.value);
+            run(() => promptAssistant.saveFallbackModels(models));
+          }}
+          placeholder={locale.t('settings.prompt_assistant.fallback_models_placeholder')}
+          autocomplete="off"
+          spellcheck="false"
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+        />
+        <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.fallback_models_hint')}</p>
+      </div>
+
+      <label class="flex items-center justify-between gap-3 cursor-pointer">
+        <span>
+          <span class="text-xs text-neutral-300 block">{locale.t('settings.prompt_assistant.fallback_local')}</span>
+          <span class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.fallback_local_desc')}</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={fallbackLocal}
+          onchange={(e) => onToggleFallbackLocal(e.currentTarget.checked)}
+          class="accent-indigo-500 w-4 h-4 shrink-0"
+        />
+      </label>
+    {/if}
+
+    {#if EFFORT_PROVIDERS.includes(providerId)}
+      <div>
+        <label for="llm-reasoning-effort" class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.reasoning_effort')}</label>
+        <select
+          id="llm-reasoning-effort"
+          value={reasoningEffort || "low"}
+          onchange={(e) => onReasoningEffort(e.currentTarget.value)}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          {#each EFFORT_LEVELS as level (level)}
+            <option value={level}>{locale.t(`settings.prompt_assistant.reasoning_effort_${level}`)}</option>
+          {/each}
+        </select>
+        <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.reasoning_effort_hint')}</p>
+      </div>
+    {/if}
+
+    {#if promptAssistant.status?.describe_model}
+      {@const describeId = promptAssistant.status.describe_model}
+      {@const describeName = promptAssistant.catalog.find((e) => e.id === describeId)?.name ?? describeId}
+      <div class="flex items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950/60 px-2.5 py-1.5">
+        <span class="text-xs text-neutral-300">{locale.t('generation.interrogate.describe.title')}</span>
+        <span
+          class="rounded border px-1.5 py-0.5 text-[10px] {promptAssistant.status.external_vision === false
+            ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
+            : 'border-neutral-700 bg-neutral-800 text-neutral-300'}"
+          title={locale.t(
+            promptAssistant.status.external_vision === false
+              ? 'generation.interrogate.describe.local_route_tip'
+              : 'generation.interrogate.describe.fallback_route_tip',
+            { name: describeName },
+          )}
+        >{describeName}</span>
+      </div>
+    {/if}
 
     {#if error}
       <p class="text-[10px] text-red-400 break-words">{error}</p>

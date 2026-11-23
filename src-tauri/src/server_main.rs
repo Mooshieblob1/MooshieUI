@@ -84,6 +84,9 @@ async fn main() {
     // Clean up and create temp image directory
     temp_images::init();
     comfyui_desktop_lib::media_tools::start(state.clone());
+    comfyui_desktop_lib::comfyui::idle_unload::spawn(state.clone());
+    // Opt-in local MCP server; a no-op unless mcp.json enables it.
+    comfyui_desktop_lib::mcp::sync(state.clone()).await;
 
     // Start the web server (always LAN-enabled in server mode)
     let server_state = state.clone();
@@ -186,6 +189,7 @@ async fn main() {
     shutdown_signal().await;
     log::info!("Shutdown signal received, cleaning up...");
     comfyui_desktop_lib::media_tools::shutdown(&state).await;
+    comfyui_desktop_lib::mcp::shutdown().await;
     comfyui_desktop_lib::prompt_assistant::companion::shutdown().await;
     comfyui_desktop_lib::commands::music_link::shutdown(&state).await;
     comfyui_desktop_lib::commands::music_audio_style::shutdown(&state).await;

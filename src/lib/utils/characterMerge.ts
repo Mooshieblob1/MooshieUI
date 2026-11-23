@@ -4,6 +4,8 @@
  * is reviewed in the Characters tab before anything is written.
  */
 
+import { READ_MEMORY_RULE } from "./characterMemory.js";
+
 export interface CharacterMergeInput {
   /** Current positive prompt (the base prompt on NovelAI). */
   prompt: string;
@@ -16,6 +18,8 @@ export interface CharacterMergeInput {
    * model knows the existing cast.
    */
   box: { boxes: string[]; boxNegative: boolean } | null;
+  /** The character's memory notes as `memoryContext` writes them, or "" for none. */
+  memory?: string;
 }
 
 export interface CharacterMergeResult {
@@ -88,8 +92,11 @@ export function characterMergeRequest(input: CharacterMergeInput): {
   lines.push(
     `Saved character "${input.character.name.trim()}":\nPrompt: ${input.character.prompt.trim()}\nNegative prompt: ${input.character.negative.trim() || "(none)"}`,
   );
+  const memory = input.memory?.trim() ?? "";
+  if (memory) lines.push(`Memory notes about "${input.character.name.trim()}":\n${memory}`);
+  const system = input.box ? boxSystem(input.box.boxNegative) : PROMPT_SYSTEM;
   return {
-    system: input.box ? boxSystem(input.box.boxNegative) : PROMPT_SYSTEM,
+    system: memory ? system.replace(SHARED_RULES, `${SHARED_RULES}\n- ${READ_MEMORY_RULE}`) : system,
     prompt: lines.join("\n\n"),
     maxTokens: CHARACTER_MERGE_MAX_TOKENS,
   };

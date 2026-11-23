@@ -1,3 +1,4 @@
+pub mod cascade;
 pub mod controlnet;
 pub mod face_detect;
 pub mod facefix;
@@ -5,9 +6,14 @@ pub mod guide_image;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
+pub mod krea2_edit;
+pub mod mesh3d;
+pub mod moody_moss;
 pub mod music;
+pub mod outpainting;
 pub mod rife;
 pub mod segment_detail;
+pub mod splat;
 pub mod style_ref;
 pub mod style_transfer;
 pub mod txt2img;
@@ -33,6 +39,11 @@ use crate::comfyui::types::{BaseSources, GenerationParams, PromptSegment, StageC
 /// must call this before `build_workflow`.
 pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
     validate_pause_resume(params)?;
+    // Registered architectures: supported modes, strict encoder and model
+    // slots, INT8-Fast and reference count (see `crate::architectures`).
+    // Wan first: an image-to-video file should hear that, not an encoder hint.
+    crate::architectures::wan::validate(params)?;
+    crate::architectures::validate(params)?;
 
     // Video mode has its own parameter set; validate it and return early so
     // image-only guards (input images, ControlNet, style transfer) never
@@ -105,6 +116,12 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             .map(str::trim)
             .unwrap_or("");
         let diffusion_lower = diffusion.to_lowercase();
+        if crate::architectures::family_from_text(diffusion).is_some() {
+            return Err(format!(
+                "\"{}\" is an image model, not a MiniMax H3 video model. Pick an H3 video diffusion model for video, or load this one in Text to Image.",
+                diffusion
+            ));
+        }
         if !video::H3_DIFFUSION_MARKERS
             .iter()
             .any(|marker| diffusion_lower.contains(marker))
@@ -156,8 +173,14 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         return Ok(());
     }
 
-    let needs_input_image =
-        matches!(params.mode.as_str(), "img2img" | "inpainting") || params.refine_only;
+    if cascade::is_cascade(params) {
+        cascade::validate(params)?;
+    }
+
+    let needs_input_image = matches!(
+        params.mode.as_str(),
+        "img2img" | "inpainting" | "outpainting"
+    ) || params.refine_only;
 
     if needs_input_image
         && params
@@ -190,6 +213,18 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         );
     }
 
+    if params.mode == "outpainting"
+        && params.outpaint_top == 0
+        && params.outpaint_bottom == 0
+        && params.outpaint_left == 0
+        && params.outpaint_right == 0
+    {
+        return Err(
+            "Outpainting mode requires padding on at least one side (top, bottom, left or right)."
+                .into(),
+        );
+    }
+
     if matches!(params.mode.as_str(), "image_edit")
         && params
             .edit_reference_images
@@ -208,8 +243,20 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, Flux.2 Klein, FLUX 3 Klein, Krea 2, MOSS-Image or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
+        ));
+    }
+
+    // Krea 2 edits through an edit LoRA, which the frontend resolves to an
+    // installed file. Without one the graph would load an empty LoRA name.
+    if params.mode == "image_edit"
+        && params.model_architecture == "krea2"
+        && params.krea2_edit_lora.trim().is_empty()
+    {
+        return Err(format!(
+            "Krea 2 {} needs its edit LoRA. Download it from the Image Edit panel, then generate again.",
+            krea2_edit::method(params).label()
         ));
     }
 
@@ -294,18 +341,21 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     if params.style_ref_enabled && params.mode != "video" && params.mode != "image_edit" {
         if !style_ref::family_supports_style_ref(&params.model_architecture) {
             return Err(format!(
-                "Style reference is only available for SD1.5, SDXL, and Flux.1 models. \
+                "Style reference is only available for SD1.5, SDXL, Flux.1 and Anima models. \
                  The selected model family ('{}') is not supported. \
                  Disable style reference or switch to a supported model.",
                 params.model_architecture
             ));
         }
-        if params
-            .style_ref_image
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
+        style_ref::validate_snapref(params)?;
+        style_ref::validate_anima_art_style(params)?;
+        if !style_ref::snapref_active(params)
+            && params
+                .style_ref_image
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
         {
             return Err(
                 "Style reference is enabled but no reference image was provided. \
@@ -314,6 +364,19 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             );
         }
     }
+
+    // Style transfer builds its own graph without the inject pipeline, so the
+    // Anima character reference would be dropped without a word.
+    if style_ref::anima_ref_active(params) && params.style_transfer_enabled {
+        return Err(
+            "Style transfer and the Anima Style Reference cannot be used together. Disable one of them."
+                .into(),
+        );
+    }
+
+    // SD3 split checks the registry cannot express: some encoder picked, and a
+    // VAE picked unless the file brings its own.
+    crate::architectures::sd3::validate(params)?;
 
     // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
     // conditioning). With any other encoder, ComfyUI fails deep inside sampling
@@ -481,6 +544,15 @@ fn check_locked(
 /// latent was sampled with (see `pause_locked_settings`). Steps and
 /// scheduler are locked too, except on a final stage that finishes the run.
 fn validate_pause_resume(params: &GenerationParams) -> Result<(), String> {
+    // A registered architecture's dedicated txt2img graph has no stages to
+    // stop between.
+    if pause_resume_active(params) && crate::architectures::builder(params).is_some() {
+        let label = crate::architectures::find(&params.model_architecture)
+            .map_or("This model", |(_, family)| family.label);
+        return Err(format!(
+            "{label} cannot pause partway through a generation. Clear the pause step and generate again."
+        ));
+    }
     if params.mode != "txt2img" {
         if !params.resume_stages.is_empty() {
             return Err(
@@ -598,7 +670,7 @@ pub struct ModelLoadResult {
 /// model; `resolved_model_path` is filled in by the `generate` command. Both are
 /// required — without the resolved path there is nothing for the path loaders to
 /// open, so the caller falls back to the stock loaders.
-fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
+pub(crate) fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
     params.model_source_category.as_deref()?;
     params
         .resolved_model_path
@@ -611,11 +683,12 @@ fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
 /// families the node does not support, which causes `validate_params` to
 /// reject the combination before workflow construction.
 fn int8_fast_model_type(family: &str) -> Option<&'static str> {
+    if let Some(model_type) = crate::architectures::int8_fast_model_type(family) {
+        return model_type;
+    }
     match family {
-        // Flux.2 Klein (all variants: 4b, 4b-base, 9b, 9b-base) and Flux.2 Dev
-        "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase" => {
-            Some("flux2")
-        }
+        // Flux.2 Dev (Flux.2 Klein declares its own in the registry)
+        "flux2d" => Some("flux2"),
         // Z-Image variants (turbo and base)
         "zit" | "zib" => Some("z-image"),
         // Other mapped families
@@ -626,6 +699,127 @@ fn int8_fast_model_type(family: &str) -> Option<&'static str> {
         "ideogram4" => Some("ideogram4"),
         // Everything else is unsupported by the OTUNetLoaderW8A8 node
         _ => None,
+    }
+}
+
+/// Loader node for a split diffusion model: GGUF, a file outside its folder
+/// (by absolute path), INT8-Fast, or the stock `UNETLoader`.
+///
+/// GGUF quantized models cannot be loaded by core UNETLoader, so they go
+/// through the ComfyUI-GGUF custom node (installed at ComfyUI setup).
+pub(crate) fn unet_loader_node(
+    unet_name: &str,
+    misplaced_path: Option<&str>,
+    params: &GenerationParams,
+) -> Value {
+    if unet_name.to_ascii_lowercase().ends_with(".gguf") {
+        json!({
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {
+                "unet_name": unet_name
+            }
+        })
+    } else if let Some(path) = misplaced_path {
+        // Split-file model physically stored in another folder (usually
+        // checkpoints/). UNETLoader validates unet_name against its own folder
+        // listing and would reject it, so load by absolute path instead.
+        json!({
+            "class_type": "MooshieDiffusionLoaderPath",
+            "inputs": {
+                "unet_path": path,
+                "weight_dtype": "default"
+            }
+        })
+    } else if params.int8_fast_enabled {
+        // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
+        // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
+        // family has a known model_type mapping before we reach here.
+        let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
+        json!({
+            "class_type": "OTUNetLoaderW8A8",
+            "inputs": {
+                "unet_name": unet_name,
+                "weight_dtype": "default",
+                "model_type": model_type,
+                "on_the_fly_quantization": false,
+                "enable_convrot": params.int8_fast_convrot,
+                "lora_mode": "None"
+            }
+        })
+    } else {
+        json!({
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": unet_name,
+                "model_name": unet_name,
+                "weight_dtype": "default"
+            }
+        })
+    }
+}
+
+/// The stock split-model loaders: the diffusion model (`unet_name`, through
+/// [`unet_loader_node`]), `CLIPLoader` (or `CLIPLoaderGGUF`) and `VAELoader`.
+/// UNETLoader gets both unet_name and model_name for compatibility across
+/// standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+pub(crate) fn split_loader_nodes(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    params: &GenerationParams,
+    unet_name: &str,
+    misplaced_path: Option<&str>,
+) -> crate::architectures::LoaderOutput {
+    // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
+    // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+    // GGUF quantized models cannot be loaded by core UNETLoader — route them
+    // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
+    let unet_id = next_id.to_string();
+    let unet_node = unet_loader_node(unet_name, misplaced_path, params);
+    workflow.insert(unet_id.clone(), unet_node);
+    let model_source = (unet_id, 0);
+    next_id += 1;
+
+    // CLIPLoader for text encoder (GGUF-quantized encoders need CLIPLoaderGGUF)
+    let clip_id = next_id.to_string();
+    let clip_type = params.clip_type.as_deref().unwrap_or("wan");
+    let clip_name = params.clip_model.as_deref().unwrap_or("");
+    let clip_class = if clip_name.to_ascii_lowercase().ends_with(".gguf") {
+        "CLIPLoaderGGUF"
+    } else {
+        "CLIPLoader"
+    };
+    workflow.insert(
+        clip_id.clone(),
+        json!({
+            "class_type": clip_class,
+            "inputs": {
+                "clip_name": clip_name,
+                "type": clip_type
+            }
+        }),
+    );
+    let clip_source = (clip_id, 0);
+    next_id += 1;
+
+    // VAELoader — always needed for split models (use params.vae or a default)
+    let vae_id = next_id.to_string();
+    let vae_name = params.vae.as_deref().unwrap_or("");
+    workflow.insert(
+        vae_id.clone(),
+        json!({
+            "class_type": "VAELoader",
+            "inputs": {
+                "vae_name": vae_name
+            }
+        }),
+    );
+    let vae_source = (vae_id, 0);
+    next_id += 1;
+    crate::architectures::LoaderOutput {
+        model: model_source,
+        clip: clip_source,
+        vae: vae_source,
+        next_id,
     }
 }
 
@@ -681,97 +875,28 @@ pub fn load_model_nodes(
             vae_source,
             next_id,
         };
+    } else if let Some(loader) =
+        crate::architectures::loader(params).filter(|_| params.use_split_model)
+    {
+        // A registered architecture with its own loaders (several encoders,
+        // a custom loader node, ...). The LoRA chain below runs on them.
+        let loaded = loader(workflow, next_id, params);
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else if params.use_split_model {
-        // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
-        // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
-        // GGUF quantized models cannot be loaded by core UNETLoader — route them
-        // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
-        let unet_name = params.diffusion_model.as_deref().unwrap_or("");
-        let unet_id = next_id.to_string();
-        let unet_node = if unet_name.to_ascii_lowercase().ends_with(".gguf") {
-            json!({
-                "class_type": "UnetLoaderGGUF",
-                "inputs": {
-                    "unet_name": unet_name
-                }
-            })
-        } else if let Some(path) = misplaced_model_path(params) {
-            // Split-file model physically stored in another folder (usually
-            // checkpoints/). UNETLoader validates unet_name against its own folder
-            // listing and would reject it, so load by absolute path instead.
-            json!({
-                "class_type": "MooshieDiffusionLoaderPath",
-                "inputs": {
-                    "unet_path": path,
-                    "weight_dtype": "default"
-                }
-            })
-        } else if params.int8_fast_enabled {
-            // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
-            // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
-            // family has a known model_type mapping before we reach here.
-            let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
-            json!({
-                "class_type": "OTUNetLoaderW8A8",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "weight_dtype": "default",
-                    "model_type": model_type,
-                    "on_the_fly_quantization": false,
-                    "enable_convrot": params.int8_fast_convrot,
-                    "lora_mode": "None"
-                }
-            })
-        } else {
-            json!({
-                "class_type": "UNETLoader",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "model_name": unet_name,
-                    "weight_dtype": "default"
-                }
-            })
-        };
-        workflow.insert(unet_id.clone(), unet_node);
-        model_source = (unet_id, 0);
-        next_id += 1;
-
-        // CLIPLoader for text encoder (GGUF-quantized encoders need CLIPLoaderGGUF)
-        let clip_id = next_id.to_string();
-        let clip_type = params.clip_type.as_deref().unwrap_or("wan");
-        let clip_name = params.clip_model.as_deref().unwrap_or("");
-        let clip_class = if clip_name.to_ascii_lowercase().ends_with(".gguf") {
-            "CLIPLoaderGGUF"
-        } else {
-            "CLIPLoader"
-        };
-        workflow.insert(
-            clip_id.clone(),
-            json!({
-                "class_type": clip_class,
-                "inputs": {
-                    "clip_name": clip_name,
-                    "type": clip_type
-                }
-            }),
+        let loaded = split_loader_nodes(
+            workflow,
+            next_id,
+            params,
+            params.diffusion_model.as_deref().unwrap_or(""),
+            misplaced_model_path(params),
         );
-        clip_source = (clip_id, 0);
-        next_id += 1;
-
-        // VAELoader — always needed for split models (use params.vae or a default)
-        let vae_id = next_id.to_string();
-        let vae_name = params.vae.as_deref().unwrap_or("");
-        workflow.insert(
-            vae_id.clone(),
-            json!({
-                "class_type": "VAELoader",
-                "inputs": {
-                    "vae_name": vae_name
-                }
-            }),
-        );
-        vae_source = (vae_id, 0);
-        next_id += 1;
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else {
         // Standard CheckpointLoaderSimple, or the path-based Mooshie loader when the
         // checkpoint physically lives outside models/checkpoints/.
@@ -807,6 +932,11 @@ pub fn load_model_nodes(
             log::warn!(
                 "Skipping LoRA with empty name — this should have been filtered by the frontend"
             );
+            continue;
+        }
+        // Wan 2.2 A14B LoRAs come as high/low-noise pairs; a high-noise half
+        // only belongs on the high-noise expert (architectures/wan.rs).
+        if !crate::architectures::wan::lora_applies_to_main_model(params, &lora.name) {
             continue;
         }
         let lora_id = next_id.to_string();
@@ -855,7 +985,13 @@ pub fn load_model_nodes(
     // step in `build_workflow` because this is the one function every
     // Anima-capable template routes through, including `style_transfer::build`,
     // which bypasses the entire `inject_*` pipeline.
-    if params.model_architecture == "anima" && params.anima_teacache_enabled {
+    // The character reference runs its own Anima forward pass with an extra
+    // reference call per step, which TeaCache's step cache was not built for,
+    // so TeaCache stays off while it is on.
+    if params.model_architecture == "anima"
+        && params.anima_teacache_enabled
+        && !style_ref::anima_ref_active(params)
+    {
         let teacache_id = next_id.to_string();
         workflow.insert(
             teacache_id.clone(),
@@ -901,17 +1037,29 @@ pub fn build_workflow(
         return video::build(params, seed, video_metadata_supported);
     }
 
-    if pause_resume_active(params) {
-        return build_paused_workflow(params, seed);
-    }
-
-    if params.style_transfer_enabled && params.model_architecture == "anima" {
+    let workflow = if pause_resume_active(params) {
+        build_paused_workflow(params, seed)
+    } else if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
-        return finish_workflow(result, params, seed);
-    }
+        finish_workflow(result, params, seed)
+    } else if moody_moss::area_detail_active(params) {
+        let result = moody_moss::build_area_detail(params, seed);
+        finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed)
+    } else {
+        let result = build_image_stage(params, seed);
+        finish_workflow(result, params, seed)
+    };
+    apply_architecture_text_encode(workflow, params)
+}
 
-    let result = build_image_stage(params, seed);
-    finish_workflow(result, params, seed)
+/// Rewrite prompt encoders for a registered architecture whose text encoder
+/// needs its own node. Runs on the finished graph so every template and
+/// appended chain (hires fix, face fix, segment detail) is covered.
+fn apply_architecture_text_encode(mut workflow: Value, params: &GenerationParams) -> Value {
+    if let Some(map) = workflow.as_object_mut() {
+        crate::architectures::apply_text_encode(map, params);
+    }
+    workflow
 }
 
 /// Whether this request pauses partway through sampling or resumes a paused run.
@@ -1026,11 +1174,18 @@ fn build_paused_workflow(params: &GenerationParams, seed: i64) -> Value {
 /// Build one image template plus the model/conditioning patches that every
 /// image mode shares. `finish_workflow` appends the post-process chains.
 fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
-    let mut result = match params.mode.as_str() {
-        "img2img" => img2img::build(params, seed),
-        "inpainting" => inpainting::build(params, seed),
-        "image_edit" => image_edit::build(params, seed),
-        _ => txt2img::build(params, seed),
+    // A registered architecture's dedicated graph for this mode, else the
+    // generic template.
+    let mut result = if let Some(build) = crate::architectures::builder(params) {
+        build(params, seed)
+    } else {
+        match params.mode.as_str() {
+            "img2img" => img2img::build(params, seed),
+            "inpainting" => inpainting::build(params, seed),
+            "outpainting" => outpainting::build(params, seed),
+            "image_edit" => image_edit::build(params, seed),
+            _ => txt2img::build(params, seed),
+        }
     };
 
     // Apply rectified flow scheduling for SD3/Flux/AuraFlow (patches model before sampling)
@@ -1038,9 +1193,6 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
 
     // v-prediction + zero-terminal SNR for NoobAI / Illustrious SDXL variants
     inject_vpred_zsnr_sampling(&mut result, params);
-
-    // Apply Stable Cascade model sampling if applicable
-    inject_cascade_sampling(&mut result, params);
 
     // Apply FluxGuidance for Flux Dev (positive conditioning guidance)
     inject_flux_guidance(&mut result, params);
@@ -1089,7 +1241,55 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // read the schedule off the fully patched model the injects above built.
     inject_resume_stage(&mut result, params, seed);
 
+    // A registered family distilled for a fixed sigma schedule (Turbo models).
+    crate::architectures::apply_manual_sigmas(&mut result, params);
+
+    // The patches above rewire only the main sampler, which for Moody Moss
+    // 4K HD is the second pass. The first pass must see the same model and
+    // conditioning.
+    if txt2img::moody_moss_hd_active(params) {
+        sync_moody_moss_first_pass(&mut result);
+    }
+    if crate::architectures::wan::two_expert_active(params) {
+        crate::architectures::wan::sync_high_noise_pass(&mut result);
+    }
+
     result
+}
+
+/// Copy the main sampler's model and conditioning onto the Moody Moss first
+/// pass, found through the `LatentUpscaleBy` that feeds the main sampler.
+fn sync_moody_moss_first_pass(result: &mut WorkflowResult) {
+    let Some(main_inputs) = result
+        .workflow
+        .get(&result.sampler_id)
+        .and_then(|node| node.get("inputs"))
+        .cloned()
+    else {
+        return;
+    };
+    let linked_id = |value: &Value| value.get(0).and_then(Value::as_str).map(str::to_string);
+    let Some(upscale_id) = linked_id(&main_inputs["latent_image"]) else {
+        return;
+    };
+    let Some(first_id) = result
+        .workflow
+        .get(&upscale_id)
+        .filter(|node| node["class_type"] == "LatentUpscaleBy")
+        .and_then(|node| linked_id(&node["inputs"]["samples"]))
+    else {
+        return;
+    };
+    if let Some(first_inputs) = result
+        .workflow
+        .get_mut(&first_id)
+        .filter(|node| node["class_type"] == "KSamplerAdvanced")
+        .and_then(|node| node.get_mut("inputs"))
+    {
+        for key in ["model", "positive", "negative"] {
+            first_inputs[key] = main_inputs[key].clone();
+        }
+    }
 }
 
 /// Wire up what a resumed stage needs beyond KSamplerAdvanced's step range.
@@ -1322,6 +1522,14 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
         final_image
     };
 
+    // Moody Moss 4K HD finishing (face detail, skin contrast, SeedVR2 blend),
+    // last so SeedVR2 restores the fully detailed image.
+    let final_image = if !intermediate {
+        moody_moss::append_finish(&mut result, params, final_image, seed)
+    } else {
+        final_image
+    };
+
     let save_id = result.next_id.to_string();
     let output_format = match params.output_format.as_str() {
         "jxl" => "jxl_raw",
@@ -1351,24 +1559,23 @@ pub fn is_vpred_model(params: &GenerationParams) -> bool {
 /// Returns true when the resolved architecture uses a 16-channel latent bucket.
 /// Anima/Wan (Wan2.1-based) need this — a 4-channel latent fails at decode.
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
-    matches!(
-        params.model_architecture.as_str(),
-        "sd3"
-            | "flux"
-            | "flux1d"
-            | "flux1s"
-            | "flux1krea"
-            | "chroma"
-            | "zib"
-            | "zit"
-            | "qwen"
-            | "qwen_edit"
-            | "qwen_edit_plus"
-            | "flux1kontext"
-            | "anima"
-            | "wan"
-            | "krea2"
-    )
+    crate::architectures::sd3::is_sd3(&params.model_architecture)
+        || matches!(
+            params.model_architecture.as_str(),
+            "flux"
+                | "flux1d"
+                | "flux1s"
+                | "flux1krea"
+                | "chroma"
+                | "zib"
+                | "zit"
+                | "qwen"
+                | "qwen_edit"
+                | "qwen_edit_plus"
+                | "flux1kontext"
+                | "anima"
+                | "krea2"
+        )
 }
 
 /// Returns true when the resolved architecture uses the Flux.2 latent node.
@@ -1382,6 +1589,8 @@ pub fn needs_flux2_latent(params: &GenerationParams) -> bool {
             | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
+            | "mossimage"
+            | "mossimagebase"
             | "ideogram4"
     )
 }
@@ -1753,6 +1962,22 @@ mod validation_and_seed_tests {
     }
 
     #[test]
+    fn krea2_image_edit_needs_an_edit_lora() {
+        let mut p = params("image_edit", "krea2");
+        p.edit_reference_images = vec!["ref.png".to_string()];
+        p.krea2_edit_method = "identity".to_string();
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("Identity Edit needs its edit LoRA"), "{err}");
+
+        p.krea2_edit_lora = "krea2_identity_edit_v2_r128.safetensors".to_string();
+        assert!(validate_generation_params(&p).is_ok());
+
+        // txt2img on Krea 2 never needs one.
+        let p = params("txt2img", "krea2");
+        assert!(validate_generation_params(&p).is_ok());
+    }
+
+    #[test]
     fn flux3_klein_needs_the_flux3_clip_type_and_a_qwen3vl_4b_encoder() {
         let mut p = params("image_edit", "flux3klein");
         p.edit_reference_images = vec!["ref.png".to_string()];
@@ -1779,6 +2004,77 @@ mod validation_and_seed_tests {
         p.int8_fast_enabled = true;
         let err = validate_generation_params(&p).unwrap_err();
         assert!(err.contains("INT8-Fast"), "{err}");
+    }
+
+    #[test]
+    fn moss_image_needs_the_moss_clip_type_and_a_qwen35_9b_encoder() {
+        for family in ["mossimage", "mossimagebase"] {
+            let mut p = params("txt2img", family);
+            p.use_split_model = true;
+            p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+            p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+            p.clip_type = Some("moss_image".to_string());
+            assert!(validate_generation_params(&p).is_ok());
+            assert!(
+                needs_flux2_latent(&p),
+                "MOSS-Image samples in the Flux 2 latent space"
+            );
+
+            p.clip_type = Some("flux3".to_string());
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("\"moss_image\""), "{err}");
+
+            p.clip_type = Some("moss_image".to_string());
+            p.clip_model = Some("qwen3vl_4b_fp8_scaled.safetensors".to_string());
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("qwen3.5_9b_w4a8_gptq"), "{err}");
+
+            p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+            p.int8_fast_enabled = true;
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("INT8-Fast"), "{err}");
+        }
+    }
+
+    #[test]
+    fn moss_image_edits_with_up_to_four_references() {
+        for family in ["mossimage", "mossimagebase"] {
+            let mut p = params("image_edit", family);
+            p.use_split_model = true;
+            p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+            p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+            p.clip_type = Some("moss_image".to_string());
+            p.edit_reference_images = (0..4).map(|i| format!("ref{i}.png")).collect();
+            assert!(validate_generation_params(&p).is_ok());
+            assert!(image_edit::supports_family(family));
+
+            p.edit_reference_images.push("ref4.png".to_string());
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("up to 4"), "{err}");
+        }
+    }
+
+    #[test]
+    fn moss_image_edit_runs_its_dedicated_graph() {
+        let mut p = params("image_edit", "mossimage");
+        p.use_split_model = true;
+        p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+        p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+        p.clip_type = Some("moss_image".to_string());
+        p.vae = Some("flux2-vae_small.safetensors".to_string());
+        p.edit_reference_images = vec!["ref0.png".to_string()];
+        let workflow = build_workflow(&p, 1, true);
+        let classes: Vec<&str> = workflow
+            .as_object()
+            .expect("workflow object")
+            .values()
+            .filter_map(|n| n["class_type"].as_str())
+            .collect();
+        assert!(classes.contains(&"TextEncodeMOSSImageEdit"), "{classes:?}");
+        assert!(
+            classes.contains(&"SkipLayerGuidanceDiTSimple"),
+            "{classes:?}"
+        );
     }
 
     #[test]
@@ -1846,6 +2142,138 @@ mod validation_and_seed_tests {
     }
 }
 
+/// CLIP-based ComfyUI families whose text encoder benefits from splitting
+/// `BREAK` boundaries into separate `CLIPTextEncode` chunks chained via
+/// `ConditioningConcat`. Non-CLIP encoders (LLM / T5 / Qwen) and NovelAI leave
+/// `BREAK` stripped/untouched.
+pub fn supports_break_chunking(arch: &str) -> bool {
+    matches!(arch, "sd15" | "sdxl" | "illustrious" | "pony" | "mugen")
+}
+
+/// Split a prompt on whole-word `BREAK` (or `<break>`) boundaries, trimming
+/// whitespace and stray boundary commas from each chunk and dropping empties.
+/// Always returns at least one element (possibly `""` for an empty prompt).
+pub fn split_break_chunks(prompt: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let bytes = prompt.as_bytes();
+    let mut chunk_start = 0usize;
+    let mut i = 0usize;
+
+    let trim_chunk = |raw: &str| -> String {
+        raw.trim()
+            .trim_matches(|c: char| c == ',' || c.is_whitespace())
+            .trim()
+            .to_string()
+    };
+
+    while i < bytes.len() {
+        if prompt[i..].starts_with("BREAK") {
+            let prev_is_word = prompt[..i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let next_is_word = prompt[i + 5..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            if !prev_is_word && !next_is_word {
+                let piece = trim_chunk(&prompt[chunk_start..i]);
+                if !piece.is_empty() {
+                    chunks.push(piece);
+                }
+                i += 5;
+                chunk_start = i;
+                continue;
+            }
+        } else if bytes.len() - i >= 7 && prompt[i..].is_char_boundary(7) {
+            if prompt[i..i + 7].eq_ignore_ascii_case("<break>") {
+                let piece = trim_chunk(&prompt[chunk_start..i]);
+                if !piece.is_empty() {
+                    chunks.push(piece);
+                }
+                i += 7;
+                chunk_start = i;
+                continue;
+            }
+        }
+        let ch_len = prompt[i..].chars().next().map_or(1, char::len_utf8);
+        i += ch_len;
+    }
+
+    let tail = trim_chunk(&prompt[chunk_start..]);
+    if !tail.is_empty() {
+        chunks.push(tail);
+    }
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+    chunks
+}
+
+/// Encode `text` into one `CLIPTextEncode` (or multiple chained via
+/// `ConditioningConcat` when `break_chunks` is enabled and `BREAK` splits it).
+pub fn encode_clip_prompt(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    clip_source: &(String, u32),
+    text: &str,
+    break_chunks: bool,
+) -> ((String, u32), u32) {
+    let cleaned = strip_lora_tags(text);
+    let chunks = if break_chunks {
+        split_break_chunks(&cleaned)
+    } else {
+        vec![cleaned]
+    };
+
+    let mut iter = chunks.into_iter();
+    let first_text = iter.next().unwrap_or_default();
+    let first_id = next_id.to_string();
+    workflow.insert(
+        first_id.clone(),
+        json!({
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "clip": [clip_source.0, clip_source.1],
+                "text": first_text
+            }
+        }),
+    );
+    next_id += 1;
+
+    let mut current = (first_id, 0u32);
+    for chunk in iter {
+        let chunk_id = next_id.to_string();
+        workflow.insert(
+            chunk_id.clone(),
+            json!({
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": [clip_source.0, clip_source.1],
+                    "text": chunk
+                }
+            }),
+        );
+        next_id += 1;
+
+        let concat_id = next_id.to_string();
+        workflow.insert(
+            concat_id.clone(),
+            json!({
+                "class_type": "ConditioningConcat",
+                "inputs": {
+                    "conditioning_to": [current.0, current.1],
+                    "conditioning_from": [chunk_id, 0]
+                }
+            }),
+        );
+        next_id += 1;
+        current = (concat_id, 0);
+    }
+
+    (current, next_id)
+}
+
 /// Build a conditioning output that combines a base prompt with optional timestep-scheduled segments.
 ///
 /// When `segments` is empty, this creates a single `CLIPTextEncode` and returns its output —
@@ -1861,46 +2289,63 @@ mod validation_and_seed_tests {
 /// Returns `(conditioning_source, next_id)`.
 pub fn build_scheduled_conditioning(
     workflow: &mut serde_json::Map<String, Value>,
-    mut next_id: u32,
+    next_id: u32,
     clip_source: &(String, u32),
     base_prompt: &str,
     segments: &[PromptSegment],
 ) -> ((String, u32), u32) {
+    build_scheduled_conditioning_with_break(
+        workflow,
+        next_id,
+        clip_source,
+        base_prompt,
+        segments,
+        false,
+    )
+}
+
+/// Architecture-aware twin of [`build_scheduled_conditioning`]: enables `BREAK`
+/// chunking via `ConditioningConcat` for CLIP-based ComfyUI families.
+pub fn build_scheduled_conditioning_for_arch(
+    workflow: &mut serde_json::Map<String, Value>,
+    next_id: u32,
+    clip_source: &(String, u32),
+    base_prompt: &str,
+    segments: &[PromptSegment],
+    arch: &str,
+) -> ((String, u32), u32) {
+    build_scheduled_conditioning_with_break(
+        workflow,
+        next_id,
+        clip_source,
+        base_prompt,
+        segments,
+        supports_break_chunking(arch),
+    )
+}
+
+fn build_scheduled_conditioning_with_break(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    clip_source: &(String, u32),
+    base_prompt: &str,
+    segments: &[PromptSegment],
+    break_chunks: bool,
+) -> ((String, u32), u32) {
     // Base prompt — always encoded (may be empty if user put everything in segments)
-    let base_id = next_id.to_string();
-    workflow.insert(
-        base_id.clone(),
-        json!({
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "clip": [clip_source.0, clip_source.1],
-                "text": strip_lora_tags(base_prompt)
-            }
-        }),
-    );
-    next_id += 1;
+    let (mut combined_source, nid) =
+        encode_clip_prompt(workflow, next_id, clip_source, base_prompt, break_chunks);
+    next_id = nid;
 
     if segments.is_empty() {
-        return ((base_id, 0), next_id);
+        return (combined_source, next_id);
     }
-
-    // Start the combine chain with the base conditioning
-    let mut combined_source = (base_id, 0u32);
 
     for segment in segments {
         // Encode segment text
-        let seg_clip_id = next_id.to_string();
-        workflow.insert(
-            seg_clip_id.clone(),
-            json!({
-                "class_type": "CLIPTextEncode",
-                "inputs": {
-                    "clip": [clip_source.0, clip_source.1],
-                    "text": strip_lora_tags(&segment.text)
-                }
-            }),
-        );
-        next_id += 1;
+        let (seg_clip_source, nid) =
+            encode_clip_prompt(workflow, next_id, clip_source, &segment.text, break_chunks);
+        next_id = nid;
 
         // Set timestep range on the segment conditioning
         let range_id = next_id.to_string();
@@ -1909,7 +2354,7 @@ pub fn build_scheduled_conditioning(
             json!({
                 "class_type": "ConditioningSetTimestepRange",
                 "inputs": {
-                    "conditioning": [seg_clip_id, 0],
+                    "conditioning": [seg_clip_source.0, seg_clip_source.1],
                     "start": segment.start,
                     "end": segment.end
                 }
@@ -1968,7 +2413,7 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
-    } else if params.model_architecture == "sd3" {
+    } else if crate::architectures::sd3::is_sd3(&params.model_architecture) {
         // ModelSamplingSD3 — discrete flow matching with constant shift
         let node_id = result.next_id.to_string();
         result.workflow.insert(
@@ -2085,34 +2530,6 @@ fn inject_vpred_zsnr_sampling(result: &mut WorkflowResult, params: &GenerationPa
         result.next_id += 1;
     }
 
-    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
-        if let Some(inputs) = sampler_node.get_mut("inputs") {
-            inputs["model"] = json!([result.model_source.0, result.model_source.1]);
-        }
-    }
-}
-
-/// Inject Stable Cascade model sampling (shift 2.0) for Cascade architecture models.
-fn inject_cascade_sampling(result: &mut WorkflowResult, params: &GenerationParams) {
-    if params.model_architecture != "cascade" {
-        return;
-    }
-
-    let node_id = result.next_id.to_string();
-    result.workflow.insert(
-        node_id.clone(),
-        json!({
-            "class_type": "ModelSamplingStableCascade",
-            "inputs": {
-                "model": [result.model_source.0.clone(), result.model_source.1],
-                "shift": 2.0
-            }
-        }),
-    );
-    result.model_source = (node_id, 0);
-    result.next_id += 1;
-
-    // Rewire KSampler to use patched model
     if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
         if let Some(inputs) = sampler_node.get_mut("inputs") {
             inputs["model"] = json!([result.model_source.0, result.model_source.1]);
@@ -2274,6 +2691,16 @@ mod tests {
         if family == "krea2" {
             value["clip_type"] = json!("krea2");
         }
+        // Flux.2 Klein validation requires the flux2 CLIP type and a Qwen3
+        // encoder of the model's size.
+        if family.starts_with("flux2klein") {
+            value["clip_type"] = json!("flux2");
+            value["clip_model"] = json!(if family.starts_with("flux2klein9b") {
+                "qwen_3_8b_fp8mixed.safetensors"
+            } else {
+                "qwen_3_4b.safetensors"
+            });
+        }
         serde_json::from_value(value).expect("test params must deserialize")
     }
 
@@ -2313,6 +2740,280 @@ mod tests {
             node["inputs"]["lora_mode"],
             json!("None"),
             "Use the INT8-Fast loader's default LoRA mode"
+        );
+    }
+
+    /// MOSS-Image txt2img as in Comfy-Org's template: UNETLoader, CLIPLoader
+    /// with type moss_image, the Flux 2 VAE and an EmptyFlux2LatentImage.
+    #[test]
+    fn moss_image_txt2img_wires_the_moss_clip_type_and_flux2_latent() {
+        let mut value = serde_json::to_value(klein_int8_params("mossimage", false)).unwrap();
+        value["diffusion_model"] = json!("moss_image_sft_int8_convrot.safetensors");
+        value["clip_model"] = json!("qwen3.5_9b_w4a8_gptq.safetensors");
+        value["clip_type"] = json!("moss_image");
+        value["vae"] = json!("flux2-vae_small.safetensors");
+        value["steps"] = json!(25);
+        value["cfg"] = json!(2.5);
+        value["sampler_name"] = json!("er_sde");
+        value["scheduler"] = json!("simple");
+        let params: GenerationParams = serde_json::from_value(value).unwrap();
+        assert!(validate_generation_params(&params).is_ok());
+        let workflow = build_workflow(&params, 42, false);
+        let nodes: Vec<&Value> = workflow.as_object().unwrap().values().collect();
+        let of = |class: &str| {
+            nodes
+                .iter()
+                .find(|n| n["class_type"] == json!(class))
+                .unwrap_or_else(|| panic!("{class} missing: {workflow}"))
+        };
+        assert_eq!(
+            of("UNETLoader")["inputs"]["unet_name"],
+            json!("moss_image_sft_int8_convrot.safetensors")
+        );
+        let clip = of("CLIPLoader");
+        assert_eq!(clip["inputs"]["type"], json!("moss_image"));
+        assert_eq!(
+            clip["inputs"]["clip_name"],
+            json!("qwen3.5_9b_w4a8_gptq.safetensors")
+        );
+        of("EmptyFlux2LatentImage");
+        assert_eq!(of("KSampler")["inputs"]["cfg"], json!(2.5));
+    }
+
+    fn moody_moss_params(steps: u32) -> GenerationParams {
+        let mut value = serde_json::to_value(klein_int8_params("mossimage", false)).unwrap();
+        value["diffusion_model"] = json!("Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors");
+        value["clip_model"] = json!("qwen3.5_9b_w4a8_gptq.safetensors");
+        value["clip_type"] = json!("moss_image");
+        value["vae"] = json!("flux2-vae_small.safetensors");
+        value["steps"] = json!(steps);
+        value["cfg"] = json!(3.0);
+        value["sampler_name"] = json!("euler");
+        value["scheduler"] = json!("simple");
+        value["width"] = json!(832);
+        value["height"] = json!(1248);
+        value["moody_moss_hd"] = json!(true);
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn kolors_params() -> serde_json::Value {
+        let mut value = serde_json::to_value(klein_int8_params("kolors", false)).unwrap();
+        value["diffusion_model"] = json!("kolors_unet_fp16.safetensors");
+        value["clip_model"] = json!("kolors_chatglm3.fp16-00001-of-00003.safetensors");
+        value["clip_type"] = json!("kolors");
+        value["vae"] = json!("kolors_vae_fp16.safetensors");
+        value["cfg"] = json!(5.0);
+        value["loras"] = json!([{"name": "kolors_style.safetensors", "strength_model": 0.8, "strength_clip": 1.0}]);
+        value
+    }
+
+    /// Kolors (architectures/kolors.rs) runs through the bundled MooshieKolorsLoader (UNet + ChatGLM3),
+    /// a stock VAELoader, and core CLIPTextEncode/KSampler/LoraLoader.
+    #[test]
+    fn kolors_txt2img_uses_the_bundled_loader() {
+        let params: GenerationParams = serde_json::from_value(kolors_params()).unwrap();
+        assert!(validate_generation_params(&params).is_ok());
+        let workflow = build_workflow(&params, 42, false);
+        let loaders = nodes_of(&workflow, "MooshieKolorsLoader");
+        assert_eq!(loaders.len(), 1, "{workflow}");
+        let (loader_id, loader) = loaders[0];
+        assert_eq!(
+            loader["inputs"]["unet_name"],
+            json!("kolors_unet_fp16.safetensors")
+        );
+        assert_eq!(
+            loader["inputs"]["text_encoder_name"],
+            json!("kolors_chatglm3.fp16-00001-of-00003.safetensors")
+        );
+        assert_eq!(loader["inputs"]["unet_path"], json!(""));
+        for class in ["UNETLoader", "CLIPLoader", "CheckpointLoaderSimple"] {
+            assert!(
+                nodes_of(&workflow, class).is_empty(),
+                "{class} must not be emitted"
+            );
+        }
+        let vaes = nodes_of(&workflow, "VAELoader");
+        assert_eq!(
+            vaes[0].1["inputs"]["vae_name"],
+            json!("kolors_vae_fp16.safetensors")
+        );
+        // The LoRA chains off the loader's MODEL and CLIP outputs.
+        let lora = nodes_of(&workflow, "LoraLoader")[0].1;
+        assert_eq!(lora["inputs"]["model"], json!([loader_id, 0]));
+        assert_eq!(lora["inputs"]["clip"], json!([loader_id, 1]));
+        assert_eq!(
+            nodes_of(&workflow, "KSampler")[0].1["inputs"]["cfg"],
+            json!(5.0)
+        );
+    }
+
+    #[test]
+    fn kolors_unet_in_checkpoints_loads_by_path() {
+        let mut value = kolors_params();
+        value["model_source_category"] = json!("checkpoints");
+        value["resolved_model_path"] = json!("/models/checkpoints/kolors_unet_fp16.safetensors");
+        let params: GenerationParams = serde_json::from_value(value).unwrap();
+        let workflow = build_workflow(&params, 42, false);
+        let loader = nodes_of(&workflow, "MooshieKolorsLoader")[0].1;
+        assert_eq!(
+            loader["inputs"]["unet_path"],
+            json!("/models/checkpoints/kolors_unet_fp16.safetensors")
+        );
+    }
+
+    #[test]
+    fn kolors_rejects_what_cannot_work() {
+        let check = |edit: &dyn Fn(&mut serde_json::Value)| {
+            let mut value = kolors_params();
+            edit(&mut value);
+            let params: GenerationParams = serde_json::from_value(value).unwrap();
+            validate_generation_params(&params)
+        };
+        assert!(check(&|v| v["use_split_model"] = json!(false))
+            .unwrap_err()
+            .contains("separate files"));
+        assert!(check(&|v| v["clip_model"] = json!("qwen_3_4b.safetensors"))
+            .unwrap_err()
+            .contains("kolors_chatglm3.fp16-00001-of-00003.safetensors"));
+        assert!(check(&|v| v["clip_model"] = json!(null))
+            .unwrap_err()
+            .contains("none is selected"));
+        assert!(check(&|v| {
+            v["controlnet"] = json!({
+                "enabled": true,
+                "image": "pose.png",
+                "controlnet_model": "sdxl_canny.safetensors",
+                "strength": 1.0,
+                "start_percent": 0.0,
+                "end_percent": 1.0
+            })
+        })
+        .unwrap_err()
+        .contains("ControlNet"));
+    }
+
+    fn nodes_of<'a>(workflow: &'a Value, class: &str) -> Vec<(&'a String, &'a Value)> {
+        workflow
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(_, n)| n["class_type"] == json!(class))
+            .collect()
+    }
+
+    /// Moody Moss 4K HD as the author's V3 workflow runs it at 25 steps:
+    /// KSamplerAdvanced 0-15 of 18 with leftover noise, LatentUpscaleBy
+    /// bicubic 1.5, KSamplerAdvanced 6-25 of 25 with fresh noise from seed+72.
+    #[test]
+    fn moody_moss_hd_samples_in_two_passes_around_a_latent_upscale() {
+        let mut params = moody_moss_params(25);
+        // Smart Guidance patches only the main sampler; the first pass must
+        // follow it.
+        params.smart_guidance = true;
+        assert!(validate_generation_params(&params).is_ok());
+        let workflow = build_workflow(&params, 42, false);
+
+        assert!(nodes_of(&workflow, "KSampler").is_empty(), "{workflow}");
+        let upscale = nodes_of(&workflow, "LatentUpscaleBy");
+        assert_eq!(upscale.len(), 1, "{workflow}");
+        let (upscale_id, upscale) = upscale[0];
+        assert_eq!(upscale["inputs"]["upscale_method"], json!("bicubic"));
+        assert_eq!(upscale["inputs"]["scale_by"], json!(1.5));
+
+        let first_id = upscale["inputs"]["samples"][0].as_str().unwrap();
+        let first = &workflow[first_id];
+        assert_eq!(first["class_type"], json!("KSamplerAdvanced"));
+        assert_eq!(first["inputs"]["steps"], json!(18));
+        assert_eq!(first["inputs"]["start_at_step"], json!(0));
+        assert_eq!(first["inputs"]["end_at_step"], json!(15));
+        assert_eq!(
+            first["inputs"]["return_with_leftover_noise"],
+            json!("enable")
+        );
+        assert_eq!(first["inputs"]["noise_seed"], json!(42));
+        let empty_id = first["inputs"]["latent_image"][0].as_str().unwrap();
+        assert_eq!(
+            workflow[empty_id]["class_type"],
+            json!("EmptyFlux2LatentImage")
+        );
+
+        let second: Vec<_> = nodes_of(&workflow, "KSamplerAdvanced")
+            .into_iter()
+            .filter(|(id, _)| id.as_str() != first_id)
+            .collect();
+        assert_eq!(second.len(), 1, "{workflow}");
+        let (second_id, second) = second[0];
+        assert_eq!(second["inputs"]["latent_image"][0], json!(upscale_id));
+        assert_eq!(second["inputs"]["steps"], json!(25));
+        assert_eq!(second["inputs"]["start_at_step"], json!(6));
+        assert_eq!(second["inputs"]["add_noise"], json!("enable"));
+        assert_eq!(
+            second["inputs"]["return_with_leftover_noise"],
+            json!("disable")
+        );
+        assert_eq!(second["inputs"]["noise_seed"], json!(42 + 69));
+        assert_eq!(second["inputs"]["cfg"], json!(3.0));
+
+        for key in ["model", "positive", "negative"] {
+            assert_eq!(first["inputs"][key], second["inputs"][key], "{key}");
+        }
+        let model_id = second["inputs"]["model"][0].as_str().unwrap();
+        assert_eq!(
+            workflow[model_id]["class_type"],
+            json!("MooshieSmartGuidance")
+        );
+
+        // The second pass is the one decoded and saved.
+        let decode = nodes_of(&workflow, "VAEDecode");
+        assert_eq!(decode.len(), 1, "{workflow}");
+        assert_eq!(decode[0].1["inputs"]["samples"][0], json!(second_id));
+    }
+
+    #[test]
+    fn moody_moss_passes_keep_the_workflow_proportions() {
+        use super::txt2img::{moody_moss_passes, MoodyMossPasses};
+        assert_eq!(
+            moody_moss_passes(25),
+            MoodyMossPasses {
+                first_steps: 18,
+                first_end: 15,
+                second_start: 6
+            }
+        );
+        for steps in 0..=80 {
+            let p = moody_moss_passes(steps);
+            assert!(
+                p.first_end >= 1 && p.first_end < p.first_steps,
+                "{steps}: {p:?}"
+            );
+            assert!(p.second_start < steps.max(2), "{steps}: {p:?}");
+        }
+    }
+
+    /// The flag only reshapes MOSS-Image txt2img. Another model, another mode
+    /// or a paused run keeps its own sampler.
+    #[test]
+    fn moody_moss_hd_is_ignored_outside_moss_txt2img() {
+        let mut sdxl = moody_moss_params(25);
+        sdxl.model_architecture = "sdxl".to_string();
+        assert!(!txt2img::moody_moss_hd_active(&sdxl));
+
+        let mut img2img = moody_moss_params(25);
+        img2img.mode = "img2img".to_string();
+        assert!(!txt2img::moody_moss_hd_active(&img2img));
+
+        let mut off = moody_moss_params(25);
+        off.moody_moss_hd = false;
+        let workflow = build_workflow(&off, 42, false);
+        assert_eq!(nodes_of(&workflow, "KSampler").len(), 1, "{workflow}");
+        assert!(nodes_of(&workflow, "LatentUpscaleBy").is_empty());
+
+        let mut paused = moody_moss_params(25);
+        paused.pause_at_step = Some(10);
+        let workflow = build_workflow(&paused, 42, false);
+        assert!(
+            nodes_of(&workflow, "LatentUpscaleBy").is_empty(),
+            "{workflow}"
         );
     }
 
@@ -2694,6 +3395,126 @@ mod tests {
         assert_eq!(nodes_of_class(workflow, "KSamplerAdvanced").len(), 1);
     }
 
+    fn anima_character_ref_params() -> GenerationParams {
+        let mut params = pausable_params();
+        params.model_architecture = "anima".to_string();
+        params.is_sdxl_like = false;
+        params.style_ref_enabled = true;
+        params.style_ref_image = Some("character.png".to_string());
+        params
+    }
+
+    #[test]
+    fn anima_character_ref_patches_the_ksampler_model_and_skips_teacache() {
+        let mut params = anima_character_ref_params();
+        params.anima_teacache_enabled = true;
+        assert!(validate_generation_params(&params).is_ok());
+
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert!(nodes_of_class(workflow, "MooshieAnimaTeaCache").is_empty());
+        let adapters = nodes_of_class(workflow, "AnimaRefAdapter");
+        assert_eq!(adapters.len(), 1);
+        let (_, sampler) = nodes_of_class(workflow, "KSampler")[0];
+        let model = sampler["inputs"]["model"][0].as_str().unwrap();
+        assert_eq!(workflow[model]["class_type"], "AnimaRefAdapter");
+    }
+
+    #[test]
+    fn anima_teacache_still_runs_without_the_character_ref() {
+        let mut params = anima_character_ref_params();
+        params.style_ref_enabled = false;
+        params.anima_teacache_enabled = true;
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert_eq!(nodes_of_class(workflow, "MooshieAnimaTeaCache").len(), 1);
+        assert!(nodes_of_class(workflow, "AnimaRefAdapter").is_empty());
+    }
+
+    #[test]
+    fn snapref_flows_through_the_image_pipeline_and_skips_teacache() {
+        for mode in ["txt2img", "img2img", "inpainting"] {
+            let mut params = anima_character_ref_params();
+            params.mode = mode.into();
+            params.input_image = Some("input.png".into());
+            params.mask_image = Some("mask.png".into());
+            params.style_ref_image = None;
+            params.anima_ref_method = "snapref".into();
+            params.snapref_adapter = Some("snapref_v2a.safetensors".into());
+            params.snapref_mode = "Character".into();
+            params.snapref_fidelity = 0.5;
+            params.snapref_references = vec![crate::comfyui::types::SnapRefReference {
+                image: Some("character.png".into()),
+                strength: 1.0,
+            }];
+            params.anima_teacache_enabled = true;
+            assert!(validate_generation_params(&params).is_ok());
+            let workflow = build_workflow(&params, 42, false);
+            let workflow = workflow.as_object().unwrap();
+            assert_eq!(nodes_of_class(workflow, "SnapRefSimple").len(), 1);
+            assert!(nodes_of_class(workflow, "MooshieAnimaTeaCache").is_empty());
+            params.mode = "txt2img".into();
+            params.style_transfer_enabled = true;
+            params.style_reference_image = Some("style.png".into());
+            assert!(validate_generation_params(&params).is_err());
+        }
+    }
+
+    #[test]
+    fn anima_art_style_flows_through_the_image_pipeline_and_skips_teacache() {
+        for mode in ["txt2img", "img2img", "inpainting"] {
+            let mut params = anima_character_ref_params();
+            params.mode = mode.into();
+            params.input_image = Some("input.png".into());
+            params.mask_image = Some("mask.png".into());
+            params.style_ref_image = Some("style.png".into());
+            params.anima_ref_method = "art_style".into();
+            params.anima_art_style_match = 0.6;
+            params.anima_art_style_megapixels = 1.0;
+            params.anima_teacache_enabled = true;
+            assert!(validate_generation_params(&params).is_ok(), "{mode}");
+            let workflow = build_workflow(&params, 42, false);
+            let workflow = workflow.as_object().unwrap();
+            let styles = nodes_of_class(workflow, "MooshieAnimaArtStyle");
+            assert_eq!(styles.len(), 1, "{mode}");
+            assert!(nodes_of_class(workflow, "AnimaRefAdapter").is_empty());
+            assert!(nodes_of_class(workflow, "MooshieAnimaTeaCache").is_empty());
+            let picture = styles[0].1["inputs"]["image"][0].as_str().unwrap();
+            assert_eq!(workflow[picture]["inputs"]["image"], "style.png");
+            params.mode = "txt2img".into();
+            params.style_transfer_enabled = true;
+            params.style_reference_image = Some("style.png".into());
+            assert!(validate_generation_params(&params).is_err());
+        }
+    }
+
+    #[test]
+    fn anima_art_style_needs_a_picture_and_sane_settings() {
+        let mut params = anima_character_ref_params();
+        params.anima_ref_method = "art_style".into();
+        params.anima_art_style_match = 0.6;
+        params.anima_art_style_megapixels = 1.0;
+        params.style_ref_image = None;
+        assert!(validate_generation_params(&params).is_err());
+        params.style_ref_image = Some("style.png".into());
+        params.anima_art_style_megapixels = 8.0;
+        assert!(validate_generation_params(&params).is_err());
+        params.anima_art_style_megapixels = 1.0;
+        params.anima_art_style_match = f32::NAN;
+        assert!(validate_generation_params(&params).is_err());
+        params.anima_art_style_match = 0.0;
+        assert!(validate_generation_params(&params).is_ok());
+    }
+
+    #[test]
+    fn anima_character_ref_rejects_style_transfer() {
+        let mut params = anima_character_ref_params();
+        params.style_transfer_enabled = true;
+        params.style_reference_image = Some("style.png".to_string());
+        let err = validate_generation_params(&params).unwrap_err();
+        assert!(err.contains("Anima Style Reference"), "{err}");
+    }
+
     #[test]
     fn style_transfer_rf_inversion_sends_otip_inputs() {
         let mut params = pausable_params();
@@ -2876,5 +3697,50 @@ mod tests {
             last.sampler_name = sampler.into();
             validate_generation_params(&last).expect("same schedule can pause again");
         }
+    }
+
+    #[test]
+    fn break_chunking_splits_clip_models_with_conditioning_concat() {
+        for arch in ["sd15", "sdxl", "illustrious", "pony"] {
+            let mut p = pausable_params();
+            p.model_architecture = arch.into();
+            p.positive_prompt =
+                "1girl, blue hair, BREAK, beach, sunset, <break> BREAKFAST, smiling".into();
+            p.negative_prompt = "lowres, BREAK, blurry".into();
+            let workflow = build_workflow(&p, 42, false);
+            let workflow = workflow.as_object().unwrap();
+
+            let encodes = nodes_of_class(workflow, "CLIPTextEncode");
+            let texts: Vec<&str> = encodes
+                .iter()
+                .map(|(_, n)| n["inputs"]["text"].as_str().unwrap())
+                .collect();
+            assert!(texts.contains(&"1girl, blue hair"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"beach, sunset"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"BREAKFAST, smiling"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"lowres"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"blurry"), "{arch}: {texts:?}");
+
+            let concats = nodes_of_class(workflow, "ConditioningConcat");
+            assert_eq!(concats.len(), 3, "{arch}: expected 2 pos + 1 neg concats");
+
+            let sampler = nodes_of_class(workflow, "KSampler")[0].1;
+            let pos_id = sampler["inputs"]["positive"][0].as_str().unwrap();
+            let neg_id = sampler["inputs"]["negative"][0].as_str().unwrap();
+            assert_eq!(workflow[pos_id]["class_type"], json!("ConditioningConcat"));
+            assert_eq!(workflow[neg_id]["class_type"], json!("ConditioningConcat"));
+        }
+    }
+
+    #[test]
+    fn break_chunking_keeps_non_clip_models_single_encode() {
+        let mut p = pausable_params();
+        p.model_architecture = "anima".into();
+        p.positive_prompt = "1girl, BREAK, beach".into();
+        p.negative_prompt = "lowres, BREAK, blurry".into();
+        let workflow = build_workflow(&p, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert!(nodes_of_class(workflow, "ConditioningConcat").is_empty());
+        assert_eq!(nodes_of_class(workflow, "CLIPTextEncode").len(), 2);
     }
 }

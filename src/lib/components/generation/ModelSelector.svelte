@@ -9,8 +9,18 @@
   import { connection } from "../../stores/connection.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
+  import LoraTriggerInput from "./LoraTriggerInput.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
+  import { allModelFamilies, familyIsSdxlLike } from "../../utils/modelFamily.js";
+  import { architectures } from "../../stores/architectures.svelte.js";
+  import {
+    encoderMatches,
+    findFamily,
+    registeredRecommendedModels,
+    slotMatches,
+    vaeMatches,
+    type ArchitectureModelFile,
+  } from "../../utils/architectures.js";
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { resolveAvailableModel } from "../../utils/modelAvailability.js";
@@ -24,6 +34,9 @@
   } from "../../utils/krea2Encoder.js";
   import { installKrea2Uncensored, setKrea2Uncensored } from "../../utils/krea2UncensoredSetup.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
+  import { isFlux1VaeName } from "../../utils/splitVae.js";
+  import { planCascadeStageB, sameFiles, withCascadeFiles } from "../../utils/cascade.js";
+  import { wanVariant } from "../../utils/wanModels.js";
 
   interface ModelFile {
     filename: string;
@@ -70,6 +83,8 @@
     minComputeCapability?: number;
     /** Hint shown next to the size in the dropdown to explain the gate. */
     gateHint?: string;
+    /** Translation key of a licence or usage note shown under the entry. */
+    noticeKey?: string;
     /**
      * When true, the entry is shown only if all components are detected
      * locally (by hash or filename). Used for models we can't redistribute
@@ -99,13 +114,14 @@
     url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
     category: "text_encoders",
   };
+
   const FLUX2_VAE_FILE: ModelFile = {
     filename: "flux2-vae.safetensors",
     url: "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/main/split_files/vae/flux2-vae.safetensors",
     category: "vae",
   };
 
-  const recommendedModels: RecommendedModel[] = [
+  const builtinRecommendedModels: RecommendedModel[] = [
     {
       label: "Juice",
       size: "~6.9 GB",
@@ -153,7 +169,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -185,7 +201,7 @@
         samplerName: "euler",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 5,
       },
     },
     {
@@ -215,7 +231,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -249,7 +265,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -285,7 +301,7 @@
         scheduler: "simple",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -321,7 +337,7 @@
         scheduler: "simple",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -353,7 +369,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -391,7 +407,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -423,7 +439,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -451,8 +467,9 @@
           // Listed under text_encoders so the picker resolves correctly;
           // backend hash lookup also falls through to `clip/`.
           category: "text_encoders",
-          // Flux 2 Klein ships with Qwen 3 as its text encoder.
-          clipType: "qwen_image",
+          // ComfyUI builds the Klein encoder under the flux2 CLIP type, which
+          // the Flux.2 Klein registry spec requires.
+          clipType: "flux2",
         },
         vaeModel: {
           filename: "flux-vae.safetensors",
@@ -461,7 +478,7 @@
         },
       },
       autoSettings: {
-        steps: 20,
+        steps: 4,
         cfg: 1.0,
         samplerName: "euler",
         scheduler: "simple",
@@ -506,6 +523,24 @@
         steps: 50,
         cfg: 3.5,
         samplerName: "euler",
+        scheduler: "simple",
+      },
+    },
+    // Stable Cascade stage C, ComfyUI checkpoint format (text encoder and
+    // EfficientNet encoder inside). Stage B (~4.6 GB, counted in the size)
+    // downloads by itself once Cascade is selected; see ensureCascadeStageB.
+    {
+      label: "Stable Cascade",
+      size: "~13.8 GB",
+      checkpoint: {
+        filename: "stable_cascade_stage_c.safetensors",
+        url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/comfyui_checkpoints/stable_cascade_stage_c.safetensors",
+        category: "checkpoints",
+      },
+      autoSettings: {
+        steps: 20,
+        cfg: 4,
+        samplerName: "euler_ancestral",
         scheduler: "simple",
       },
     },
@@ -561,6 +596,13 @@
   // -100..100, so this is a UI range only.
   const LORA_STRENGTH_MIN = -10;
   const LORA_STRENGTH_MAX = 10;
+  // The slider itself covers the range people actually use, so a small drag
+  // is a small change (0.05 a notch over 0 to 2 instead of -10 to 10). It
+  // widens to whole numbers around a value typed in outside that range, and
+  // the number next to it still takes anything from -10 to 10.
+  const LORA_SLIDER_MIN = 0;
+  const LORA_SLIDER_MAX = 2;
+  const LORA_SLIDER_STEP = 0.05;
 
   let showArchitecturePicker = $state(false);
   let showModelInfo = $state(false);
@@ -686,13 +728,6 @@
     return ZIMAGE_ENCODER_MARKERS.some((marker) => lower.includes(marker));
   }
 
-  /** Flux 1 VAE (`ae.safetensors` or any non-Flux-2 `flux` name). Mirrors `find_flux1_vae` in api.rs. */
-  function isFlux1Vae(filename: string): boolean {
-    const lower = filename.toLowerCase();
-    const basename = lower.split(/[\\/]/).pop() ?? lower;
-    return basename === "ae.safetensors" || (lower.includes("flux") && !lower.includes("flux2") && !lower.includes("flux.2"));
-  }
-
   /**
    * Split families that only work with one specific text encoder. Their
    * diffusion weights usually arrive alone (Model Hub, CivitAI), so the
@@ -705,14 +740,134 @@
     encoderFile: ModelFile;
     isVae: (filename: string) => boolean;
     vaeFile: ModelFile;
+    /** Further files a registered architecture needs: its model slots
+     *  (sent as `architecture_files[key]`) and the current mode's fixed files. */
+    extraFiles?: RequiredExtraFile[];
   }
+
+  interface RequiredExtraFile {
+    /** Model slot key; absent for a mode file loaded by its fixed name. */
+    key?: string;
+    label: string;
+    category: string;
+    matches: (filename: string) => boolean;
+    /** Absent when the file cannot be downloaded (the generate-time check explains). */
+    file?: ModelFile;
+  }
+
+  function architectureModelFile(file: ArchitectureModelFile): ModelFile {
+    return {
+      filename: file.filename,
+      url: file.url,
+      category: file.category,
+      // AutoV2 (first 10 hex of the SHA-256), so a renamed copy still counts as installed.
+      hash: file.sha256 ? file.sha256.slice(0, 10).toUpperCase() : undefined,
+    };
+  }
+
+  /** Installed files in a ComfyUI model folder. */
+  function installedIn(category: string): string[] {
+    switch (category) {
+      case "text_encoders":
+        return models.textEncoders;
+      case "vae":
+        return models.vaes;
+      case "diffusion_models":
+        return models.diffusionModels;
+      case "loras":
+        return models.loras;
+      case "checkpoints":
+        return models.checkpoints;
+      default:
+        return models.serverModels[category] ?? [];
+    }
+  }
+
+  /**
+   * The requirement of a registered architecture (src-tauri/src/architectures):
+   * its encoder and VAE when it ships downloads for them, plus its model slots
+   * and the current mode's fixed files. Null when it declares none of those.
+   */
+  function registeredRequirement(family: ModelFamily, mode: string): RequiredSplitEncoder | null {
+    const found = findFamily(family);
+    if (!found) return null;
+    const { arch } = found;
+    const encoder = found.family.text_encoder ?? arch.text_encoder;
+    const vae = found.family.vae ?? arch.vae;
+    const extraFiles: RequiredExtraFile[] = [
+      ...arch.model_slots.map((slot) => ({
+        key: slot.key,
+        label: slot.label,
+        category: slot.category,
+        matches: (filename: string) => slotMatches(slot, filename),
+        file: slot.download ? architectureModelFile(slot.download) : undefined,
+      })),
+      ...(arch.modes.find((m) => m.mode === mode)?.required_files ?? []).map((file) => ({
+        label: file.filename,
+        category: file.category,
+        matches: (filename: string) =>
+          (filename.split(/[\\/]/).pop() ?? filename).toLowerCase() === file.filename.toLowerCase(),
+        file: architectureModelFile(file),
+      })),
+    ];
+    if (!encoder?.download && extraFiles.length === 0) return null;
+    // Without an encoder download, keep whatever encoder is picked: the
+    // requirement then only covers the extra files.
+    const keepEncoder = !encoder?.download;
+    return {
+      label: found.family.label,
+      clipType: encoder?.clip_type ?? generation.clipType ?? "",
+      isEncoder: (filename) => (keepEncoder ? true : !!encoder && encoderMatches(encoder, filename)),
+      encoderFile: encoder?.download
+        ? architectureModelFile(encoder.download)
+        : { filename: "", url: "", category: "text_encoders" },
+      isVae: (filename) => (vae?.download ? vaeMatches(vae, filename) : true),
+      vaeFile: vae?.download
+        ? architectureModelFile(vae.download)
+        : { filename: "", url: "", category: "vae" },
+      extraFiles,
+    };
+  }
+
+  /** Curated entries plus the Model Hub entries of registered architectures. */
+  const recommendedModels: RecommendedModel[] = $derived.by(() => {
+    void architectures.version;
+    const registered = registeredRecommendedModels().flatMap(({ arch, family, model }) => {
+      const encoder = family.text_encoder ?? arch.text_encoder;
+      const vae = family.vae ?? arch.vae;
+      if (!encoder?.download || !vae?.download) return [];
+      const entry: RecommendedModel = {
+        label: model.label,
+        size: model.size,
+        minComputeCapability: model.min_compute_capability ?? undefined,
+        splitModel: {
+          diffusionModel: architectureModelFile(model.diffusion_model),
+          clipModel: { ...architectureModelFile(encoder.download), clipType: encoder.clip_type },
+          vaeModel: architectureModelFile(vae.download),
+        },
+        autoSettings: family.sampling
+          ? {
+              steps: family.sampling.steps,
+              cfg: family.sampling.cfg,
+              samplerName: family.sampling.sampler,
+              scheduler: family.sampling.scheduler,
+            }
+          : undefined,
+      };
+      // A registered architecture can carry a licence note, keyed by its id.
+      const noticeKey = `generation.model.notice.${arch.id}`;
+      if (locale.t(noticeKey) !== noticeKey) entry.noticeKey = noticeKey;
+      return [entry];
+    });
+    return [...builtinRecommendedModels, ...registered];
+  });
 
   const ZIMAGE_REQUIREMENT: RequiredSplitEncoder = {
     label: "Z-Image",
     clipType: "lumina2",
     isEncoder: isZImageEncoder,
     encoderFile: ZIMAGE_ENCODER_FILE,
-    isVae: isFlux1Vae,
+    isVae: isFlux1VaeName,
     vaeFile: ZIMAGE_VAE_FILE,
   };
 
@@ -757,13 +912,15 @@
     if (models.loading || !Object.keys(models.serverModels).length) return;
 
     const current = generation.clipModel;
-    const existing =
-      req === REQUIRED_SPLIT_ENCODERS.krea2
+    const keepsEncoder = !req.encoderFile.filename;
+    const existing = keepsEncoder
+      ? current
+      : req === REQUIRED_SPLIT_ENCODERS.krea2
         ? pickKrea2Encoder(models.textEncoders, current, generation.krea2UncensoredEncoder)
         : current && req.isEncoder(current) && models.textEncoders.includes(current)
           ? current
           : models.textEncoders.find((f) => req.isEncoder(f));
-    if (existing) {
+    if (existing && !keepsEncoder) {
       if (generation.clipModel !== existing || generation.clipType !== req.clipType) {
         generation.clipModel = existing;
         generation.clipType = req.clipType;
@@ -772,11 +929,29 @@
     }
 
     const files: { file: ModelFile; label: string }[] = [];
-    if (!existing) {
+    if (!existing && req.encoderFile.filename) {
       files.push({ file: req.encoderFile, label: locale.t('generation.model.downloading_text_encoder') });
     }
-    if (!models.vaes.some(req.isVae)) {
+    if (req.vaeFile.filename && !models.vaes.some(req.isVae)) {
       files.push({ file: req.vaeFile, label: locale.t('generation.model.downloading_vae') });
+    }
+    // Registered architecture slots: keep a matching pick, else the first
+    // matching installed file, else download it.
+    const slotPicks: Record<string, string> = {};
+    for (const extra of req.extraFiles ?? []) {
+      const installed = installedIn(extra.category);
+      const kept = extra.key ? generation.architectureFiles[extra.key] : undefined;
+      const pick =
+        kept && installed.includes(kept) && extra.matches(kept) ? kept : installed.find(extra.matches);
+      if (pick) {
+        if (extra.key) slotPicks[extra.key] = pick;
+      } else if (extra.file?.url) {
+        files.push({ file: extra.file, label: locale.t('generation.model.downloading_file', { name: extra.label }) });
+      }
+    }
+    const slotKeys = Object.keys(slotPicks);
+    if (slotKeys.some((key) => generation.architectureFiles[key] !== slotPicks[key])) {
+      generation.architectureFiles = { ...generation.architectureFiles, ...slotPicks };
     }
     if (files.length === 0) return;
 
@@ -804,12 +979,21 @@
         }),
       );
       await models.refresh();
-      if (!existing) {
+      if (!existing && req.encoderFile.filename) {
         generation.clipModel = req.encoderFile.filename;
         generation.clipType = req.clipType;
       }
       if (files.some(({ file }) => file === req.vaeFile) && !req.isVae(generation.vae)) {
         generation.vae = req.vaeFile.filename;
+      }
+      const downloadedSlots: Record<string, string> = {};
+      for (const extra of req.extraFiles ?? []) {
+        if (extra.key && extra.file && files.some(({ file }) => file === extra.file)) {
+          downloadedSlots[extra.key] = extra.file.filename;
+        }
+      }
+      if (Object.keys(downloadedSlots).length) {
+        generation.architectureFiles = { ...generation.architectureFiles, ...downloadedSlots };
       }
       generation.saveSettings();
       downloading = null;
@@ -830,12 +1014,93 @@
     }
   }
 
+  let cascadeEnsureRunning = false;
+  let cascadeDownloadFailed = false;
+
+  /**
+   * Stable Cascade needs stage B next to the stage C model the user picked.
+   * Uses an installed one (checkpoint, or diffusion model + stage A) and
+   * downloads the official all-in-one stage B checkpoint when none is there.
+   */
+  async function ensureCascadeStageB() {
+    if (cascadeEnsureRunning) return;
+    if (models.loading || !Object.keys(models.serverModels).length) return;
+    const plan = planCascadeStageB(
+      { checkpoints: models.checkpoints, diffusionModels: models.diffusionModels, vaes: models.vaes },
+      generation.architectureFiles,
+    );
+    if (plan.files) {
+      const next = withCascadeFiles(generation.architectureFiles, plan.files);
+      if (!sameFiles(next, generation.architectureFiles)) {
+        generation.architectureFiles = next;
+        generation.saveSettings();
+      }
+      return;
+    }
+    if (downloading !== null || models.remote || cascadeDownloadFailed) return;
+
+    cascadeEnsureRunning = true;
+    downloading = "Stable Cascade";
+    downloadError = "";
+    const seeded: Record<string, DlEntry> = {};
+    for (const file of plan.download) {
+      seeded[file.filename] = {
+        filename: file.filename,
+        label: locale.t('generation.model.downloading_file', { name: "Stable Cascade stage B" }),
+        downloaded: 0,
+        total: 0,
+        done: false,
+      };
+    }
+    dlEntries = seeded;
+    dlOrder = plan.download.map((f) => f.filename);
+    try {
+      for (const file of plan.download) {
+        await downloadModel(file.url, file.category, file.filename);
+        await cacheHashAfterDownload(file);
+      }
+      await models.refresh();
+      downloading = null;
+      dlEntries = {};
+      dlOrder = [];
+    } catch (e) {
+      console.error("Failed to download Stable Cascade stage B:", e);
+      cascadeDownloadFailed = true;
+      downloadError = `Download failed: ${e}`;
+      setTimeout(() => {
+        downloading = null;
+        downloadError = "";
+        dlEntries = {};
+        dlOrder = [];
+      }, 4000);
+    } finally {
+      cascadeEnsureRunning = false;
+    }
+    // Pick up what just arrived.
+    if (!cascadeDownloadFailed) void ensureCascadeStageB();
+  }
+
+  $effect(() => {
+    if (generation.modelFamily === "cascade") {
+      // Re-run when the inventory changes.
+      void models.checkpoints;
+      void models.diffusionModels;
+      void models.vaes;
+      void ensureCascadeStageB();
+    }
+  });
+
   // Family detection itself lives in an App.svelte $effect (it has to run while
   // this panel is collapsed). The encoder download stays here because it drives
   // this component's progress rows, so it only runs while the panel is open.
   $effect(() => {
-    const req = REQUIRED_SPLIT_ENCODERS[generation.modelFamily];
-    if (req && generation.useSplitModel) {
+    void architectures.version;
+    const req =
+      REQUIRED_SPLIT_ENCODERS[generation.modelFamily] ??
+      registeredRequirement(generation.modelFamily, generation.mode);
+    // A Wan image-to-video file cannot make images: no encoder download for it.
+    const unusableWan = generation.isWan && wanVariant(generation.diffusionModel) === "notTextToImage";
+    if (req && generation.useSplitModel && !unusableWan) {
       void ensureRequiredSplitEncoder(req);
     }
   });
@@ -859,6 +1124,13 @@
    * (so AMD/Intel/CPU users don't see entries they can't run).
    */
   let computeCapability = $state<number | null>(null);
+
+  // Wan 2.2 A14B: say which low-noise file finishes the high-noise model, or
+  // that one is missing. Image-to-video Wan files cannot make an image at all.
+  const wanSplitVariant = $derived(
+    generation.useSplitModel && generation.isWan ? wanVariant(generation.diffusionModel) : null,
+  );
+  const wanPairedLowNoise = $derived(wanSplitVariant === "a14bHigh" ? generation.wanLowNoisePartner : null);
 
   // NVFP4 weights only run natively on Blackwell (compute capability 10.0+).
   // Warn owners of older NVIDIA GPUs that they need the FP8 build instead.
@@ -1060,30 +1332,38 @@
     const cached = loadCachedHashes();
     const resolved: Record<string, string> = {};
 
-    const lookups = allFiles.map(async (f) => {
-      if (!f.hash) return;
+    // One lookup per category and hash: several entries share an encoder or VAE.
+    const pending = new Map<string, ModelFile>();
+    for (const f of allFiles) {
+      if (!f.hash) continue;
       const key = `${f.category}::${f.hash}`;
-
-      // First check cached mapping
       if (cached[key]) {
         resolved[key] = cached[key];
-        return;
+      } else if (!pending.has(key)) {
+        pending.set(key, f);
       }
+    }
+    if (scope === models.cacheScope) hashResolved = { ...resolved };
 
-      // Otherwise scan the directory by hash
+    // Each lookup hashes a whole model folder on the host. Run them one at a
+    // time: in browser mode every request holds one of the browser's six
+    // connections to the server, and a dozen parallel scans left none for
+    // starting ComfyUI or loading the model lists.
+    for (const [key, f] of pending) {
+      if (scope !== models.cacheScope) return;
       try {
-        const found = await findModelByHash(f.category, f.hash);
+        const found = await findModelByHash(f.category, f.hash!);
         if (found) {
           resolved[key] = found;
-          if (scope === models.cacheScope) cacheHash(f.category, found, f.hash);
+          if (scope === models.cacheScope) {
+            cacheHash(f.category, found, f.hash!);
+            hashResolved = { ...resolved };
+          }
         }
       } catch (e) {
         console.warn(`Hash lookup failed for ${f.filename}:`, e);
       }
-    });
-
-    await Promise.all(lookups);
-    if (scope === models.cacheScope) hashResolved = resolved;
+    }
   }
 
   $effect(() => {
@@ -1131,6 +1411,21 @@
       files: files.map((file) => `${file.category}/${file.filename}`).join(", "),
     });
   }
+
+  /**
+   * ComfyUI has not listed its models yet (starting, restarting after an
+   * update or node install, or stopped). The inventory is empty because
+   * nothing answered, not because nothing is installed, so the picker must not
+   * read it as "download everything". NovelAI models don't need ComfyUI.
+   */
+  const waitingForComfyUi = $derived(!models.inventoryReady);
+
+  // Drop the "wait for ComfyUI" notice once it answers, so the next pick runs.
+  $effect(() => {
+    if (!waitingForComfyUi && downloadError === locale.t("generation.model.waiting_comfyui_download")) {
+      untrack(() => (downloadError = ""));
+    }
+  });
 
   const unavailableSelection = $derived.by(() => {
     if (generation.isNovelAi || models.loading || !Object.keys(models.serverModels).length) return [];
@@ -1185,6 +1480,8 @@
   }
 
   onMount(async () => {
+    // Retry if App.svelte's load ran before a browser-mode login.
+    void architectures.load();
     // Decides whether the NovelAI models are offered at all.
     void novelai.refresh();
     document.addEventListener("pointerdown", handleDocumentPointerDown);
@@ -1234,6 +1531,24 @@
     generation.loras.filter((l) => l.enabled && l.name).length
   );
 
+  // One slider for both LoRA strengths (the default) or separate model and
+  // CLIP sliders. A display preference, so it is kept per device rather than
+  // per generation tab.
+  const LORA_LINKED_KEY = "mooshieui.generation.loraLinkedStrength.v1";
+  let loraLinkedStrength = $state(readLoraLinked());
+  function readLoraLinked(): boolean {
+    try { return localStorage.getItem(LORA_LINKED_KEY) !== "false"; } catch { return true; }
+  }
+  $effect(() => {
+    const linked = String(loraLinkedStrength);
+    try { localStorage.setItem(LORA_LINKED_KEY, linked); } catch {}
+  });
+
+  function setLoraStrength(set: (v: number) => void, value: number) {
+    set(Math.round(value * 100) / 100);
+    generation.saveSettings();
+  }
+
   const LORAS_COLLAPSE_KEY = "mooshieui.generation.lorasCollapsed.v1";
   let lorasOpen = $state(localStorage.getItem(LORAS_COLLAPSE_KEY) !== "true");
   let lorasSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1247,15 +1562,14 @@
 
   function filteredLorasForIndex(index: number) {
     const search = loraSearches[index] ?? "";
-    return models.loras.filter((l) =>
+    // MiniMax H3 video LoRAs live in the video panel's own stack.
+    return models.imageLorasFor(generation.modelFamily).filter((l) =>
       l.toLowerCase().includes(search.toLowerCase())
     );
   }
 
   function selectLora(index: number, name: string) {
-    generation.loras = generation.loras.map((l, i) =>
-      i === index ? { ...l, name } : l
-    );
+    generation.setLoraName(index, name);
     generation.saveSettings();
     showLoraDropdown = null;
     loraSearches = { ...loraSearches, [index]: "" };
@@ -1339,12 +1653,14 @@
   interface DropdownItem {
     type: "checkpoint" | "recommended" | "diffusion" | "novelai";
     label: string;
+    adult?: boolean;
     value: string;
     rec?: RecommendedModel;
     installed: boolean;
     localOnly?: boolean;
     size?: string;
     gateHint?: string;
+    noticeKey?: string;
   }
 
   function matchesRecommendedModel(rec: RecommendedModel): boolean {
@@ -1388,6 +1704,7 @@
             type: "novelai",
             label: m.label,
             value: m.id,
+            adult: m.adult,
             installed: true,
           });
         }
@@ -1413,13 +1730,14 @@
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
           type: "recommended",
-          label: installed || localOnly || models.remote ? rec.label : `⬇ ${rec.label}`,
+          label: installed || localOnly || models.remote || waitingForComfyUi ? rec.label : `⬇ ${rec.label}`,
           value: rec.label,
           rec,
           installed,
           localOnly,
           size: rec.sizeKey ? locale.t(rec.sizeKey) : rec.size,
           gateHint: rec.gateHint,
+          noticeKey: rec.noticeKey,
         });
       }
     }
@@ -1561,6 +1879,13 @@
     downloadError = "";
     closeCheckpointDropdown();
     checkpointSearch = "";
+
+    // Without ComfyUI's list every file reads as missing, and downloading now
+    // would fetch gigabytes that are most likely already on disk.
+    if (waitingForComfyUi) {
+      downloadError = locale.t("generation.model.waiting_comfyui_download");
+      return;
+    }
 
     // Check each component individually and download only what's missing
     const missingFiles: { file: ModelFile; label: string }[] = [];
@@ -1705,6 +2030,7 @@
 
   /** Display name for the current model */
   const displayCheckpoint = $derived(() => {
+    if (generation.novelAiModel) return generation.novelAiModel.label;
     if (generation.useSplitModel && generation.diffusionModel) {
       const match = recommendedModels.find((r) => r.splitModel && matchesRecommendedModel(r));
       return match?.label ?? generation.diffusionModel;
@@ -1715,6 +2041,37 @@
     return generation.checkpoint || locale.t('generation.model.select_checkpoint');
   });
 </script>
+
+{#snippet loraStrengthRow(label: string, tip: string, value: number, set: (v: number) => void)}
+  <div use:scrollCapture>
+    <div class="flex items-center justify-between text-xs mb-0.5">
+      <span class="text-neutral-500">{label}<InfoTip text={tip} /></span>
+      <EditableValue
+        {value}
+        min={LORA_STRENGTH_MIN}
+        max={LORA_STRENGTH_MAX}
+        step={0.01}
+        decimals={2}
+        onchange={(v) => setLoraStrength(set, v)}
+      />
+    </div>
+    <input
+      type="range"
+      {value}
+      oninput={(e) => setLoraStrength(set, Number((e.currentTarget as HTMLInputElement).value))}
+      ondblclick={() => setLoraStrength(set, 1)}
+      min={Math.min(LORA_SLIDER_MIN, Math.floor(value))}
+      max={Math.max(LORA_SLIDER_MAX, Math.ceil(value))}
+      step={LORA_SLIDER_STEP}
+      title={locale.t('generation.model.lora_strength_reset')}
+      class="w-full accent-indigo-500"
+    />
+  </div>
+{/snippet}
+
+{#snippet adultPill()}
+  <span class="shrink-0 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-rose-300">{locale.t('generation.model.adult_badge')}</span>
+{/snippet}
 
 <div bind:this={modelSelectorRootEl} class="space-y-3">
   <!-- Checkpoint -->
@@ -1747,7 +2104,7 @@
               >
                 {locale.t("generation.model.architecture_auto")}
               </button>
-              {#each MODEL_FAMILIES.filter((family) => family !== "unknown") as family}
+              {#each allModelFamilies().filter((family) => family !== "unknown") as family}
                 <button
                   type="button"
                   class="block w-full rounded px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
@@ -1767,7 +2124,13 @@
       disabled={downloading !== null}
     >
       <span class="truncate">{displayCheckpoint()}</span>
+      {#if generation.novelAiModel?.adult}
+        {@render adultPill()}
+      {/if}
     </button>
+    {#if waitingForComfyUi && !generation.isNovelAi}
+      <p class="mt-2 text-[11px] text-neutral-400">{locale.t("generation.model.waiting_comfyui")}</p>
+    {/if}
     {#if unavailableSelection.length > 0}
       <p class="mt-2 text-[11px] text-amber-300">{locale.t("generation.model.unavailable_server")}: {unavailableSelection.join(", ")}</p>
     {/if}
@@ -1820,6 +2183,21 @@
         {/each}
       </div>
     {/if}
+    {#if wanSplitVariant === "a14bHigh"}
+      {#if wanPairedLowNoise}
+        <div class="mt-2 rounded-lg border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-[11px] text-neutral-300">
+          {locale.t('generation.model.wan_low_noise_paired', { file: wanPairedLowNoise.split(/[\\/]/).pop() ?? wanPairedLowNoise })}
+        </div>
+      {:else}
+        <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+          {locale.t('generation.model.wan_low_noise_missing')}
+        </div>
+      {/if}
+    {:else if wanSplitVariant === "notTextToImage"}
+      <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+        {locale.t('generation.model.wan_not_text_to_image')}
+      </div>
+    {/if}
     {#if showNvfp4Warning}
       <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
         {locale.t('generation.model.nvfp4_warning')}
@@ -1850,8 +2228,11 @@
                     <span class="ml-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-0.5 align-middle text-[9px] uppercase tracking-wide text-emerald-300">{item.gateHint}</span>
                   {/if}
                   <span class="block text-[10px] {item.localOnly ? 'text-amber-300' : 'text-neutral-500'}">
-                    {locale.t(item.installed ? "generation.model.available_server" : item.localOnly ? "generation.model.local_unavailable" : models.remote ? "generation.model.unavailable_server" : "generation.model.auto_download")}
+                    {locale.t(item.installed ? "generation.model.available_server" : item.localOnly ? "generation.model.local_unavailable" : waitingForComfyUi ? "generation.model.waiting_comfyui_short" : models.remote ? "generation.model.unavailable_server" : "generation.model.auto_download")}
                   </span>
+                  {#if item.noticeKey}
+                    <span class="block text-[10px] text-amber-300/90">{locale.t(item.noticeKey)}</span>
+                  {/if}
                 </span>
                 {#if item.size}
                   <span class="text-[10px] text-neutral-500 shrink-0">{item.size}</span>
@@ -1865,6 +2246,9 @@
                 title={item.label}
               >
                 <span class="min-w-0 flex-1">{item.label}</span>
+                {#if item.adult}
+                  {@render adultPill()}
+                {/if}
                 <span class="shrink-0 rounded border border-teal-500/40 bg-teal-500/10 px-1 py-0.5 text-[9px] uppercase tracking-wide text-teal-300">{locale.t('generation.model.cloud_badge')}</span>
               </button>
             {:else if item.type === "diffusion"}
@@ -2246,6 +2630,22 @@
         {/if}
       </div>
       <div class="flex items-center gap-2">
+        {#if generation.loras.length > 0}
+          <button
+            class="p-0.5 rounded transition-colors {loraLinkedStrength ? 'text-indigo-400 hover:text-indigo-300' : 'text-neutral-500 hover:text-neutral-300'}"
+            onclick={() => (loraLinkedStrength = !loraLinkedStrength)}
+            role="switch"
+            aria-checked={loraLinkedStrength}
+            title={locale.t(loraLinkedStrength ? 'generation.model.lora_strength_split' : 'generation.model.lora_strength_link')}
+            aria-label={locale.t(loraLinkedStrength ? 'generation.model.lora_strength_split' : 'generation.model.lora_strength_link')}
+          >
+            {#if loraLinkedStrength}
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M5.17 11.75l-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></svg>
+            {/if}
+          </button>
+        {/if}
         <button
           onclick={() => {
             generation.addLora();
@@ -2342,59 +2742,32 @@
           </button>
         </div>
 
-        <!-- Strength sliders -->
+        <!-- Strength sliders. One slider drives both strengths unless the
+             user split them, or this LoRA already has two different values. -->
         {#if lora.name}
           <div class="space-y-1.5">
-            <div use:scrollCapture>
-              <div class="flex items-center justify-between text-xs mb-0.5">
-                <span class="text-neutral-500">{locale.t('generation.model.lora_strength_model')}<InfoTip text={locale.t('generation.model.lora_strength_model_tip')} /></span>
-                <EditableValue
-                  value={lora.strength_model}
-                  min={LORA_STRENGTH_MIN}
-                  max={LORA_STRENGTH_MAX}
-                  step={0.01}
-                  decimals={2}
-                  onchange={(v) => {
-                    lora.strength_model = v;
-                    generation.saveSettings();
-                  }}
-                />
-              </div>
-              <input
-                type="range"
-                bind:value={lora.strength_model}
-                oninput={() => generation.saveSettings()}
-                min={LORA_STRENGTH_MIN}
-                max={LORA_STRENGTH_MAX}
-                step="0.05"
-                class="w-full accent-indigo-500"
-              />
-            </div>
-            <div use:scrollCapture>
-              <div class="flex items-center justify-between text-xs mb-0.5">
-                <span class="text-neutral-500">{locale.t('generation.model.lora_strength_clip')}<InfoTip text={locale.t('generation.model.lora_strength_clip_tip')} /></span>
-                <EditableValue
-                  value={lora.strength_clip}
-                  min={LORA_STRENGTH_MIN}
-                  max={LORA_STRENGTH_MAX}
-                  step={0.01}
-                  decimals={2}
-                  onchange={(v) => {
-                    lora.strength_clip = v;
-                    generation.saveSettings();
-                  }}
-                />
-              </div>
-              <input
-                type="range"
-                bind:value={lora.strength_clip}
-                oninput={() => generation.saveSettings()}
-                min={LORA_STRENGTH_MIN}
-                max={LORA_STRENGTH_MAX}
-                step="0.05"
-                class="w-full accent-indigo-500"
-              />
-            </div>
+            {#if loraLinkedStrength && lora.strength_model === lora.strength_clip}
+              {@render loraStrengthRow(
+                locale.t('generation.model.lora_strength'),
+                locale.t('generation.model.lora_strength_tip'),
+                lora.strength_model,
+                (v) => { lora.strength_model = v; lora.strength_clip = v; },
+              )}
+            {:else}
+              {@render loraStrengthRow(
+                locale.t('generation.model.lora_strength_model'),
+                locale.t('generation.model.lora_strength_model_tip'),
+                lora.strength_model,
+                (v) => { lora.strength_model = v; },
+              )}
+              {@render loraStrengthRow(
+                locale.t('generation.model.lora_strength_clip'),
+                locale.t('generation.model.lora_strength_clip_tip'),
+                lora.strength_clip,
+                (v) => { lora.strength_clip = v; },
+              )}
+            {/if}
+            <LoraTriggerInput name={lora.name} />
           </div>
         {/if}
       </div>

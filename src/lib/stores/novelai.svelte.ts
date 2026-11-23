@@ -1,13 +1,37 @@
 import type { NovelAiSubscription } from "../types/index.js";
 import {
+  deleteNovelaiKey,
   getCachedConfig,
   getConfig,
+  listNovelaiKeys,
   novelaiSubscription,
+  saveNovelaiKey,
   setNovelaiApiKey,
+  useNovelaiKey,
+  type NovelAiSavedKey,
 } from "../utils/api.js";
 
 /** How long a failed subscription fetch suppresses automatic retries. */
 const RETRY_AFTER_FAILURE_MS = 30_000;
+
+/**
+ * Background retries after a failed fetch: 30 s, then doubling, at most
+ * 5 minutes apart and 5 tries in a row. NovelAI's Cloudflare front turns
+ * requests away now and then (a 403 block page), and that clears on its own.
+ */
+const BACKGROUND_RETRY_BASE_MS = 30_000;
+const BACKGROUND_RETRY_MAX_MS = 5 * 60_000;
+const BACKGROUND_RETRY_LIMIT = 5;
+
+/** Failures that retrying cannot fix: a bad key or an empty balance. */
+function isPermanentFailure(message: string): boolean {
+  return /^API error \((401|402)\)/.test(message);
+}
+
+/** The backend's "API error (403): ..." prefix is noise on screen. */
+function shortError(message: string): string {
+  return message.replace(/^API error \(\d+\):\s*/, "");
+}
 
 /**
  * Whether a NovelAI API key is stored, kept reactive.
@@ -64,6 +88,8 @@ class NovelAiStore {
    */
   private lastFetchFailed = false;
   private lastFailureAt = 0;
+  private consecutiveFailures = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Anlas is the monthly allowance plus any purchased balance. */
   get anlas(): number {
@@ -76,6 +102,67 @@ class NovelAiStore {
   get isOpus(): boolean {
     const sub = this.subscription;
     return !!sub && sub.active && sub.tier >= 3;
+  }
+
+  /**
+   * When the subscription is paid through: NovelAI's `expiresAt`, which is the
+   * next renewal for a renewing plan and the end date for a cancelled one.
+   * Null without an active subscription.
+   */
+  get paidThrough(): Date | null {
+    const sub = this.subscription;
+    if (!sub?.active || !sub.expiresAt) return null;
+    const date = new Date(sub.expiresAt * 1000);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  /** Whole days until `paidThrough`, never below 0. */
+  get daysPaidThrough(): number | null {
+    const date = this.paidThrough;
+    if (!date) return null;
+    return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86_400_000));
+  }
+
+  /**
+   * The owner's saved keys for switching accounts. Empty for named accounts,
+   * which the backend refuses: they keep one key each.
+   */
+  savedKeys = $state<NovelAiSavedKey[]>([]);
+  /** The backend answered the list, so this account may keep saved keys. */
+  savedKeysAvailable = $state(false);
+
+  async loadSavedKeys(): Promise<void> {
+    try {
+      this.savedKeys = await listNovelaiKeys();
+      this.savedKeysAvailable = true;
+    } catch {
+      this.savedKeys = [];
+      this.savedKeysAvailable = false;
+    }
+  }
+
+  private savedKeysRequested = false;
+
+  /** Load the saved keys once, for the quick switcher above Generate. */
+  ensureSavedKeys(): void {
+    if (this.savedKeysRequested) return;
+    this.savedKeysRequested = true;
+    void this.loadSavedKeys();
+  }
+
+  async saveNamedKey(label: string, key: string): Promise<void> {
+    this.savedKeys = await saveNovelaiKey(label, key);
+  }
+
+  async deleteNamedKey(label: string): Promise<void> {
+    this.savedKeys = await deleteNovelaiKey(label);
+  }
+
+  /** Switch to a saved key; the account record is fetched again for it. */
+  async useNamedKey(label: string): Promise<void> {
+    this.savedKeys = await useNovelaiKey(label);
+    this.apiKeyConfigured = true;
+    await this.afterKeyChange();
   }
 
   /** What the Opus usage bar draws, or null when there is no bar to draw. */
@@ -140,6 +227,12 @@ class NovelAiStore {
    */
   async setApiKey(key: string): Promise<void> {
     this.apiKeyConfigured = await setNovelaiApiKey(key);
+    await this.afterKeyChange();
+    // The saved-key list marks which one is in use, and that just changed.
+    if (this.savedKeys.length > 0) void this.loadSavedKeys();
+  }
+
+  private async afterKeyChange(): Promise<void> {
     // The key lives outside the ordinary config write, so the cached config in
     // `utils/api.ts` still describes the pre-save state. `refresh()` reads that
     // cache on every ModelSelector and SettingsPage mount, so without a forced
@@ -152,6 +245,8 @@ class NovelAiStore {
     this.subscription = null;
     this.subscriptionError = null;
     this.attempted = false;
+    this.cancelRetry();
+    this.consecutiveFailures = 0;
     if (this.apiKeyConfigured) await this.refreshSubscription();
   }
 
@@ -177,23 +272,46 @@ class NovelAiStore {
    */
   async refreshSubscription(): Promise<void> {
     if (!this.apiKeyConfigured || this.subscriptionLoading) return;
+    this.cancelRetry();
     this.attempted = true;
     this.subscriptionLoading = true;
-    this.subscriptionError = null;
     try {
       this.subscription = await novelaiSubscription();
+      this.subscriptionError = null;
       this.lastFetchFailed = false;
+      this.consecutiveFailures = 0;
     } catch (e) {
-      this.subscription = null;
-      this.subscriptionError = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : String(e);
+      // The last good record stays: a balance a few minutes old beats a
+      // blank one, and the Opus discount in the cost estimate depends on it.
+      this.subscriptionError = shortError(message);
       this.lastFetchFailed = true;
       this.lastFailureAt = Date.now();
+      this.consecutiveFailures += 1;
       // Into the ring buffer, so an exported log shows why the Anlas
-      // readout is blank instead of nothing at all.
+      // readout is stale or blank.
       console.error("NovelAI subscription fetch failed:", e);
+      if (!isPermanentFailure(message)) this.scheduleRetry();
     } finally {
       this.subscriptionLoading = false;
     }
+  }
+
+  private scheduleRetry() {
+    if (this.consecutiveFailures > BACKGROUND_RETRY_LIMIT) return;
+    const delay = Math.min(
+      BACKGROUND_RETRY_BASE_MS * 2 ** (this.consecutiveFailures - 1),
+      BACKGROUND_RETRY_MAX_MS,
+    );
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refreshSubscription();
+    }, delay);
+  }
+
+  private cancelRetry() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 }
 

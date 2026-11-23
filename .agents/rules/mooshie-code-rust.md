@@ -17,12 +17,14 @@ Deeper Rust/Tauri conventions: `.github/instructions/tauri-backend.instructions.
 - Drop `RwLock` guards before `.await` on I/O.
 - HTTP: `state.http_client` (shared pool). Never create new clients per request.
 - **Event Emission**: Event names must follow conventions: `"comfyui:{event_type}"` for ComfyUI-related events and `"setup:{event_type}"` for setup wizard events.
+- **Two Rust builds**: `default = ["desktop"]` links `tauri`; `--no-default-features --features server` does not. Gate `tauri` items (including function parameters and call-site args) with `#[cfg(feature = "desktop")]` in shared modules (`api.rs`, `video_export.rs`, `video_interpolate.rs`, `webserver.rs`).
 
 ## Error Handling
 
 - All Tauri commands must return `Result<T, AppError>`. Never return raw strings as errors.
 - Use `?` operator for auto-convertible types (`io::Error`, `serde_json::Error`, `reqwest::Error`) that map to `AppError` via `#[from]`.
 - For custom/custom-handled failures: use `AppError::Other("descriptive text".into())`.
+- External HTTP error bodies must go through `src-tauri/src/http_error.rs` (`readable_body` / `detail_suffix`) so Cloudflare/proxy HTML never leaks into the UI.
 
 ## Templates & Connections
 
@@ -38,6 +40,10 @@ Deeper Rust/Tauri conventions: `.github/instructions/tauri-backend.instructions.
 - Python classes in `src-tauri/src/comfyui/mooshie_nodes.py` (embedded via `include_str!`, deployed to ComfyUI `custom_nodes/` at startup).
 - Every workflow-required class must be in `REQUIRED_MOOSHIE_NODE_CLASSES` (`comfyui/nodes.rs`) — verified against `/object_info` at startup.
 - ComfyUI must be **restarted** to pick up node changes; deploying files alone is not enough.
+
+## Model Architectures
+
+- Declare new model families once as an `ArchitectureSpec` in `src-tauri/src/architectures/<name>.rs` (see `docs/ARCHITECTURES.md`). Do not add new per-family match arms for registered families.
 
 ## Related skills
 

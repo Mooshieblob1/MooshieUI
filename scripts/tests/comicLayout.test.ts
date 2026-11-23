@@ -1,0 +1,498 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  LAYOUT_TEMPLATES,
+  MAX_PANELS,
+  MIN_BOX_SIZE,
+  applyTemplateToPanels,
+  buildTemplate,
+  clampFreeformBox,
+  colourAttribute,
+  continuityIssues,
+  coverCrop,
+  dividers,
+  freeformRects,
+  isFreeformBoxes,
+  isLayout,
+  isPanelNonEmpty,
+  layoutForCount,
+  normalizePanelBorderStyle,
+  oneShotBasePrompt,
+  oneShotCentre,
+  oneShotPanelPrompt,
+  pageSize,
+  panelBorderPolygon,
+  panelBorderRadiusCss,
+  panelClipPathCss,
+  panelCornerRadius,
+  panelGenerationSize,
+  panelIds,
+  panelImageCss,
+  panelPixelRect,
+  panelPrompt,
+  panelRects,
+  panelSlantInset,
+  parseDraftPrompts,
+  parseStoryIssues,
+  ratioFromPointer,
+  readingOrder,
+  removePanel,
+  reorderZ,
+  resizeFreeformBox,
+  setRatio,
+  snapFreeformBox,
+  splitPanel,
+  storyBrief,
+  summarizePageForContext,
+  treeToFreeform,
+  newPanel,
+  type FreeformBox,
+  type LayoutNode,
+} from "../../src/lib/utils/comicLayout.ts";
+
+const counter = () => {
+  let n = 0;
+  return () => `p${++n}`;
+};
+
+test("every template builds the number of panels it says, covering the page", () => {
+  for (const t of LAYOUT_TEMPLATES) {
+    const layout = buildTemplate(t, counter());
+    assert.equal(panelIds(layout).length, t.panels, t.id);
+    const area = [...panelRects(layout).values()].reduce((sum, r) => sum + r.w * r.h, 0);
+    assert.ok(Math.abs(area - 1) < 1e-9, t.id);
+    assert.ok(isLayout(JSON.parse(JSON.stringify(layout))), t.id);
+  }
+  assert.equal(new Set(LAYOUT_TEMPLATES.map((t) => t.id)).size, LAYOUT_TEMPLATES.length);
+});
+
+test("split, resize and remove edit the tree", () => {
+  let layout: LayoutNode = { type: "panel", id: "a" };
+  layout = splitPanel(layout, "a", "col", "b");
+  layout = splitPanel(layout, "b", "row", "c");
+  assert.deepEqual(panelIds(layout), ["a", "b", "c"]);
+  const rects = panelRects(layout);
+  assert.deepEqual(rects.get("c"), { x: 0.5, y: 0.5, w: 0.5, h: 0.5 });
+
+  const [top] = dividers(layout);
+  assert.equal(top.dir, "col");
+  layout = setRatio(layout, top.splitId, ratioFromPointer(top, 0.3));
+  assert.ok(Math.abs(panelRects(layout).get("a")!.h - 0.3) < 1e-9);
+  layout = setRatio(layout, top.splitId, 0.01);
+  assert.ok(panelRects(layout).get("a")!.h >= 0.12 - 1e-9);
+
+  layout = removePanel(layout, "b");
+  assert.deepEqual(panelIds(layout), ["a", "c"]);
+  assert.deepEqual(removePanel({ type: "panel", id: "x" }, "x"), { type: "panel", id: "x" });
+  assert.equal(isLayout({ type: "split", id: "s", dir: "row", ratio: 0.5, a: { type: "panel", id: "a" } }), false);
+});
+
+test("reading order runs by band, left to right or right to left", () => {
+  const layout = buildTemplate(LAYOUT_TEMPLATES.find((t) => t.id === "two_over_one")!, counter());
+  const rects = panelRects(layout);
+  assert.deepEqual(readingOrder(rects, false), ["p1", "p2", "p3"]);
+  assert.deepEqual(readingOrder(rects, true), ["p2", "p1", "p3"]);
+  const tall = buildTemplate(LAYOUT_TEMPLATES.find((t) => t.id === "tall_left_two_right")!, counter());
+  assert.deepEqual(readingOrder(panelRects(tall), false), ["p1", "p2", "p3"]);
+});
+
+test("panel sizes keep the pixel budget, snap to 64 and clamp the aspect", () => {
+  const page = pageSize("portrait");
+  assert.deepEqual(page, { width: 1448, height: 2048 });
+  const wide = panelGenerationSize({ x: 0, y: 0, w: 1, h: 0.25 }, page, { width: 1024, height: 1024 });
+  assert.equal(wide.width % 64, 0);
+  assert.equal(wide.height % 64, 0);
+  assert.ok(wide.width > wide.height);
+  assert.ok(Math.abs(wide.width * wide.height - 1024 * 1024) / (1024 * 1024) < 0.15);
+  const sliver = panelGenerationSize({ x: 0, y: 0, w: 1, h: 0.02 }, page, { width: 1024, height: 1024 });
+  assert.ok(sliver.width / sliver.height <= 3.2);
+});
+
+test("gutters inset panels, doubling at the page edge", () => {
+  const page = { width: 1000, height: 1000 };
+  assert.deepEqual(panelPixelRect({ x: 0, y: 0, w: 0.5, h: 1 }, page, 20), { x: 20, y: 20, w: 470, h: 960 });
+  assert.deepEqual(panelPixelRect({ x: 0.5, y: 0, w: 0.5, h: 1 }, page, 20), { x: 510, y: 20, w: 470, h: 960 });
+  assert.deepEqual(coverCrop({ width: 200, height: 100 }, { w: 100, h: 100 }), { x: 50, y: 0, w: 100, h: 100 });
+});
+
+test("prompts carry style, cast looks and the setting, with a panel override", () => {
+  const cast = [
+    { id: "c1", name: "Aki", tags: "1girl, long black hair, sailor uniform" },
+    { id: "c2", name: "Ren", tags: "1boy, short brown hair, gakuran" },
+  ];
+  const panel = { ...newPanel("p1"), prompt: "close-up, smile", cast: ["c1"] };
+  const page = { style: "manga, monochrome", setting: "classroom, sunset", cast };
+  assert.equal(panelPrompt(panel, page), "manga, monochrome, close-up, smile, 1girl, long black hair, sailor uniform, classroom, sunset");
+  assert.equal(panelPrompt({ ...panel, setting: "night, rooftop" }, page).endsWith("night, rooftop"), true);
+  assert.equal(oneShotPanelPrompt(panel, 2, page), "panel 2, close-up, smile, 1girl, long black hair, sailor uniform");
+  assert.equal(oneShotBasePrompt(page, 4), "manga, monochrome, comic, 4 panels, multiple views, classroom, sunset");
+  assert.deepEqual(oneShotCentre({ x: 0.66, y: 0, w: 0.34, h: 0.34 }), { x: 0.83, y: 0.17 });
+  assert.deepEqual(oneShotCentre({ x: 0, y: 0.95, w: 0.05, h: 0.05 }), { x: 0.1, y: 0.9 });
+});
+
+test("continuity flags changed colours and missing tags", () => {
+  assert.deepEqual(colourAttribute("brown hair"), { colour: "brown", part: "hair" });
+  assert.equal(colourAttribute("hair ribbon"), null);
+  const issues = continuityIssues(
+    [
+      { who: "Ren", tags: ["brown hair", "gakuran", "green eyes"] },
+      { who: null, tags: ["classroom"] },
+    ],
+    ["1boy", "blonde_hair", "gakuran", "outdoors"],
+  );
+  assert.deepEqual(issues, [
+    { kind: "changed", expected: "brown hair", got: "blonde hair", who: "Ren" },
+    { kind: "missing", expected: "green eyes", who: "Ren" },
+    { kind: "missing", expected: "classroom", who: null },
+  ]);
+});
+
+test("story and draft replies parse from chatty JSON", () => {
+  const issues = parseStoryIssues('Sure!\n```json\n{"issues":[{"panel":2,"issue":"The letter vanishes."},{"panel":9,"issue":"x"},{"issue":""}]}\n```', 3);
+  assert.deepEqual(issues, [
+    { panel: 2, issue: "The letter vanishes." },
+    { panel: 0, issue: "x" },
+  ]);
+  assert.deepEqual(parseStoryIssues("no json here", 3), []);
+  const drafts = parseDraftPrompts('{"panels":[{"panel":1,"prompt":"close-up, hand"},{"panel":4,"prompt":"x"}]}', 3);
+  assert.deepEqual([...drafts.entries()], [[1, { prompt: "close-up, hand", dialogue: null }]]);
+  const v5 = parseDraftPrompts(
+    '{"panels":[{"panel":1,"prompt":"1girl, close-up\\n\\nAki grins and says \\"Ready?\\"","dialogue":["\\"Ready?\\""]},{"panel":2,"prompt":"1boy, from side\\n\\nText:\\nNo.\\n\\nNever."},{"panel":3,"prompt":"empty room","dialogue":[]}]}',
+    3,
+  );
+  assert.deepEqual(v5.get(1), { prompt: '1girl, close-up\n\nAki grins and says "Ready?"', dialogue: ["Ready?"] });
+  assert.deepEqual(v5.get(2), { prompt: "1boy, from side", dialogue: ["No.", "Never."] });
+  assert.deepEqual(v5.get(3), { prompt: "empty room", dialogue: [] });
+});
+
+test("dialogue is lettered last on NovelAI, with the tags it needs, and left out elsewhere", () => {
+  const cast = [{ id: "c1", name: "Aki", tags: "1girl, long black hair" }];
+  const page = { style: "manga", setting: "classroom", cast };
+  const panel = {
+    ...newPanel("p1"),
+    prompt: "close-up, smile\n\nAki leans in and asks \"Ready?\"",
+    cast: ["c1"],
+    dialogue: "Ready?\n\n  Let's go!  \n",
+  };
+  assert.equal(
+    panelPrompt(panel, page, true),
+    'manga, close-up, smile, 1girl, long black hair, classroom, speech bubble, english text\n\nAki leans in and asks "Ready?"\n\nText:\nReady?\n\nLet\'s go!',
+  );
+  assert.equal(panelPrompt(panel, page), 'manga, close-up, smile, 1girl, long black hair, classroom\n\nAki leans in and asks "Ready?"');
+  const own = { ...panel, prompt: "thought bubble, japanese text, close-up", dialogue: "どうしよう" };
+  assert.equal(panelPrompt(own, page, true), "manga, thought bubble, japanese text, close-up, 1girl, long black hair, classroom\n\nText:\nどうしよう");
+  assert.equal(
+    oneShotBasePrompt(page, 2, ["Hi.", "Bye."]),
+    "manga, comic, 2 panels, multiple views, classroom, speech bubble, english text\n\nText:\nHi.\n\nBye.",
+  );
+});
+
+test("storyBrief keeps 2-arg output compatible and includes previous page context when provided", () => {
+  const cast = [{ id: "c1", name: "Aki", tags: "1girl, long black hair" }];
+  const page = { style: "manga", setting: "classroom", cast };
+  const p1 = { ...newPanel("p1"), beat: "Aki opens the door", cast: ["c1"], dialogue: "Anyone home?" };
+  const p2 = { ...newPanel("p2"), beat: "She looks around", cast: ["c1"] };
+
+  const withoutPrev = storyBrief([p2], page);
+  assert.equal(withoutPrev.includes("Previous pages"), false);
+
+  const prevSummary = summarizePageForContext([p1], cast, "hallway");
+  assert.ok(prevSummary.includes("Setting override: hallway"));
+  assert.ok(prevSummary.includes("Aki opens the door"));
+  assert.ok(prevSummary.includes('says: "Anyone home?"'));
+
+  const withPrev = storyBrief([p2], page, [{ pageNumber: 1, summary: prevSummary }]);
+  assert.ok(withPrev.includes("Previous pages (for continuity):"));
+  assert.ok(withPrev.includes("Page 1:\nSetting override: hallway"));
+  assert.ok(withPrev.includes("Panel 1:\n  beat: She looks around"));
+});
+
+test("treeToFreeform preserves pixel rects and reading order with z indices", () => {
+  const layout = buildTemplate(LAYOUT_TEMPLATES.find((t) => t.id === "one_over_two")!, counter());
+  const page = { width: 1000, height: 1000 };
+  const boxes = treeToFreeform(layout, page, 20);
+  assert.equal(boxes.length, 3);
+  assert.deepEqual(
+    boxes.map((b) => ({ id: b.id, z: b.z })),
+    [
+      { id: "p1", z: 0 },
+      { id: "p2", z: 1 },
+      { id: "p3", z: 2 },
+    ],
+  );
+  const rects = panelRects(layout);
+  for (const box of boxes) {
+    const expectedPx = panelPixelRect(rects.get(box.id)!, page, 20);
+    assert.equal(Math.round(box.x * page.width), expectedPx.x);
+    assert.equal(Math.round(box.y * page.height), expectedPx.y);
+    assert.equal(Math.round(box.w * page.width), expectedPx.w);
+    assert.equal(Math.round(box.h * page.height), expectedPx.h);
+  }
+  const map = freeformRects(boxes);
+  assert.equal(map.size, 3);
+  assert.deepEqual(map.get("p2"), { x: boxes[1].x, y: boxes[1].y, w: boxes[1].w, h: boxes[1].h });
+});
+
+test("clampFreeformBox enforces minimum size and page bounds", () => {
+  const tiny = clampFreeformBox({ id: "a", x: -0.2, y: 0.95, w: 0.02, h: 0.05, z: 0 });
+  assert.equal(tiny.x, 0);
+  assert.ok(Math.abs(tiny.w - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(tiny.h - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(tiny.y - (1 - MIN_BOX_SIZE)) < 1e-9);
+  assert.ok(tiny.x + tiny.w <= 1 + 1e-9);
+  assert.ok(tiny.y + tiny.h <= 1 + 1e-9);
+
+  const oversized = clampFreeformBox({ id: "b", x: 0.8, y: 0.8, w: 1.5, h: 0.4, z: 1 });
+  assert.equal(oversized.w, 1);
+  assert.equal(oversized.x, 0);
+  assert.ok(Math.abs(oversized.y - 0.6) < 1e-9);
+  assert.equal(oversized.h, 0.4);
+});
+
+test("snapFreeformBox snaps edges and centers to page and neighbor boxes", () => {
+  const neighbor: FreeformBox = { id: "n", x: 0.1, y: 0.2, w: 0.3, h: 0.4, z: 0 };
+  // Near page center (x + w/2 = 0.492 -> 0.5) and neighbor bottom (0.608 -> 0.6)
+  const moving: FreeformBox = { id: "m", x: 0.392, y: 0.608, w: 0.2, h: 0.2, z: 1 };
+  const snapped = snapFreeformBox(moving, [neighbor]);
+  assert.ok(Math.abs(snapped.box.x - 0.4) < 1e-9);
+  assert.ok(Math.abs(snapped.box.y - 0.6) < 1e-9);
+  assert.equal(snapped.guides.length, 2);
+  assert.equal(snapped.guides[0].axis, "x");
+  assert.ok(Math.abs(snapped.guides[0].pos - 0.5) < 1e-9);
+  assert.equal(snapped.guides[1].axis, "y");
+  assert.ok(Math.abs(snapped.guides[1].pos - 0.6) < 1e-9);
+
+  // Outside threshold does not snap
+  const far = snapFreeformBox({ id: "m", x: 0.45, y: 0.45, w: 0.2, h: 0.2, z: 1 }, [neighbor], 0.01);
+  assert.deepEqual(far.guides, []);
+  assert.ok(Math.abs(far.box.x - 0.45) < 1e-9);
+});
+
+test("resizeFreeformBox handles edges, corners, snapping and min size", () => {
+  const orig: FreeformBox = { id: "a", x: 0.2, y: 0.2, w: 0.4, h: 0.4, z: 0 };
+  const other: FreeformBox = { id: "b", x: 0.7, y: 0.2, w: 0.2, h: 0.4, z: 1 };
+  // Drag east edge near other.x (0.7)
+  const res = resizeFreeformBox(orig, "e", 0.095, 0, [other], true);
+  assert.ok(Math.abs(res.box.w - 0.5) < 1e-9);
+  assert.deepEqual(res.guides, [{ axis: "x", pos: 0.7 }]);
+
+  // Shrink nw corner past min size stops at MIN_BOX_SIZE
+  const minRes = resizeFreeformBox(orig, "nw", 0.5, 0.5, [], false);
+  assert.ok(Math.abs(minRes.box.w - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(minRes.box.h - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(minRes.box.x - (0.6 - MIN_BOX_SIZE)) < 1e-9);
+});
+
+test("reorderZ moves boxes forward, backward, front, and back", () => {
+  const boxes: FreeformBox[] = [
+    { id: "a", x: 0, y: 0, w: 0.5, h: 0.5, z: 0 },
+    { id: "b", x: 0.2, y: 0.2, w: 0.5, h: 0.5, z: 1 },
+    { id: "c", x: 0.4, y: 0.4, w: 0.5, h: 0.5, z: 2 },
+  ];
+  assert.deepEqual(
+    reorderZ(boxes, "a", "forward").map((b) => b.id),
+    ["b", "a", "c"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "c", "backward").map((b) => b.id),
+    ["a", "c", "b"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "a", "front").map((b) => b.id),
+    ["b", "c", "a"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "c", "back").map((b) => b.id),
+    ["c", "a", "b"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "a", "front").map((b) => b.z),
+    [0, 1, 2],
+  );
+  assert.equal(reorderZ(boxes, "missing", "front"), boxes);
+});
+
+test("isFreeformBoxes validates shape, bounds, unique ids and max count", () => {
+  assert.equal(isFreeformBoxes([]), true);
+  assert.equal(isFreeformBoxes([{ id: "p1", x: 0, y: 0, w: 0.5, h: 0.5, z: 0 }]), true);
+  assert.equal(isFreeformBoxes("not an array"), false);
+  assert.equal(isFreeformBoxes([{ id: "p1", x: 0.8, y: 0, w: 0.3, h: 0.5, z: 0 }]), false);
+  assert.equal(isFreeformBoxes([{ id: "p1", x: 0, y: 0, w: 0, h: 0.5, z: 0 }]), false);
+  assert.equal(
+    isFreeformBoxes([
+      { id: "p1", x: 0, y: 0, w: 0.4, h: 0.4, z: 0 },
+      { id: "p1", x: 0.2, y: 0.2, w: 0.4, h: 0.4, z: 1 },
+    ]),
+    false,
+  );
+  const tooMany = Array.from({ length: MAX_PANELS + 1 }, (_, i) => ({
+    id: `p${i}`,
+    x: 0,
+    y: 0,
+    w: 0.2,
+    h: 0.2,
+    z: i,
+  }));
+  assert.equal(isFreeformBoxes(tooMany), false);
+});
+
+test("layoutForCount builds valid trees for 1..MAX_PANELS", () => {
+  for (let n = 1; n <= MAX_PANELS; n++) {
+    const node = layoutForCount(n, counter());
+    assert.equal(panelIds(node).length, n);
+    assert.equal(isLayout(node), true);
+    const area = [...panelRects(node).values()].reduce((s, r) => s + r.w * r.h, 0);
+    assert.ok(Math.abs(area - 1) < 1e-9);
+  }
+});
+
+test("isPanelNonEmpty checks content fields and cast assignments", () => {
+  const empty = newPanel("p1");
+  assert.equal(isPanelNonEmpty(empty), false);
+  assert.equal(isPanelNonEmpty({ ...empty, prompt: "   \n  " }), false);
+  assert.equal(isPanelNonEmpty({ ...empty, beat: "enters" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, prompt: "1girl" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, negative: "blurry" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, dialogue: "Hi!" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, setting: "rooftop" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, cast: ["c1"] }), true);
+});
+
+test("applyTemplateToPanels stashes overflow panels and results and restores them on larger layouts", () => {
+  const p1 = { ...newPanel("p1"), prompt: "one" };
+  const p2 = { ...newPanel("p2"), prompt: "two" };
+  const p3 = { ...newPanel("p3"), prompt: "three" };
+  const p4 = { ...newPanel("p4"), dialogue: "four" };
+
+  // Shrink 4 -> 2
+  const shrunk = applyTemplateToPanels(
+    [p1, p2, p3, p4],
+    ["r1", "r2", "r3", "r4"],
+    [],
+    [],
+    ["n1", "n2"],
+  );
+  assert.equal(shrunk.panels.n1.id, "n1");
+  assert.equal(shrunk.panels.n1.prompt, "one");
+  assert.equal(shrunk.panels.n2.prompt, "two");
+  assert.deepEqual(shrunk.results, { n1: "r1", n2: "r2" });
+  assert.deepEqual(shrunk.overflowPanels.map((p) => p.prompt || p.dialogue), ["three", "four"]);
+  assert.deepEqual(shrunk.overflowResults, ["r3", "r4"]);
+
+  // Grow 2 -> 3
+  const mid = applyTemplateToPanels(
+    [shrunk.panels.n1, shrunk.panels.n2],
+    [shrunk.results.n1, shrunk.results.n2],
+    shrunk.overflowPanels,
+    shrunk.overflowResults,
+    ["m1", "m2", "m3"],
+  );
+  assert.equal(mid.panels.m3.id, "m3");
+  assert.equal(mid.panels.m3.prompt, "three");
+  assert.deepEqual(mid.results, { m1: "r1", m2: "r2", m3: "r3" });
+  assert.deepEqual(mid.overflowPanels.map((p) => p.dialogue), ["four"]);
+  assert.deepEqual(mid.overflowResults, ["r4"]);
+
+  // Grow 3 -> 5 (restores remaining overflow + creates fresh empty slots)
+  const grown = applyTemplateToPanels(
+    [mid.panels.m1, mid.panels.m2, mid.panels.m3],
+    [mid.results.m1, mid.results.m2, mid.results.m3],
+    mid.overflowPanels,
+    mid.overflowResults,
+    ["k1", "k2", "k3", "k4", "k5"],
+  );
+  assert.equal(grown.panels.k4.dialogue, "four");
+  assert.equal(grown.panels.k5.prompt, "");
+  assert.deepEqual(grown.results, { k1: "r1", k2: "r2", k3: "r3", k4: "r4" });
+  assert.equal(grown.overflowPanels.length, 0);
+  assert.equal(grown.overflowResults.length, 0);
+});
+
+test("applyTemplateToPanels skips empty overflow slots without losing result alignment", () => {
+  const p1 = { ...newPanel("p1"), prompt: "first" };
+  const p2 = newPanel("p2");
+  const p3 = { ...newPanel("p3"), cast: ["c1"] };
+  const p4 = newPanel("p4");
+
+  const shrunk = applyTemplateToPanels(
+    [p1, p2, p3, p4],
+    ["r1", undefined, "r3", undefined],
+    [],
+    [],
+    ["s1"],
+  );
+  assert.equal(shrunk.overflowPanels.length, 1);
+  assert.deepEqual(shrunk.overflowPanels[0].cast, ["c1"]);
+  assert.deepEqual(shrunk.overflowResults, ["r3"]);
+});
+
+test("coverCrop supports pan (-1..1) and zoom (1..4) with safe clamping", () => {
+  const src = { width: 200, height: 100 };
+  const target = { w: 100, h: 100 };
+
+  assert.deepEqual(coverCrop(src, target, 0, 0, 1), { x: 50, y: 0, w: 100, h: 100 });
+  assert.deepEqual(coverCrop(src, target, -1, 0, 1), { x: 0, y: 0, w: 100, h: 100 });
+  assert.deepEqual(coverCrop(src, target, 1, 0, 1), { x: 100, y: 0, w: 100, h: 100 });
+
+  assert.deepEqual(coverCrop(src, target, 0, 0, 2), { x: 75, y: 25, w: 50, h: 50 });
+  assert.deepEqual(coverCrop(src, target, -1, -1, 2), { x: 0, y: 0, w: 50, h: 50 });
+  assert.deepEqual(coverCrop(src, target, 1, 1, 2), { x: 150, y: 50, w: 50, h: 50 });
+
+  // Out-of-range inputs clamp cleanly to zoom [1,4] and pan [-1,1]
+  assert.deepEqual(coverCrop(src, target, -5, 5, 0.25), { x: 0, y: 0, w: 100, h: 100 });
+  assert.deepEqual(coverCrop(src, target, 5, 5, 10), { x: 175, y: 75, w: 25, h: 25 });
+});
+
+test("panelImageCss mirrors coverCrop percentages for preview parity", () => {
+  const src = { width: 200, height: 100 };
+  const target = { w: 100, h: 100 };
+  assert.deepEqual(panelImageCss(src, target, 0, 0, 1), {
+    left: "-50%",
+    top: "0%",
+    width: "200%",
+    height: "100%",
+  });
+  assert.deepEqual(panelImageCss(src, target, 1, -1, 2), {
+    left: "-300%",
+    top: "0%",
+    width: "400%",
+    height: "200%",
+  });
+});
+
+test("panelBorderPolygon, slant inset clamping, and CSS border helpers stay consistent", () => {
+  const rect = { x: 10, y: 20, w: 200, h: 100 };
+  assert.deepEqual(panelBorderPolygon(rect, "standard"), [
+    { x: 10, y: 20 },
+    { x: 210, y: 20 },
+    { x: 210, y: 120 },
+    { x: 10, y: 120 },
+  ]);
+
+  // Tall narrow panel clamps slanted inset to <= box.w * 0.2 so vertices never invert
+  const tall = { x: 0, y: 0, w: 100, h: 1000 };
+  const clampedInset = panelSlantInset(tall);
+  assert.equal(clampedInset, 20);
+  const tallPoly = panelBorderPolygon(tall, "slanted", 999);
+  assert.deepEqual(tallPoly, [
+    { x: 20, y: 0 },
+    { x: 100, y: 0 },
+    { x: 80, y: 1000 },
+    { x: 0, y: 1000 },
+  ]);
+  assert.ok(tallPoly[0].x < tallPoly[2].x);
+
+  assert.equal(panelClipPathCss(rect, "standard"), "none");
+  assert.equal(panelClipPathCss(tall, "slanted"), "polygon(20.0000% 0%, 100% 0%, 80.0000% 100%, 0% 100%)");
+  assert.equal(panelCornerRadius({ w: 400, h: 800 }), 32);
+  assert.equal(panelBorderRadiusCss({ w: 400, h: 800 }, "rounded"), "8.0000% / 4.0000%");
+  assert.equal(panelBorderRadiusCss({ w: 400, h: 800 }, "standard"), "0px");
+  assert.equal(normalizePanelBorderStyle("slanted"), "slanted");
+  assert.equal(normalizePanelBorderStyle("invalid"), "standard");
+
+  const fresh = newPanel("p0");
+  assert.equal(fresh.panX, 0);
+  assert.equal(fresh.panY, 0);
+  assert.equal(fresh.zoom, 1);
+  assert.equal(fresh.borderStyle, "standard");
+});

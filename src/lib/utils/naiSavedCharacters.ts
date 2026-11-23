@@ -11,6 +11,8 @@
  * Leaf util, like `naiPrompt.ts`: it takes plain data and imports no store.
  */
 
+import { learnMemoryRule } from "./characterMemory.js";
+
 /**
  * Which side wins when a saved canon character's card disagrees with canon:
  * the saved details (the default) or the canon look. The user picks after
@@ -24,6 +26,12 @@ export interface NaiSavedCharacter {
   negative: string;
   /** Name of the character this is a variant of (another look), if any. */
   variantOf?: string;
+  /**
+   * The character's memory notes (personality, story, relationships), already
+   * cut to size, for the characters the request refers to. Empty or missing
+   * for the rest.
+   */
+  notes?: string;
 }
 
 /** Most saved characters sent per request. */
@@ -53,18 +61,23 @@ export function naiSavedCharacterDirective(
         `  Appearance: ${clip(c.prompt)}`,
       ];
       if (c.negative.trim()) lines.push(`  Avoid: ${clip(c.negative)}`);
+      const notes = c.notes?.trim();
+      if (notes) lines.push(`  Memory:\n${notes.split("\n").map((l) => `    ${l}`).join("\n")}`);
       return lines.join("\n");
     })
     .join("\n");
+  const memoryRule = roster.some((c) => c.notes?.trim())
+    ? "\n- Memory is the user's notes on who a saved character is: personality, story, relationships, habits. It exists only to help you write the prompt for that character. When they are in the image, turn what fits the scene into things a picture can show where the request leaves room, such as their expression, how they hold themselves, an item they always carry, or a companion who belongs in the scene. It never overrides the request or the saved appearance, a story fact goes in only when the scene calls for it and as something visible, and it never brings in someone the text does not refer to. Memory never decides where a character is, what they sit at or stand behind, or which parts of them show; the request and the layout rules do. Leave out notes about their position relative to people or things, clothing this scene would hide, and transparent, see-through, ghostly or glass-like looks, unless the user's text asks for them."
+    : "";
   return `SAVED CHARACTERS
-The user has saved these characters of their own. Each has a name, the prompt text that draws them, and things to avoid when drawing them.
+The user has saved these characters of their own. Each has a name, the prompt text that draws them, and things to avoid when drawing them${memoryRule ? ", and some have memory notes" : ""}.
 ${entries}
 
 - When the user's text refers to a person by a saved character's full name, by part of it (a first name or a surname alone), or by a close approximation of it (a nickname, a short form, a misspelling), that person is the saved character. Use them; do not ask and do not invent someone new.
 - The exception is text that plainly means someone else: a series, a surname or a description that does not fit the saved character ("Julie from Persona" is not a saved Julie Evergreen whose saved text has nothing to do with Persona). Context that fits the saved character, such as the series their name or saved text belongs to, still means the saved character ("Brock from Pokemon" is a saved Brock who is the Pokemon Brock). A bare name with no such context always means the saved character.
 - If more than one saved character could fit, pick the closest match on the name. Never merge two saved characters into one.
 - A variant is another look of the character it belongs to (another outfit or style), not a different person. A reference to the character uses the character's own entry, unless the text asks for what a variant's name describes, such as "Julie in her swimsuit" for a variant named "Julie Evergreen (swimsuit)". Either way the CHAR block names the character, not the variant label.
-- A saved character the text refers to gets their own CHAR block. Its identity section uses the saved name, then the saved appearance. Rewrite the appearance into the CHAR block's sections and V5 form as you go, but keep every detail it gives: hair, eyes, body, features and outfit.
+- A saved character the text refers to gets their own CHAR block. Its identity section uses the saved name, then the saved appearance. Rewrite the appearance into the CHAR block's sections and V5 form as you go, but keep every detail it gives: hair, eyes, body, features and outfit, except parts of the outfit the framing or an object in front of them hides in this image.
 - Some saved characters are canon characters you already know, such as Brock from Pokemon: their name or saved text matches a known character. For those, use both. Write their danbooru character and series tags and draw on your own knowledge of their canon look, and add the saved details on top. ${
     canonPriority === "saved"
       ? "Where the saved text and canon differ, the saved text wins, because the user saved it on purpose."
@@ -75,5 +88,9 @@ ${entries}
 - The user's text wins over both the saved text and canon where it changes something. If they ask for her in a swimsuit, the swimsuit replaces the saved outfit; everything else saved still holds.
 - Add a saved character's avoid list to UC, skipping anything already there and anything that would rule out another character in the image or something the user asked for.
 - A saved character's appearance counts as something the user gave you, so it is not invention.
-- Never bring in a saved character the text does not refer to. This list is reference, not a cast.`;
+- Never bring in a saved character the text does not refer to. This list is reference, not a cast.${memoryRule}${
+    memoryRule
+      ? `\n${learnMemoryRule("Put facts to save in a MEMORY field after the CHAR blocks and any CANON field, before any NOTE line: the label MEMORY: on its own line, then the facts.")}`
+      : ""
+  }`;
 }

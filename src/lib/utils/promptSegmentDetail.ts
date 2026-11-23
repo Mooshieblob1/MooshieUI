@@ -42,7 +42,9 @@ interface ParsedSpec {
 
 /** Parse the inside of the opening tag. Returns null when invalid (tag stays literal). */
 function parseSegmentSpec(spec: string): ParsedSpec | null {
-  const parts = spec.split(",").map((p) => p.trim());
+  // Strip SwarmUI's trailing `//cid=...` (or similar `//...` metadata) suffix.
+  const cleaned = spec.replace(/\/\/.*$/, "").trim();
+  const parts = cleaned.split(",").map((p) => p.trim());
   // Pop up to two trailing numeric parts: creativity, then threshold.
   const nums: number[] = [];
   while (parts.length > 1 && nums.length < 2) {

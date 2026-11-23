@@ -458,7 +458,7 @@ async fn analyze(
             let current = backend(&*state.config.read().await)?;
             if current.id != selected.id || current.key != selected.key { return Err(error("Audio provider settings changed. Refresh and analyze again.")); }
             let response = if selected.provider == "gemini-cli" {
-                let answer = crate::prompt_assistant::companion::chat("gemini-cli", &selected.model, &prompt(target), "Analyze the attached audio recording.", &[], Some(&audio.bytes)).await?;
+                let answer = crate::prompt_assistant::companion::chat("gemini-cli", &selected.model, &prompt(target), "Analyze the attached audio recording.", &[], Some(&audio.bytes), crate::prompt_assistant::reasoning::Setting::ModelDefault).await?;
                 json!({"choices":[{"message":{"content":answer}}]})
             } else {
             let mut request = state.http_client_no_redirect.post(&selected.endpoint)

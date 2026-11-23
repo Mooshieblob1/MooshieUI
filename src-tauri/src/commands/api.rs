@@ -16,7 +16,15 @@ use crate::state::AppState;
 /// Compute the full SHA256 hash of a file (uppercase hex).
 /// Compatible with CivitAI's hash database.
 /// For large model files (2-10 GB) this can take a few seconds.
+///
+/// Reuses the remembered hash while the file's size and modification time are
+/// unchanged (see `model_hash_cache`).
 pub(crate) fn full_sha256(path: &std::path::Path) -> Result<String, AppError> {
+    crate::model_hash_cache::sha256(path)
+}
+
+/// Read the whole file and hash it, ignoring the cache.
+pub(crate) fn sha256_uncached(path: &std::path::Path) -> Result<String, AppError> {
     const BUF_SIZE: usize = 8 * 1024 * 1024; // 8 MB read buffer
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
@@ -91,6 +99,16 @@ pub async fn get_models(
     category: String,
 ) -> Result<Vec<String>, AppError> {
     state.get_models_list(&category).await
+}
+
+/// The registered model architectures (`crate::architectures`) for the
+/// frontend: labels, detection-free metadata, sampling defaults, Model Hub
+/// entries, encoder / VAE / slot downloads and supported modes.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_model_architectures(
+) -> Result<Vec<&'static crate::architectures::ArchitectureSpec>, AppError> {
+    Ok(crate::architectures::list())
 }
 
 #[cfg(feature = "desktop")]
@@ -1409,9 +1427,44 @@ pub async fn embed_image_metadata_bytes(
     metadata: std::collections::HashMap<String, String>,
     metadata_mode: Option<String>,
 ) -> Result<Vec<u8>, AppError> {
-    let mode =
-        crate::metadata::MetadataMode::from_str(metadata_mode.as_deref().unwrap_or("text_chunk"));
-    crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
+    let _ = metadata_mode;
+    crate::metadata::embed_image_metadata(
+        &image_bytes,
+        &metadata,
+        crate::metadata::MetadataMode::Both,
+    )
+    .map_err(AppError::Other)
+}
+
+/// Tags related to one prompt tag, from Danbooru and from the gallery.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn related_tags(
+    state: State<'_, Arc<AppState>>,
+    tag: String,
+) -> Result<crate::related_tags::RelatedTags, AppError> {
+    let dir = crate::config::gallery_dir();
+    crate::related_tags::lookup(&state.http_client, &tag, dir.as_deref())
+        .await
+        .map_err(AppError::Other)
+}
+
+/// Eagle's version when it is running and reachable on this machine.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn eagle_status(state: State<'_, Arc<AppState>>) -> Result<String, AppError> {
+    crate::eagle::status(&state.http_client).await
+}
+
+/// Send gallery images to Eagle by file name. Returns how many Eagle added.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn send_to_eagle(
+    state: State<'_, Arc<AppState>>,
+    filenames: Vec<String>,
+) -> Result<usize, AppError> {
+    let folder = state.config.read().await.eagle_folder_id.clone();
+    crate::eagle::send_gallery_files(&state.http_client, &filenames, folder.as_deref()).await
 }
 
 #[cfg(feature = "desktop")]
@@ -1424,8 +1477,10 @@ pub async fn save_to_gallery(
     mode: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
+    watermark: Option<bool>,
 ) -> Result<String, AppError> {
     let bytes = state.get_output_image_bytes(&filename, &subfolder).await?;
+    crate::watermark::remember_owner_choice(watermark.unwrap_or(false));
     let saved = save_to_gallery_inner(
         &bytes,
         &filename,
@@ -1433,6 +1488,7 @@ pub async fn save_to_gallery(
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
+        watermark.unwrap_or(false),
     )?;
     let payload = serde_json::json!({
         "filename": saved,
@@ -1459,7 +1515,9 @@ pub async fn save_to_gallery_bytes(
     mode: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
+    watermark: Option<bool>,
 ) -> Result<String, AppError> {
+    crate::watermark::remember_owner_choice(watermark.unwrap_or(false));
     let saved = save_to_gallery_inner(
         &image_bytes,
         &filename,
@@ -1467,6 +1525,7 @@ pub async fn save_to_gallery_bytes(
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
+        watermark.unwrap_or(false),
     )?;
     let payload = serde_json::json!({
         "filename": saved,
@@ -1494,9 +1553,11 @@ pub async fn save_to_gallery_temp(
     mode: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
+    watermark: Option<bool>,
 ) -> Result<String, AppError> {
     let bytes = crate::temp_images::load(&temp_filename)
         .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", temp_filename)))?;
+    crate::watermark::remember_owner_choice(watermark.unwrap_or(false));
     let saved = save_to_gallery_inner(
         &bytes,
         &filename,
@@ -1504,6 +1565,7 @@ pub async fn save_to_gallery_temp(
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
+        watermark.unwrap_or(false),
     )?;
     let payload = serde_json::json!({
         "filename": saved,
@@ -1719,6 +1781,7 @@ pub fn save_to_gallery_inner(
     mode: Option<&str>,
     metadata: Option<&std::collections::HashMap<String, String>>,
     metadata_mode: Option<&str>,
+    watermark: bool,
 ) -> Result<String, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
@@ -1728,6 +1791,7 @@ pub fn save_to_gallery_inner(
         Some("txt2img") => "txt2img",
         Some("img2img") => "img2img",
         Some("inpainting") => "inpainting",
+        Some("outpainting") => "outpainting",
         Some("image_edit") => "image_edit",
         _ => "unknown",
     };
@@ -1754,54 +1818,39 @@ pub fn save_to_gallery_inner(
         metadata,
     );
 
-    let raw_mode = metadata_mode.unwrap_or("text_chunk");
-    let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
-
-    if matches!(detected_format, crate::metadata::ImageFormat::Png)
-        && embed_mode == crate::metadata::MetadataMode::StealthAlpha
-    {
-        match crate::metadata::is_png_16bit(bytes) {
-            Ok(true) => {
-                embed_mode = crate::metadata::MetadataMode::Both;
-                log::info!(
-                    "save_to_gallery_inner: forcing metadata mode to Both for 16-bit PNG (requested=stealth) to improve compatibility"
-                );
-            }
-            Ok(false) => {}
-            Err(e) => {
-                log::warn!(
-                    "save_to_gallery_inner: failed to detect PNG bit depth for metadata mode policy: {}",
-                    e
-                );
-            }
-        }
-    }
+    let _ = metadata_mode;
+    let embed_mode = crate::metadata::MetadataMode::Both;
 
     log::info!(
-        "save_to_gallery_inner: format={:?}, metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}",
+        "save_to_gallery_inner: format={:?}, effective_embed_mode={:?}, has_metadata={}",
         detected_format,
-        raw_mode,
         embed_mode,
         metadata.is_some()
     );
 
+    // Watermark first (it rewrites the pixels), then embed the metadata.
+    let protected = crate::watermark::protect_for_save(bytes, watermark);
+    let bytes = protected.bytes.as_slice();
+
     // If metadata provided, embed it using the format-appropriate mechanism.
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
-            // A PNG that still carries NovelAI's own metadata goes to disk
-            // untouched. NovelAI signs what it returns, and re-encoding to
+            // A PNG that still carries NovelAI's own metadata is never
+            // re-encoded. NovelAI signs what it returns, and re-encoding to
             // embed our copy of the parameters would strip its chunks and
             // overwrite the alpha bits its stealth payload lives in, leaving a
-            // file its own site no longer recognises. SQLite still gets the
-            // full map below, so the in-app settings restore is unaffected,
-            // and the reader picks NovelAI's chunks up on the way back in.
+            // file its own site no longer recognises. It only gains the
+            // MooshieUI marker chunk, spliced in before IEND. SQLite still
+            // gets the full map below, so the in-app settings restore is
+            // unaffected, and the reader picks NovelAI's chunks up on the way
+            // back in.
             crate::metadata::ImageFormat::Png
                 if crate::metadata::png_carries_novelai_metadata(bytes) =>
             {
                 log::info!(
-                    "save_to_gallery_inner: preserving NovelAI PNG bytes verbatim (no metadata embed)"
+                    "save_to_gallery_inner: keeping NovelAI PNG bytes, adding only the MooshieUI marker"
                 );
-                bytes.to_vec()
+                crate::metadata::mark_novelai_png(bytes, meta)
             }
             crate::metadata::ImageFormat::Png => {
                 match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {
@@ -1836,11 +1885,12 @@ pub fn save_to_gallery_inner(
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
-        bytes.to_vec()
+        crate::metadata::ensure_iptc_ai_disclosure(bytes)
     };
 
     let (gallery_filename, path) = write_new_gallery_file(&dir, &rendered_base, ext, &final_bytes)?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
+    crate::watermark::index_saved(&path, &final_bytes, &protected);
     Ok(gallery_filename)
 }
 
@@ -2127,7 +2177,22 @@ pub async fn read_image_metadata(
 pub async fn read_image_metadata_bytes(
     image_bytes: Vec<u8>,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
-    crate::metadata::read_image_metadata(&image_bytes).map_err(AppError::Other)
+    read_or_recover_blocking(image_bytes).await
+}
+
+/// Read an imported image's metadata, falling back to the watermark and
+/// fingerprint lookup in the gallery when the file carries none.
+#[cfg(feature = "desktop")]
+async fn read_or_recover_blocking(
+    bytes: Vec<u8>,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let dir = crate::config::gallery_dir();
+        crate::watermark::read_or_recover(&bytes, dir.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("metadata read task: {e}")))?
+    .map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -2136,7 +2201,7 @@ pub async fn read_image_metadata_path(
     path: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
     let bytes = std::fs::read(&path)?;
-    crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
+    read_or_recover_blocking(bytes).await
 }
 
 /// Whether a gallery directory entry should appear in gallery listings and
@@ -2238,6 +2303,21 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
     Ok(files)
 }
 
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn find_gallery_visual_duplicates(
+    max_distance: Option<u32>,
+) -> Result<Vec<crate::gallery_index::VisualDuplicateGroup>, AppError> {
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let threshold = max_distance.unwrap_or(crate::watermark::fingerprint::MATCH_DISTANCE);
+    tokio::task::spawn_blocking(move || {
+        crate::gallery_index::find_visual_duplicates(&dir, threshold)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))
+}
+
 /// Copy a gallery file to a caller-chosen destination path.
 ///
 /// Used by save-video-as. Videos are far too large to marshal through IPC as a
@@ -2312,10 +2392,10 @@ async fn load_gallery_png_at(path: &std::path::Path, filename: &str) -> Result<V
                 Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
                     &png,
                     &meta,
-                    crate::metadata::MetadataMode::TextChunk,
+                    crate::metadata::MetadataMode::Both,
                 )
-                .unwrap_or(png)),
-                _ => Ok(png),
+                .unwrap_or_else(|_| crate::metadata::ensure_iptc_ai_disclosure(&png))),
+                _ => Ok(crate::metadata::ensure_iptc_ai_disclosure(&png)),
             }
         })
         .await
@@ -2634,13 +2714,24 @@ pub fn generate_thumbnail(
 }
 
 /// A WebP thumbnail of the image at `path`, at most `max_size` on its long side.
+///
+/// Served from the on-disk thumbnail cache when the file was thumbnailed at this
+/// size before, so only the first view of an image pays for the decode.
 pub fn generate_thumbnail_at(path: &std::path::Path, max_size: u32) -> Result<Vec<u8>, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("Read failed: {}", e))?;
-
-    let img = decode_gallery_image(&bytes)?;
     // `size` comes from the request URL, and `thumbnail` scales up as well
     // as down: `size=100000` asked for a ~40 GB buffer. The UI uses 256-1024.
     let max_size = max_size.clamp(16, 2048);
+    let cache_dir = crate::thumbnail_cache::default_dir();
+    crate::thumbnail_cache::get_or_generate(cache_dir.as_deref(), path, max_size, || {
+        render_thumbnail(path, max_size)
+    })
+}
+
+/// Decode the image at `path` and encode a WebP thumbnail of it.
+fn render_thumbnail(path: &std::path::Path, max_size: u32) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("Read failed: {}", e))?;
+
+    let img = decode_gallery_image(&bytes)?;
     let thumb = img.thumbnail(max_size, max_size);
 
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -3235,9 +3326,8 @@ pub async fn copy_gallery_image_to_clipboard(
 
     if filename.ends_with(".jxl") || filename.ends_with(".webp") {
         let src_bytes = std::fs::read(&path)?;
-        let mode = crate::metadata::MetadataMode::from_str(
-            metadata_mode.as_deref().unwrap_or("text_chunk"),
-        );
+        let _ = metadata_mode;
+        let mode = crate::metadata::MetadataMode::Both;
         let params = metadata.filter(|m| !m.is_empty());
         let png_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
             let decoded = decode_gallery_image(&src_bytes)?.into_rgba8();
@@ -3255,7 +3345,9 @@ pub async fn copy_gallery_image_to_clipboard(
                     crate::metadata::encode_png_with_metadata_rgba8(&rgba, width, height, &p, mode)
                 }
                 None => {
-                    crate::jxl::encode_rgba8_png(&rgba, width, height).map_err(|e| e.to_string())
+                    let png = crate::jxl::encode_rgba8_png(&rgba, width, height)
+                        .map_err(|e| e.to_string())?;
+                    Ok(crate::metadata::ensure_iptc_ai_disclosure(&png))
                 }
             }
         })
@@ -3995,17 +4087,15 @@ async fn civitai_lookup_hash_value(state: &Arc<AppState>, hash: &str) -> Result<
     }
     let api_key = state.config.read().await.civitai_key();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
-    let mut req = state
-        .http_client
-        .get(&url)
-        .header("User-Agent", "MooshieUI/0.3.9");
+    let client = state.civitai_http_client().await?;
+    let mut req = client.get(&url).header("User-Agent", "MooshieUI/0.3.9");
     if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
     }
     let resp = req
         .send()
         .await
-        .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e.without_url())))?;
 
     if resp.status() == 404 {
         return Err(AppError::Other("Model not found on CivitAI".into()));
@@ -4022,6 +4112,61 @@ async fn civitai_lookup_hash_value(state: &Arc<AppState>, hash: &str) -> Result<
         .await
         .map_err(|e| AppError::Other(format!("Failed to parse CivitAI response: {}", e)))?;
     Ok(data)
+}
+
+/// CivitAI `nsfwLevel` bits for R, X and XXX (1 is PG, 2 is PG-13).
+const CIVITAI_MATURE_LEVEL_BITS: u64 = 4 | 8 | 16;
+
+/// Whether a CivitAI model-version payload (from `/model-versions/by-hash`)
+/// belongs to a mature model. Mature model pages only open on civitai.red,
+/// so the frontend uses this to pick the "Open on CivitAI" host.
+pub(crate) fn civitai_version_is_mature(data: &Value) -> bool {
+    let model = data.get("model");
+    if model
+        .and_then(|m| m.get("nsfw"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    model
+        .and_then(|m| m.get("nsfwLevel"))
+        .or_else(|| data.get("nsfwLevel"))
+        .and_then(|v| v.as_u64())
+        .is_some_and(|level| level & CIVITAI_MATURE_LEVEL_BITS != 0)
+}
+
+#[cfg(test)]
+mod civitai_mature_tests {
+    use super::civitai_version_is_mature;
+    use serde_json::json;
+
+    #[test]
+    fn nsfw_flag_on_model_is_mature() {
+        assert!(civitai_version_is_mature(
+            &json!({ "model": { "name": "x", "nsfw": true } })
+        ));
+    }
+
+    #[test]
+    fn sfw_model_is_not_mature() {
+        assert!(!civitai_version_is_mature(
+            &json!({ "model": { "nsfw": false }, "nsfwLevel": 1 })
+        ));
+        assert!(!civitai_version_is_mature(&json!({ "nsfwLevel": 2 })));
+        assert!(!civitai_version_is_mature(&json!({})));
+    }
+
+    #[test]
+    fn r_or_higher_level_is_mature() {
+        assert!(civitai_version_is_mature(&json!({ "nsfwLevel": 4 })));
+        assert!(civitai_version_is_mature(
+            &json!({ "model": { "nsfwLevel": 1 | 16 } })
+        ));
+        assert!(civitai_version_is_mature(
+            &json!({ "model": { "nsfw": false }, "nsfwLevel": 8 })
+        ));
+    }
 }
 
 /// Parse a CivitAI image id from a numeric string or `https://civitai.com/images/{id}` URL.
@@ -4077,9 +4222,10 @@ pub(crate) async fn fetch_civitai_image_bytes(
     state: &AppState,
     url: &str,
 ) -> Result<Vec<u8>, AppError> {
-    // Reuse the shared no-redirect client so redirects stay manual (the token is
-    // gated per-host below) while still benefiting from connection pooling.
-    let client = &state.http_client_no_redirect;
+    // Reuse the shared no-redirect client (or CivitAI proxy twin) so redirects
+    // stay manual (the token is gated per-host below) while still benefiting
+    // from connection pooling.
+    let client = state.civitai_http_client_no_redirect().await?;
     // The initial URL must be a CivitAI host so this command can't be turned into
     // a generic server-side fetch primitive (it is reachable through browser-mode
     // LAN auth and carries the user's CivitAI token).
@@ -4106,7 +4252,7 @@ pub(crate) async fn fetch_civitai_image_bytes(
         let resp = req
             .send()
             .await
-            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
+            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e.without_url())))?;
         if resp.status().is_redirection() {
             let location = resp
                 .headers()
@@ -4187,17 +4333,14 @@ pub async fn civitai_lookup_image(
         "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
         image_id
     );
-    let mut req = state
-        .http_client
-        .get(&url)
-        .header("User-Agent", "MooshieUI/0.5.7");
+    let client = state.civitai_http_client().await?;
+    let mut req = client.get(&url).header("User-Agent", "MooshieUI/0.5.7");
     if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
     }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| AppError::Other(format!("CivitAI image lookup failed: {}", e)))?;
+    let resp = req.send().await.map_err(|e| {
+        AppError::Other(format!("CivitAI image lookup failed: {}", e.without_url()))
+    })?;
 
     if resp.status() == 404 {
         return Err(AppError::Other("Image not found on CivitAI".into()));
@@ -4354,6 +4497,20 @@ fn filename_indicates_anima(filename: &str) -> bool {
     text_indicates_anima(filename)
 }
 
+fn filename_indicates_illustrious(filename: &str) -> bool {
+    let lower = filename.trim().to_lowercase();
+    if lower.contains("noobai") || lower.contains("illustrious") {
+        return true;
+    }
+    lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .any(|token| {
+            matches!(token, "ilxl" | "illu" | "noob" | "noobxl")
+                || (token.len() >= 4 && token.ends_with("illu"))
+        })
+}
+
 /// FLUX 3 Image Klein, from a lowercase filename or CivitAI base-model name.
 ///
 /// Black Forest Labs ships `flux3-image-klein[-base]-*` and
@@ -4375,29 +4532,42 @@ fn flux3_klein_family_from_text(lower: &str) -> Option<&'static str> {
     })
 }
 
+/// MiniMax H3, the audio-video model (FL2VA / Ref2VA), from lowercased text:
+/// a CivitAI base model ("MiniMax H3"), a trainer's base-model tag
+/// ("minimax_h3_ref2va") or a filename ("camera_motion_h3_lora_v1",
+/// "H3_StereoDepth_FL2VA"). MiniMax-H3-Image shares the DiT but not the task,
+/// so anything naming "image" is left alone.
+pub(crate) fn minimax_h3_video_from_text(lower: &str) -> bool {
+    if lower.contains("image") {
+        return false;
+    }
+    if lower.contains("minimax") && lower.contains("h3") {
+        return true;
+    }
+    let mut tokens = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty());
+    tokens.any(|t| matches!(t, "h3" | "minimaxh3" | "fl2va" | "ref2va"))
+}
+
 fn model_family_from_base_model(base_model: &str) -> &'static str {
     let bm = base_model.trim().to_lowercase();
     if bm.is_empty() {
         return "unknown";
     }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&bm) {
+        return family;
+    }
 
     if bm.contains("nanosaur") {
         return "nanosaur";
     }
+    if minimax_h3_video_from_text(&bm) {
+        return "minimaxh3";
+    }
     if let Some(family) = flux3_klein_family_from_text(&bm) {
         return family;
-    }
-    if bm == "flux.2 klein 9b-base" {
-        return "flux2klein9bbase";
-    }
-    if bm == "flux.2 klein 9b" {
-        return "flux2klein9b";
-    }
-    if bm == "flux.2 klein 4b-base" {
-        return "flux2klein4bbase";
-    }
-    if bm == "flux.2 klein 4b" {
-        return "flux2klein4b";
     }
     if bm == "flux.2 d" {
         return "flux2d";
@@ -4455,14 +4625,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("pony") {
         return "pony";
     }
-    if bm.contains("stable diffusion 3")
-        || bm.contains("stable-diffusion-3")
-        || bm.contains("stable_diffusion_3")
-        || bm.contains("sd3")
-        || bm.contains("sd 3")
-    {
-        return "sd3";
-    }
     if bm.contains("chroma") {
         return "chroma";
     }
@@ -4475,17 +4637,8 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("auraflow") || bm.contains("aura flow") {
         return "auraflow";
     }
-    if bm.contains("pixart") {
-        return "pixart";
-    }
     if bm.contains("hunyuan") {
         return "hunyuandit";
-    }
-    if bm.contains("cascade") {
-        return "cascade";
-    }
-    if bm.contains("kolors") {
-        return "kolors";
     }
     if bm.contains("mugen") {
         return "mugen";
@@ -4510,9 +4663,16 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name.is_empty() {
         return None;
     }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&name) {
+        return Some(family);
+    }
 
     if name.contains("nanosaur") {
         return Some("nanosaur");
+    }
+    if minimax_h3_video_from_text(&name) {
+        return Some("minimaxh3");
     }
     // FLUX 3 Image Klein before every Flux 2 matcher: its filenames carry
     // "flux" and "klein", which the 9b/4b token tests below would otherwise
@@ -4520,36 +4680,8 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if let Some(family) = flux3_klein_family_from_text(&name) {
         return Some(family);
     }
-    if name.contains("flux.2 klein 9b-base")
-        || name.contains("flux2klein9bbase")
-        || (name.contains("flux")
-            && name.contains("klein")
-            && name.contains("9b")
-            && name.contains("base"))
-    {
-        return Some("flux2klein9bbase");
-    }
-    if name.contains("flux.2 klein 9b")
-        || name.contains("flux2klein9b")
-        || (name.contains("flux") && name.contains("klein") && name.contains("9b"))
-    {
-        return Some("flux2klein9b");
-    }
-    if name.contains("flux.2 klein 4b-base")
-        || name.contains("flux2klein4bbase")
-        || (name.contains("flux")
-            && name.contains("klein")
-            && name.contains("4b")
-            && name.contains("base"))
-    {
-        return Some("flux2klein4bbase");
-    }
-    if name.contains("flux.2 klein 4b")
-        || name.contains("flux2klein4b")
-        || (name.contains("flux") && name.contains("klein") && name.contains("4b"))
-    {
-        return Some("flux2klein4b");
-    }
+    // Flux.2 Klein is registered (architectures/flux2_klein.rs) and matched
+    // above, so a remaining Flux 2 name is Dev.
     if name.contains("flux.2 d")
         || name.contains("flux2d")
         || (name.contains("flux") && name.contains("2") && name.contains("d"))
@@ -4652,19 +4784,11 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if filename_indicates_anima(&name) {
         return Some("anima");
     }
-    if name.contains("noobai") || name.contains("illustrious") {
+    if filename_indicates_illustrious(&name) {
         return Some("illustrious");
     }
     if name.contains("pony") {
         return Some("pony");
-    }
-    if name.contains("stable diffusion 3")
-        || name.contains("stable-diffusion-3")
-        || name.contains("stable_diffusion_3")
-        || name.contains("sd3")
-        || name.contains("sd 3")
-    {
-        return Some("sd3");
     }
     if name.contains("chroma") {
         return Some("chroma");
@@ -4675,17 +4799,8 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name.contains("auraflow") || name.contains("aura flow") {
         return Some("auraflow");
     }
-    if name.contains("pixart") {
-        return Some("pixart");
-    }
     if name.contains("hunyuan") {
         return Some("hunyuandit");
-    }
-    if name.contains("cascade") {
-        return Some("cascade");
-    }
-    if name.contains("kolors") {
-        return Some("kolors");
     }
     if name.contains("mugen") {
         return Some("mugen");
@@ -4763,6 +4878,20 @@ fn find_first_vae_matching(vaes: &[String], markers: &[&str]) -> Option<String> 
     })
 }
 
+/// Comfy-Org's stock Qwen Image VAE, shared by Anima, Qwen Image and Krea 2.
+const QWEN_IMAGE_VAE_FILE: &str = "qwen_image_vae.safetensors";
+
+/// The VAE whose file name (ignoring any subfolder and case) is `basename`.
+fn find_vae_by_basename(vaes: &[String], basename: &str) -> Option<String> {
+    vaes.iter()
+        .find(|vae| {
+            vae.rsplit(['/', '\\'])
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case(basename))
+        })
+        .cloned()
+}
+
 fn find_first_text_encoder_matching(encoders: &[String], markers: &[&str]) -> Option<String> {
     encoders.iter().find_map(|encoder| {
         let lower = encoder.to_lowercase();
@@ -4816,23 +4945,16 @@ fn companion_text_encoder(model_filename: &str, encoders: &[String]) -> Option<S
 /// [`src/lib/utils/modelFamily.ts`](../../../src/lib/utils/modelFamily.ts) — keep
 /// the two in sync.
 pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
+    if let Some(split_only) = crate::architectures::requires_separate_clip(family) {
+        return split_only;
+    }
     matches!(
         family,
         "anima"
-            | "wan"
             | "qwen"
             | "qwen_edit"
             | "qwen_edit_plus"
-            | "flux"
-            | "flux1d"
-            | "flux1s"
-            | "flux1krea"
-            | "flux1kontext"
             | "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
             | "chroma"
@@ -4840,6 +4962,39 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "krea2"
     )
 }
+
+/// Families with hand-written arms in this file and the templates, mirrored
+/// by `MODEL_FAMILIES` in `src/lib/utils/modelFamily.ts`. A registered
+/// architecture (`crate::architectures`) must not reuse one of these ids.
+#[cfg(test)]
+pub(crate) fn is_legacy_family(family: &str) -> bool {
+    LEGACY_FAMILIES.contains(&family)
+}
+
+#[cfg(test)]
+pub(crate) const LEGACY_FAMILIES: [&str; 21] = [
+    "anima",
+    "sdxl",
+    "illustrious",
+    "pony",
+    "sd15",
+    "flux2d",
+    "flux3klein",
+    "flux3kleinbase",
+    "chroma",
+    "zib",
+    "zit",
+    "qwen",
+    "qwen_edit",
+    "qwen_edit_plus",
+    "ideogram4",
+    "krea2",
+    "auraflow",
+    "hunyuandit",
+    "mugen",
+    "nanosaur",
+    "unknown",
+];
 
 /// The Flux 1 VAE, as Black Forest Labs and Comfy-Org name it (`ae.safetensors`)
 /// or under any `flux` name that is not the incompatible 32-channel Flux 2 VAE.
@@ -4858,16 +5013,20 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     if category != "diffusion_models" || vaes.is_empty() {
         return None;
     }
+    if let Some(recommended) = crate::architectures::recommended_vae(family, vaes) {
+        return recommended;
+    }
 
     if matches!(
         family,
-        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan"
+        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "krea2"
     ) {
-        return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
-    }
-
-    if family == "krea2" {
-        return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
+        // The stock file first: decoder fine-tunes such as
+        // `qwen_image_sharp_vae_bf16` sort ahead of it but are an opt-in look,
+        // which the user picks in the VAE list (and the frontend then keeps).
+        return find_vae_by_basename(vaes, QWEN_IMAGE_VAE_FILE)
+            .or_else(|| find_first_vae_matching(vaes, &["qwen"]))
+            .or_else(|| vaes.first().cloned());
     }
 
     if family == "ideogram4" {
@@ -4875,16 +5034,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
             .or_else(|| vaes.first().cloned());
     }
 
-    if matches!(
-        family,
-        "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
-            | "flux3klein"
-            | "flux3kleinbase"
-    ) {
+    if matches!(family, "flux2d" | "flux3klein" | "flux3kleinbase") {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
     }
@@ -4896,17 +5046,14 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
         return find_flux1_vae(vaes);
     }
 
-    if matches!(
-        family,
-        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma"
-    ) {
+    if family == "chroma" {
         return find_flux1_vae(vaes).or_else(|| vaes.first().cloned());
     }
 
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
 }
 
-/// Text-encoder filename markers accepted for Qwen3-4B (Z-Image, Flux 2 Klein 4B).
+/// Text-encoder filename markers accepted for Qwen3-4B (Z-Image).
 /// Comfy-Org names it `qwen_3_4b*.safetensors`. Mirrored by
 /// `ZIMAGE_ENCODER_MARKERS` in ModelSelector.svelte.
 const QWEN3_4B_TEXT_ENCODER_MARKERS: [&str; 5] =
@@ -4939,6 +5086,9 @@ fn recommended_clip_from_available(
     if category != "diffusion_models" || encoders.is_empty() {
         return None;
     }
+    if let Some(recommended) = crate::architectures::recommended_clip(family, encoders) {
+        return Some(recommended);
+    }
 
     if family == "anima" {
         // Strict: Anima's llm_adapter is trained against Qwen3-0.6B, so any other
@@ -4950,7 +5100,7 @@ fn recommended_clip_from_available(
         return Some((preferred, "wan"));
     }
 
-    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan") {
+    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus") {
         let preferred = find_first_text_encoder_matching(encoders, &["qwen2.5-vl", "qwen_2.5_vl"])
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "qwen_image"));
@@ -4971,18 +5121,6 @@ fn recommended_clip_from_available(
         return Some((preferred, "flux2"));
     }
 
-    if matches!(family, "flux2klein9b" | "flux2klein9bbase") {
-        let preferred = find_first_text_encoder_matching(encoders, &["qwen3_8b", "qwen_3_8b"])
-            .or_else(|| encoders.first().cloned());
-        return Some((preferred, "flux2"));
-    }
-
-    if matches!(family, "flux2klein4b" | "flux2klein4bbase") {
-        let preferred = find_first_text_encoder_matching(encoders, &QWEN3_4B_TEXT_ENCODER_MARKERS)
-            .or_else(|| encoders.first().cloned());
-        return Some((preferred, "flux2"));
-    }
-
     if matches!(family, "zib" | "zit") {
         // Strict: Z-Image is conditioned on Qwen3-4B; any other encoder fails
         // with a shape mismatch. Omit the model instead of substituting one and
@@ -4991,10 +5129,9 @@ fn recommended_clip_from_available(
         return Some((preferred, "lumina2"));
     }
 
-    if matches!(
-        family,
-        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma"
-    ) {
+    if family == "chroma" {
+        // Chroma is T5-only by design. Flux.1 (T5 + CLIP-L) is registered in
+        // `crate::architectures::flux1`.
         let preferred = find_first_text_encoder_matching(encoders, &["flan_t5_xxl", "t5_xxl"])
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "chroma"));
@@ -5042,6 +5179,205 @@ mod split_model_pairing_tests {
     }
 
     #[test]
+    fn moss_image_filenames_and_base_models_resolve() {
+        for (name, family) in [
+            ("moss_image_sft_int8_convrot.safetensors", "mossimage"),
+            ("moss_image_sft_bf16.safetensors", "mossimage"),
+            ("MOSS-Image-SFT-8-steps-dmd.safetensors", "mossimage"),
+            ("moss_image_base_int8_convrot.safetensors", "mossimagebase"),
+            ("MOSS-Image-Base-Q8_0.gguf", "mossimagebase"),
+            (
+                "Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors",
+                "mossimage",
+            ),
+            (
+                "Moody-Moss-Mix-V2-25STEPS-CFG3_00001__clean-int8_convrot.safetensors",
+                "mossimage",
+            ),
+        ] {
+            assert_eq!(model_family_from_filename(name), Some(family), "{name}");
+        }
+        assert_eq!(model_family_from_base_model("MOSS-Image"), "mossimage");
+        // CivitAI's own base-model name, as Moody Moss Mix lists it.
+        assert_eq!(model_family_from_base_model("MOSS Image"), "mossimage");
+        assert_eq!(
+            model_family_from_base_model("MOSS-Image Base"),
+            "mossimagebase"
+        );
+        assert!(family_requires_separate_clip("mossimage"));
+        assert_eq!(family_from_architecture("moss_image"), Some("mossimage"));
+        assert_eq!(
+            architecture_class("mossimage"),
+            architecture_class("mossimagebase")
+        );
+    }
+
+    #[test]
+    fn sd3_files_resolve_to_the_registered_families() {
+        for (name, family) in [
+            ("sd3.5_large.safetensors", "sd3"),
+            ("sd3.5_medium-Q8_0.gguf", "sd3"),
+            ("sd3_medium.safetensors", "sd3"),
+            ("sd3.5_large_turbo-Q8_0.gguf", "sd3turbo"),
+            ("sd3.5_large_turbo.safetensors", "sd3turbo"),
+        ] {
+            assert_eq!(model_family_from_filename(name), Some(family), "{name}");
+        }
+        assert_eq!(model_family_from_base_model("SD 3.5 Large"), "sd3");
+        assert_eq!(model_family_from_base_model("SD 3.5 Medium"), "sd3");
+        assert_eq!(
+            model_family_from_base_model("SD 3.5 Large Turbo"),
+            "sd3turbo"
+        );
+        assert_eq!(
+            family_from_architecture("stable-diffusion-3-medium"),
+            Some("sd3")
+        );
+        // Tensor keys cannot tell Turbo from Large: one class, no override.
+        assert_eq!(architecture_class("sd3"), architecture_class("sd3turbo"));
+        assert!(!family_requires_separate_clip("sd3"));
+    }
+
+    #[test]
+    fn sd3_pairs_clip_l_and_only_an_sd3_vae() {
+        let encoders = list(&[
+            "clip_g.safetensors",
+            "clip_l.safetensors",
+            "t5xxl_fp8_e4m3fn_scaled.safetensors",
+        ]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "sd3", &encoders),
+            Some((Some("clip_l.safetensors".to_string()), "sd3"))
+        );
+        // No CLIP-L installed: the type still applies, the file is offered for download.
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "sd3", &encoders[..1]),
+            Some((None, "sd3"))
+        );
+        let vaes = list(&[
+            "ae.safetensors",
+            "sdxl_vae.safetensors",
+            "sd3.5_vae.safetensors",
+        ]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "sd3", &vaes),
+            Some("sd3.5_vae.safetensors".to_string())
+        );
+        // Strict: the Flux 1 VAE is 16-channel too but decodes SD3 latents wrong.
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "sd3", &vaes[..2]),
+            None
+        );
+    }
+
+    #[test]
+    fn kolors_pairs_with_chatglm3_and_its_vae() {
+        // Kolors is a registered architecture (architectures/kolors.rs); the
+        // pairing functions consult it before their hand-written arms.
+        assert!(family_requires_separate_clip("kolors"));
+        let encoders = list(&[
+            "kolors_chatglm3.fp16-00001-of-00003.safetensors",
+            "kolors_chatglm3.fp16-00002-of-00003.safetensors",
+            "kolors_chatglm3.fp16-00003-of-00003.safetensors",
+            "qwen_3_4b.safetensors",
+        ]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "kolors", &encoders),
+            Some((
+                Some("kolors_chatglm3.fp16-00001-of-00003.safetensors".to_string()),
+                "kolors"
+            ))
+        );
+        // Strict: no ChatGLM3 on disk means no encoder, not a wrong one.
+        assert_eq!(
+            recommended_clip_from_available(
+                "diffusion_models",
+                "kolors",
+                &list(&["qwen_3_4b.safetensors"])
+            ),
+            Some((None, "kolors"))
+        );
+        assert_eq!(
+            recommended_vae_from_available(
+                "diffusion_models",
+                "kolors",
+                &list(&[
+                    "ae.safetensors",
+                    "sdxl_vae.safetensors",
+                    "kolors_vae_fp16.safetensors"
+                ])
+            ),
+            Some("kolors_vae_fp16.safetensors".to_string())
+        );
+        assert_eq!(
+            model_family_from_filename("Kolors-Realistic_v2.safetensors"),
+            Some("kolors")
+        );
+    }
+
+    #[test]
+    fn kolors_unets_are_recognised_by_their_text_projection() {
+        let mut diffusers: Vec<String> = (0..12)
+            .map(|i| format!("down_blocks.{}.resnets.0.conv1.weight", i % 3))
+            .chain((0..12).map(|i| format!("up_blocks.{}.resnets.0.conv1.weight", i % 3)))
+            .collect();
+        diffusers.push("encoder_hid_proj.weight".into());
+        diffusers.push("encoder_hid_proj.bias".into());
+        diffusers.push("conv_in.weight".into());
+        let names: Vec<&str> = diffusers.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("kolors")
+        );
+        assert_eq!(
+            infer_model_kind_from_key_names(&names),
+            Some("diffusion_model")
+        );
+
+        let ldm: Vec<String> = (0..12)
+            .map(|i| format!("model.diffusion_model.input_blocks.{i}.0.weight"))
+            .chain(["model.diffusion_model.label_emb.0.0.weight".to_string()])
+            .chain(["model.diffusion_model.encoder_hid_proj.weight".to_string()])
+            .collect();
+        let names: Vec<&str> = ldm.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("kolors")
+        );
+        assert_eq!(family_from_architecture("kolors"), Some("kolors"));
+    }
+
+    #[test]
+    fn moss_image_pairs_with_qwen35_9b_and_the_flux2_vae() {
+        let encoders = vec![
+            "qwen3vl_4b_fp8_scaled.safetensors".to_string(),
+            "qwen3.5_9b_w4a8_gptq.safetensors".to_string(),
+        ];
+        let vaes = vec![
+            "sdxl_vae.safetensors".to_string(),
+            "flux2-vae_small.safetensors".to_string(),
+        ];
+        for family in ["mossimage", "mossimagebase"] {
+            assert_eq!(
+                recommended_clip_from_available("diffusion_models", family, &encoders),
+                Some((
+                    Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string()),
+                    "moss_image"
+                ))
+            );
+            assert_eq!(
+                recommended_vae_from_available("diffusion_models", family, &vaes),
+                Some("flux2-vae_small.safetensors".to_string())
+            );
+        }
+        // Strict: no Qwen3.5 9B on disk means no encoder, not a wrong one.
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "mossimage", &encoders[..1]),
+            Some((None, "moss_image"))
+        );
+    }
+
+    #[test]
     fn flux3_klein_filenames_resolve_before_flux2_klein() {
         for (name, family) in [
             ("flux3-image-klein-int8-convrot.safetensors", "flux3klein"),
@@ -5065,6 +5401,51 @@ mod split_model_pairing_tests {
         assert_eq!(
             model_family_from_base_model("Flux.3 Klein Base"),
             "flux3kleinbase"
+        );
+    }
+
+    #[test]
+    fn flux2_tensor_keys_tell_klein_4b_9b_and_dev_apart() {
+        fn keys(singles: usize) -> Vec<String> {
+            let mut k = vec![
+                "double_stream_modulation_img.lin.weight".to_string(),
+                "double_stream_modulation_txt.lin.weight".to_string(),
+                "single_stream_modulation.lin.weight".to_string(),
+                "double_blocks.0.img_attn.qkv.weight".to_string(),
+            ];
+            for i in 0..singles {
+                k.push(format!("single_blocks.{i}.linear1.weight"));
+                k.push(format!("single_blocks.{i}.linear2.weight"));
+            }
+            k
+        }
+        for (singles, arch, family) in [
+            (20, "flux2_klein_4b", "flux2klein4b"),
+            (24, "flux2_klein_9b", "flux2klein9b"),
+            (48, "flux2_dev", "flux2d"),
+        ] {
+            let owned = keys(singles);
+            let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+            assert_eq!(
+                infer_architecture_from_key_names(&names).as_deref(),
+                Some(arch)
+            );
+            assert_eq!(family_from_architecture(arch), Some(family));
+        }
+        // A Klein 4B file named 9B is corrected by its weights; base vs
+        // distilled is left to the filename.
+        assert_ne!(
+            architecture_class("flux2klein9b"),
+            architecture_class("flux2klein4b")
+        );
+        assert_eq!(
+            architecture_class("flux2klein4bbase"),
+            architecture_class("flux2klein4b")
+        );
+        // Flux 1 keeps its own class.
+        assert_ne!(
+            architecture_class("flux1d"),
+            architecture_class("flux2klein4b")
         );
     }
 
@@ -5098,6 +5479,185 @@ mod split_model_pairing_tests {
             );
             assert!(family_requires_separate_clip(family));
         }
+    }
+
+    #[test]
+    fn moss_image_tensor_keys_are_recognised() {
+        let keys = [
+            "shared_block_modulation.weight",
+            "layers.0.proj.ffn_up_gate.weight",
+            "layers.0.proj.qkv.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&keys).as_deref(),
+            Some("moss_image")
+        );
+    }
+
+    #[test]
+    fn ming_image_repacks_resolve_by_config_and_marker() {
+        let header = |keys: &[&str]| -> serde_json::Map<String, Value> {
+            keys.iter().map(|k| (k.to_string(), json!({}))).collect()
+        };
+        let design = header(&[
+            "cap_embedder.1.weight",
+            "context_refiner.0.attention.out.weight",
+            "x_embedder.weight",
+        ]);
+        let layer = header(&[
+            "cap_embedder.1.weight",
+            "cap_pad_token",
+            "x_embedder.weight",
+        ]);
+        let config = json!(r#"{"transformer": {"image_model": "ming_image"}}"#);
+        assert_eq!(
+            architecture_from_repack_config(&config, &design),
+            Some("ming_image")
+        );
+        assert_eq!(
+            architecture_from_repack_config(&config, &layer),
+            Some("ming_image_layer")
+        );
+        let other = json!(r#"{"transformer": {"image_model": "z_image"}}"#);
+        assert_eq!(architecture_from_repack_config(&other, &design), None);
+        assert_eq!(
+            architecture_from_repack_config(&json!("not json"), &design),
+            None
+        );
+
+        assert_eq!(
+            infer_architecture_from_key_names(&["__ming_image__", "x_embedder.weight"]).as_deref(),
+            Some("ming_image")
+        );
+        assert_eq!(
+            infer_architecture_from_key_names(&[
+                "model.diffusion_model.__ming_image__",
+                "model.diffusion_model.cap_pad_token",
+                "model.diffusion_model.x_embedder.weight",
+                "model.diffusion_model.x_embedder.bias",
+                "model.diffusion_model.cap_embedder.1.weight",
+                "model.diffusion_model.final_layer.linear.weight",
+            ])
+            .as_deref(),
+            Some("ming_image_layer")
+        );
+        assert_eq!(family_from_architecture("ming_image"), Some("mingimage"));
+        assert_eq!(
+            family_from_architecture("ming_image_layer"),
+            Some("mingimagelayer")
+        );
+        assert!(family_requires_separate_clip("mingimagelayer"));
+    }
+
+    #[test]
+    fn pixart_tensor_keys_tell_sigma_from_alpha_in_both_layouts() {
+        // Diffusers `transformer/` safetensors (what the Model Hub downloads).
+        let sigma = [
+            "adaln_single.emb.timestep_embedder.linear_1.bias",
+            "pos_embed.proj.bias",
+            "transformer_blocks.0.attn1.to_q.weight",
+        ];
+        let mut alpha = sigma.to_vec();
+        alpha.push("adaln_single.emb.resolution_embedder.linear_1.weight");
+        // Original PixArt layout, as the `.pth` releases and ComfyUI save it.
+        let original_sigma = [
+            "t_block.1.weight",
+            "y_embedder.y_embedding",
+            "blocks.0.attn.qkv.weight",
+        ];
+        let mut original_alpha = original_sigma.to_vec();
+        original_alpha.push("ar_embedder.mlp.0.weight");
+        for (keys, arch, family) in [
+            (sigma.to_vec(), "pixart", "pixart"),
+            (alpha, "pixart_alpha", "pixartalpha"),
+            (original_sigma.to_vec(), "pixart", "pixart"),
+            (original_alpha, "pixart_alpha", "pixartalpha"),
+        ] {
+            assert_eq!(
+                infer_architecture_from_key_names(&keys).as_deref(),
+                Some(arch),
+                "{keys:?}"
+            );
+            assert_eq!(family_from_architecture(arch), Some(family));
+        }
+        assert!(family_requires_separate_clip("pixart"));
+        assert!(family_requires_separate_clip("pixartalpha"));
+    }
+
+    #[test]
+    fn minimax_h3_image_tensor_keys_are_not_the_video_model() {
+        let image = [
+            "video_patch_proj.weight",
+            "condition_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+            "final_layer.video_out.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&image).as_deref(),
+            Some("minimax_h3_image")
+        );
+        assert_eq!(
+            family_from_architecture("minimax_h3_image"),
+            Some("minimaxh3image")
+        );
+        let video = [
+            "video_patch_proj.weight",
+            "audio_patch_proj.weight",
+            "condition_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+        ];
+        assert_ne!(
+            infer_architecture_from_key_names(&video).as_deref(),
+            Some("minimax_h3_image")
+        );
+        assert_eq!(
+            model_family_from_filename("minimax_h3_image_pruned_int8_convrot.safetensors"),
+            Some("minimaxh3image")
+        );
+        assert!(family_requires_separate_clip("minimaxh3image"));
+    }
+
+    #[test]
+    fn qwen_image_21_tensor_keys_are_not_qwen_image_1() {
+        let v21 = [
+            "txt_in.text_norm.weight",
+            "modulation.1.weight",
+            "img_in.weight",
+            "proj_out.weight",
+            "transformer_blocks.0.attn.norm_q.weight",
+            "transformer_blocks.0.img_mlp.gate_up.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&v21).as_deref(),
+            Some("qwen_image21")
+        );
+        assert_eq!(
+            family_from_architecture("qwen_image21"),
+            Some("qwenimage21")
+        );
+        assert_eq!(
+            architecture_class("qwenimage21turbo"),
+            architecture_class("qwenimage21")
+        );
+        let v1 = [
+            "txt_norm.weight",
+            "img_in.weight",
+            "transformer_blocks.0.attn.norm_q.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&v1).as_deref(),
+            Some("qwen_image")
+        );
+        // The filename no longer lands in the Qwen-Image 1 bucket.
+        assert_eq!(
+            model_family_from_filename("qwen_image_2.1_int8_convrot.safetensors"),
+            Some("qwenimage21")
+        );
+        assert_eq!(
+            model_family_from_filename("qwen_image_fp8_e4m3fn.safetensors"),
+            Some("qwen")
+        );
+        assert!(family_requires_separate_clip("qwenimage21"));
     }
 
     #[test]
@@ -5294,6 +5854,41 @@ mod split_model_pairing_tests {
         assert_eq!(
             recommended_vae_from_available("diffusion_models", "zib", &vaes),
             Some("FLUX1/flux_vae.safetensors".to_string())
+        );
+    }
+
+    #[test]
+    fn qwen_latent_families_default_to_the_stock_vae_over_a_sharpened_one() {
+        // ComfyUI lists VAEs sorted, so the sharpened decoder comes first.
+        let vaes = list(&[
+            "qwen_image_sharp_vae_bf16.safetensors",
+            "qwen_image_sharp_vae_x1.5_bf16.safetensors",
+            "qwen_image_vae.safetensors",
+            "sdxl_vae.safetensors",
+        ]);
+        for family in ["anima", "krea2", "qwen"] {
+            assert_eq!(
+                recommended_vae_from_available("diffusion_models", family, &vaes),
+                Some("qwen_image_vae.safetensors".to_string()),
+                "{family}"
+            );
+        }
+        let vaes = list(&[
+            "Anima\\QWEN_IMAGE_VAE.safetensors",
+            "qwen_image_sharp_vae_bf16.safetensors",
+        ]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "anima", &vaes),
+            Some("Anima\\QWEN_IMAGE_VAE.safetensors".to_string())
+        );
+        // With only the sharpened file installed it is still a Qwen Image VAE.
+        let vaes = list(&[
+            "qwen_image_sharp_vae_bf16.safetensors",
+            "sdxl_vae.safetensors",
+        ]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "krea2", &vaes),
+            Some("qwen_image_sharp_vae_bf16.safetensors".to_string())
         );
     }
 }
@@ -5615,8 +6210,8 @@ pub async fn civitai_search_models_internal(
     );
     log::debug!("CivitAI search URL: {}", url);
 
-    let mut req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut req = client
         .get(&url)
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
@@ -5625,7 +6220,7 @@ pub async fn civitai_search_models_internal(
         req = req.bearer_auth(key);
     }
 
-    let resp = req.send().await?;
+    let resp = req.send().await.map_err(reqwest::Error::without_url)?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
 
@@ -5635,7 +6230,7 @@ pub async fn civitai_search_models_internal(
             message: if body.is_empty() {
                 status.to_string()
             } else {
-                body
+                crate::http_error::readable_body("CivitAI", status.as_u16(), &body)
             },
         });
     }
@@ -5722,8 +6317,8 @@ pub async fn civitai_get_model_internal(
 ) -> Result<Value, AppError> {
     let url = format!("https://civitai.com/api/v1/models/{}", model_id);
 
-    let mut req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut req = client
         .get(&url)
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
@@ -5732,7 +6327,7 @@ pub async fn civitai_get_model_internal(
         req = req.bearer_auth(key);
     }
 
-    let resp = req.send().await?;
+    let resp = req.send().await.map_err(reqwest::Error::without_url)?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
 
@@ -5742,7 +6337,7 @@ pub async fn civitai_get_model_internal(
             message: if body.is_empty() {
                 status.to_string()
             } else {
-                body
+                crate::http_error::readable_body("CivitAI", status.as_u16(), &body)
             },
         });
     }
@@ -5829,11 +6424,11 @@ pub async fn civitai_list_architectures(
         architectures.insert(arch.to_string());
     }
 
+    let client = state.civitai_http_client().await?;
     let mut cursor: Option<String> = None;
 
     for _ in 0..8 {
-        let mut req = state
-            .http_client
+        let mut req = client
             .get("https://civitai.com/api/v1/models")
             .header("Accept", "application/json")
             .header("User-Agent", "MooshieUI/0.3.9")
@@ -6131,6 +6726,14 @@ pub(crate) async fn read_modelspec_internal(
         && (category == "diffusion_models"
             || result.get("model_kind").map(String::as_str) == Some("diffusion_model"));
     if effective_is_split {
+        // A file in `checkpoints/` that carries its own VAE (Stability's SD3
+        // release files) decodes with it unless the user picks another, so no
+        // VAE is recommended over it. The SD3 loader reads the VAE from the file.
+        let vae_from_file = category == "checkpoints"
+            && result.get("baked_vae").map(String::as_str) == Some("true")
+            && result
+                .get("family")
+                .is_some_and(|f| crate::architectures::sd3::is_sd3(f));
         // The helpers gate on this category internally; a reclassified checkpoint
         // must take the same path as a correctly-placed diffusion model.
         let category = "diffusion_models";
@@ -6138,7 +6741,9 @@ pub(crate) async fn read_modelspec_internal(
             .get("family")
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
-        if let Ok(vaes) = state.get_models_list("vae").await {
+        if vae_from_file {
+            // Nothing to recommend.
+        } else if let Ok(vaes) = state.get_models_list("vae").await {
             if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes)
             {
                 result.insert("recommended_vae".to_string(), recommended_vae);
@@ -6270,6 +6875,133 @@ pub async fn detect_model_kind(
     detect_model_kind_internal(state.inner(), &category, &filename).await
 }
 
+/// What a LoRA's own header says about MiniMax H3: `Some(true)` for an H3
+/// video LoRA, `Some(false)` for a LoRA of another model (or of
+/// MiniMax-H3-Image), `None` when the header cannot tell.
+///
+/// Tensor keys decide first, then the trainer's base-model tags: ai-toolkit
+/// writes `ss_base_model_version` ("minimax_h3", "minimax_h3_ref2va"), other
+/// trainers `base_model` ("minimax-h3-fl2va") or `modelspec.architecture`.
+fn safetensors_lora_is_h3_video(path: &std::path::Path) -> Option<bool> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut size_buf = [0u8; 8];
+    file.read_exact(&mut size_buf).ok()?;
+    let header_size = u64::from_le_bytes(size_buf) as usize;
+    if header_size > 100 * 1024 * 1024 {
+        return None;
+    }
+    let mut header_buf = vec![0u8; header_size];
+    file.read_exact(&mut header_buf).ok()?;
+    let header: Value = serde_json::from_slice(&header_buf).ok()?;
+    let top = header.as_object()?;
+
+    let tags: Vec<String> = top
+        .get("__metadata__")
+        .and_then(Value::as_object)
+        .map(|meta| {
+            [
+                "ss_base_model_version",
+                "base_model",
+                "modelspec.architecture",
+            ]
+            .iter()
+            .filter_map(|k| meta.get(*k).and_then(Value::as_str))
+            .map(str::to_ascii_lowercase)
+            .collect()
+        })
+        .unwrap_or_default();
+    let names: Vec<&str> = top
+        .keys()
+        .map(String::as_str)
+        .filter(|k| *k != "__metadata__")
+        .collect();
+    match infer_architecture_from_key_names(&names).as_deref() {
+        Some("minimax_h3") => Some(!tags.iter().any(|t| t.contains("image"))),
+        Some(_) => Some(false),
+        None if tags.iter().any(|t| minimax_h3_video_from_text(t)) => Some(true),
+        None => None,
+    }
+}
+
+/// Whether one file in `models/loras` is a MiniMax H3 video LoRA: its header
+/// when it can be read (see [`safetensors_lora_is_h3_video`]), else its name.
+/// Header verdicts are cached by path, size and modification time, since the
+/// LoRA list is classified again on every model refresh.
+fn lora_is_h3_video(comfyui_path: &str, extra_model_paths: Option<&str>, filename: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    type Key = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+    static CACHE: OnceLock<Mutex<HashMap<Key, Option<bool>>>> = OnceLock::new();
+
+    if !is_safe_relative_model_path(filename) {
+        return false;
+    }
+    let by_name = minimax_h3_video_from_text(&filename.to_ascii_lowercase());
+    if comfyui_path.is_empty() || !filename.to_ascii_lowercase().ends_with(".safetensors") {
+        return by_name;
+    }
+    let Some(path) = resolve_model_path(comfyui_path, extra_model_paths, "loras", filename) else {
+        return by_name;
+    };
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return by_name;
+    };
+    let key: Key = (path.clone(), meta.len(), meta.modified().ok());
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cached = cache.lock().ok().and_then(|c| c.get(&key).copied());
+    let verdict = match cached {
+        Some(v) => v,
+        None => {
+            let v = safetensors_lora_is_h3_video(&path);
+            if let Ok(mut c) = cache.lock() {
+                c.insert(key, v);
+            }
+            v
+        }
+    };
+    verdict.unwrap_or(by_name)
+}
+
+/// The subset of `filenames` (LoRA names as ComfyUI lists them) that are
+/// MiniMax H3 video LoRAs. Header-only, never hashes or asks CivitAI, so the
+/// frontend can sort the whole LoRA list into image and video pickers on each
+/// model refresh. With a remote ComfyUI the files are not local and names alone
+/// decide.
+pub(crate) async fn h3_video_loras_internal(
+    state: &Arc<AppState>,
+    filenames: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    let (comfyui_path, extra_model_paths) = {
+        let config = state.config.read().await;
+        let local = generation_models_are_local(&config);
+        (
+            if local {
+                config.comfyui_path.clone()
+            } else {
+                String::new()
+            },
+            config.extra_model_paths.clone(),
+        )
+    };
+    tokio::task::spawn_blocking(move || {
+        filenames
+            .into_iter()
+            .filter(|name| lora_is_h3_video(&comfyui_path, extra_model_paths.as_deref(), name))
+            .collect()
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("LoRA inspection failed: {e}")))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn detect_h3_video_loras(
+    state: State<'_, Arc<AppState>>,
+    filenames: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    h3_video_loras_internal(state.inner(), filenames).await
+}
+
 /// Parse the safetensors JSON header and extract only the prediction-related
 /// fields used by the frontend runtime path.
 pub(crate) fn read_safetensors_runtime_metadata(
@@ -6392,6 +7124,18 @@ pub(crate) fn read_safetensors_modelspec(
         result.insert("header_v_pred".to_string(), "true".to_string());
     }
 
+    // Comfy-Org's repacks declare the model in a `config` metadata entry. Ming
+    // shares Z-Image's tensor layout, so this is what tells a renamed file
+    // apart (and the Layer checkpoint from the Design one).
+    if !result.contains_key("architecture") {
+        if let (Some(config), Some(Value::Object(top))) = (metadata.get("config"), Some(&header)) {
+            if let Some(arch) = architecture_from_repack_config(config, top) {
+                result.insert("architecture".to_string(), arch.to_string());
+                result.insert("architecture_inferred".to_string(), "true".to_string());
+            }
+        }
+    }
+
     // If no modelspec.architecture, infer from tensor key patterns in the header
     if let Some(Value::Object(top)) = Some(&header) {
         if !result.contains_key("architecture") {
@@ -6407,6 +7151,9 @@ pub(crate) fn read_safetensors_modelspec(
         if let Some(kind) = infer_model_kind_from_key_names(&names) {
             result.insert("model_kind".to_string(), kind.to_string());
             result.insert("model_kind_source".to_string(), "tensor_keys".to_string());
+        }
+        if has_vae_but_no_text_encoders(&names) {
+            result.insert("baked_vae".to_string(), "true".to_string());
         }
     }
 
@@ -6693,6 +7440,40 @@ fn dominant_tensor_key_prefix(names: &[&str]) -> &'static str {
     }
 }
 
+/// `ming_image_layer` for the Layer checkpoint (learned pad tokens), else
+/// `ming_image`.
+fn ming_image_architecture(has_pad_token: bool) -> &'static str {
+    if has_pad_token {
+        "ming_image_layer"
+    } else {
+        "ming_image"
+    }
+}
+
+/// Architecture named by a Comfy-Org repack's `config` metadata entry
+/// (`{"transformer": {"image_model": "ming_image"}}`), with the tensor keys
+/// to tell variants apart. `None` for anything not mapped here.
+fn architecture_from_repack_config(
+    config: &Value,
+    header: &serde_json::Map<String, Value>,
+) -> Option<&'static str> {
+    let parsed: Value = match config {
+        Value::String(text) => serde_json::from_str(text).ok()?,
+        other => other.clone(),
+    };
+    match parsed.pointer("/transformer/image_model")?.as_str()? {
+        "ming_image" => {
+            let names: Vec<&str> = header.keys().map(String::as_str).collect();
+            let prefix = dominant_tensor_key_prefix(&names);
+            let pad = names
+                .iter()
+                .any(|k| k.strip_prefix(prefix).unwrap_or(k) == "cap_pad_token");
+            Some(ming_image_architecture(pad))
+        }
+        _ => None,
+    }
+}
+
 /// Infer model architecture from safetensors header keys.
 ///
 /// Thin wrapper over [`infer_architecture_from_key_names`] that projects the
@@ -6725,6 +7506,24 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     let contains = |s: &str| bare.iter().any(|k| k.contains(s));
     let has_key = |name: &str| bare.contains(&name);
 
+    // Ming-Image: ComfyUI saves its Lumina-family DiT with a `__ming_image__`
+    // marker buffer (Z-Image has none). The Layer checkpoint learned its pad
+    // tokens; Design has none.
+    if has_key("__ming_image__") {
+        return Some(ming_image_architecture(has_key("cap_pad_token")).to_string());
+    }
+
+    // MiniMax-H3-Image: the H3 DiT (video patch embed plus the conditioning
+    // projection) without the audio stream, as in ComfyUI's
+    // `model_detection` (`minimax_h3_image` when `audio_patch_proj` is absent).
+    // The audio-video H3 model is a video-mode model and keeps falling through.
+    if has_key("video_patch_proj.weight")
+        && has_key("condition_proj.weight")
+        && !has_key("audio_patch_proj.weight")
+    {
+        return Some("minimax_h3_image".to_string());
+    }
+
     // Anima: a Cosmos-Predict2 backbone plus a Qwen3 LLM adapter. Checked before
     // plain Cosmos because it shares that backbone — the adapter is what makes
     // it Anima, and what makes it require the Qwen3-0.6B text encoder.
@@ -6733,6 +7532,23 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     }
     if starts_with("blocks.0.mlp.layer1.") {
         return Some("cosmos_predict2".to_string());
+    }
+
+    // MiniMax H3, as in ComfyUI's detect_unet_config: the DiT has a video patch
+    // projection, and only the audio-video model an audio one (MiniMax-H3-Image
+    // is the same DiT without audio). A LoRA has neither, only block and token
+    // refiner layers; it is read as the video model, the one MooshieUI runs.
+    // Checked before the classic-UNet fallback below, which would otherwise call
+    // any `diffusion_model.`-prefixed H3 LoRA an SD 1.5 one.
+    if has_key("video_patch_proj.weight") {
+        return Some(if has_key("audio_patch_proj.weight") {
+            "minimax_h3".to_string()
+        } else {
+            "minimax_h3_image".to_string()
+        });
+    }
+    if starts_with("token_refiner.blocks.") && starts_with("blocks.0.attn.qkv_proj.") {
+        return Some("minimax_h3".to_string());
     }
 
     // Wan 2.1 (DiT video model)
@@ -6753,9 +7569,47 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         });
     }
 
+    // MOSS-Image: one shared block modulation plus fused FFN up/gate layers, as
+    // in ComfyUI's detect_unet_config. SFT and Base share the same keys.
+    if has_key("shared_block_modulation.weight") && has_key("layers.0.proj.ffn_up_gate.weight") {
+        return Some("moss_image".to_string());
+    }
+
+    // Flux 2: Flux-style blocks plus shared stream modulations, as in ComfyUI's
+    // detect_unet_config. The single-block count tells the sizes apart
+    // (Klein 4B 20, Klein 9B 24, Dev 48); base and distilled share their keys.
+    if has_key("double_stream_modulation_img.lin.weight") {
+        let singles = bare
+            .iter()
+            .filter_map(|k| k.strip_prefix("single_blocks."))
+            .filter_map(|rest| rest.split('.').next())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        return Some(
+            match singles {
+                20 => "flux2_klein_4b",
+                24 => "flux2_klein_9b",
+                48 => "flux2_dev",
+                _ => "flux2",
+            }
+            .to_string(),
+        );
+    }
+
     // Flux: uses double_blocks / single_blocks (DiT architecture)
     if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
+    }
+
+    // Qwen-Image 2.1: a text projection with its own norm and one shared
+    // modulation (ComfyUI's model_detection `qwen_image21_keys`). Checked
+    // before Qwen-Image 1, whose encoder and VAE it cannot use.
+    if has_key("txt_in.text_norm.weight")
+        && has_key("modulation.1.weight")
+        && has_key("img_in.weight")
+        && starts_with("transformer_blocks.")
+    {
+        return Some("qwen_image21".to_string());
     }
 
     // Qwen-Image: MMDiT with a dedicated text-stream norm
@@ -6783,12 +7637,22 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("stable_cascade".to_string());
     }
 
-    // PixArt: alpha/sigma share the adaln_single conditioning stack
-    if starts_with("adaln_single.") {
-        return Some("pixart".to_string());
+    // PixArt: diffusers files carry the `adaln_single.` conditioning stack,
+    // original and ComfyUI-saved ones `t_block.1.weight` (ComfyUI's own marker).
+    // Alpha adds a resolution / aspect micro-condition that Sigma lacks, and
+    // decodes with the SD 1.5 VAE instead of the SDXL one.
+    if starts_with("adaln_single.") || has_key("t_block.1.weight") {
+        let alpha =
+            starts_with("adaln_single.emb.resolution_embedder.") || starts_with("ar_embedder.");
+        return Some(if alpha { "pixart_alpha" } else { "pixart" }.to_string());
     }
 
-    // Kolors: ChatGLM-based text encoder
+    // Kolors: an SDXL UNet plus the ChatGLM3 text projection (encoder_hid_proj),
+    // in diffusers or ldm layout. Checked before the SDXL UNet test below,
+    // which it would otherwise pass.
+    if starts_with("encoder_hid_proj.") {
+        return Some("kolors".to_string());
+    }
     if contains("chatglm") {
         return Some("kolors".to_string());
     }
@@ -6890,10 +7754,20 @@ fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
     let has_tree = |prefix: &str| {
         names.iter().filter(|k| k.starts_with(prefix)).count() > MIN_TENSOR_TREE_KEYS
     };
+    if has_vae_but_no_text_encoders(names) {
+        // `CheckpointLoaderSimple` returns a `None` CLIP for it, so it has to
+        // load as a diffusion model with its encoders picked separately.
+        return Some("diffusion_model");
+    }
     if FULL_CHECKPOINT_KEY_PREFIXES.iter().copied().any(has_tree) {
         return Some("checkpoint");
     }
     if DIFFUSION_KEY_PREFIXES.iter().copied().any(has_tree) {
+        return Some("diffusion_model");
+    }
+    // A diffusers-layout Kolors UNet (Kwai-Kolors' `unet/` weights) has no
+    // container prefix; its ChatGLM3 projection is what marks it.
+    if has_tree("down_blocks.") && names.contains(&"encoder_hid_proj.weight") {
         return Some("diffusion_model");
     }
     let is_llm = has_tree(LLM_LAYER_PREFIX) && names.iter().any(|k| LLM_EMBEDDING_KEYS.contains(k));
@@ -6904,6 +7778,34 @@ fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
         return Some("vae");
     }
     None
+}
+
+/// Prefixes under which a full checkpoint bakes its text encoders.
+const BAKED_TEXT_ENCODER_KEY_PREFIXES: [&str; 3] = [
+    "cond_stage_model.",
+    "conditioner.embedders.",
+    "text_encoders.",
+];
+
+/// A file with diffusion weights and a baked VAE (`first_stage_model.`) but no
+/// text encoders. Stability's own SD3 / SD3.5 release files
+/// (`sd3.5_large.safetensors`, `sd3.5_medium.safetensors`, ...) are built this
+/// way: ComfyUI loads their MODEL and VAE with `CheckpointLoaderSimple` and the
+/// encoders with `TripleCLIPLoader`. Reported as `baked_vae` so the loader can
+/// still take the VAE from the file.
+fn has_vae_but_no_text_encoders(names: &[&str]) -> bool {
+    let has_tree = |prefix: &str| {
+        names.iter().filter(|k| k.starts_with(prefix)).count() > MIN_TENSOR_TREE_KEYS
+    };
+    has_tree("first_stage_model.")
+        && !BAKED_TEXT_ENCODER_KEY_PREFIXES
+            .iter()
+            .copied()
+            .any(has_tree)
+        && ["model.diffusion_model.", "diffusion_model."]
+            .iter()
+            .copied()
+            .any(has_tree)
 }
 
 /// llama.cpp text-model architectures that ship as GGUF text encoders, after
@@ -6943,18 +7845,21 @@ fn gguf_is_text_model(general_arch: Option<&str>, names: &[&str]) -> bool {
 /// stock SDXL, so those resolve to the generic family and are only ever used to
 /// fill in a family that other detection left unknown.
 fn family_from_architecture(architecture: &str) -> Option<&'static str> {
+    if let Some(family) = crate::architectures::family_from_tensor_architecture(architecture) {
+        return Some(family);
+    }
     match architecture {
         "anima" => Some("anima"),
-        "wan2.1" => Some("wan"),
         "flux" => Some("flux"),
         "flux3_flowmap" => Some("flux3klein"),
         "flux3" => Some("flux3kleinbase"),
+        // Flux.2 Klein's flux2_klein_4b / flux2_klein_9b are registered
+        // (architectures/flux2_klein.rs).
+        "flux2_dev" => Some("flux2d"),
+        "minimax_h3" => Some("minimaxh3"),
         "qwen_image" => Some("qwen"),
-        "stable-diffusion-3-medium" => Some("sd3"),
         "auraflow" => Some("auraflow"),
-        "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
-        "stable_cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
         "stable-diffusion-xl-v1-base" => Some("sdxl"),
         "stable-diffusion-v1-5" => Some("sd15"),
@@ -6972,6 +7877,9 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
 /// variants). This keeps the veto conservative: it only fires when the file's
 /// weights prove a *different, known* class than the filename claimed.
 fn architecture_class(family: &str) -> Option<&'static str> {
+    if let Some(class) = crate::architectures::architecture_class(family) {
+        return Some(class);
+    }
     match family {
         // Classic SDXL-shaped UNets. Mugen is SDXL-shaped too (it is driven with
         // SDXL-style sampling in templates/mod.rs), so a mugen-by-filename tag is
@@ -6983,15 +7891,14 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // so they correct a filename that names the other checkpoint.
         "flux3klein" => Some("flux3_flowmap"),
         "flux3kleinbase" => Some("flux3"),
+        // Flux 2 sizes are told apart by their keys (Klein's classes come from
+        // the registry), so a Klein file named Dev is corrected and vice versa.
+        "flux2d" => Some("flux2_dev"),
+        "minimaxh3" => Some("minimax_h3"),
         "anima" => Some("anima"),
-        "wan" => Some("wan"),
         "qwen" => Some("qwen_image"),
-        "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),
-        "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
-        "cascade" => Some("cascade"),
-        "kolors" => Some("kolors"),
         _ => None,
     }
 }
@@ -7039,6 +7946,8 @@ pub struct LoraCivitaiInfo {
     pub civitai_name: Option<String>,
     pub civitai_description: Option<String>,
     pub civitai_model_id: Option<u64>,
+    /// CivitAI rates the model as mature, so its page lives on civitai.red.
+    pub civitai_nsfw: Option<bool>,
     pub civitai_version_id: Option<u64>,
     pub civitai_base_model: Option<String>,
     pub civitai_images: Vec<LoraCivitaiImage>,
@@ -7073,6 +7982,8 @@ pub struct CheckpointCivitaiInfo {
     /// "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or None.
     pub thumbnail_url: Option<String>,
     pub civitai_model_id: Option<u64>,
+    /// CivitAI rates the model as mature, so its page lives on civitai.red.
+    pub civitai_nsfw: Option<bool>,
     pub civitai_version_id: Option<u64>,
     pub civitai_description: Option<String>,
     /// All sample images returned by CivitAI (independent of whether a sidecar exists).
@@ -7174,6 +8085,16 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "ip_adapter",
             "models/ipadapter",
             "Models/ipadapter",
+        ],
+        "background_removal" => &[
+            "background_removal",
+            "models/background_removal",
+            "Models/background_removal",
+        ],
+        "geometry_estimation" => &[
+            "geometry_estimation",
+            "models/geometry_estimation",
+            "Models/geometry_estimation",
         ],
         "clip_vision" => &[
             "clip_vision",
@@ -7380,8 +8301,8 @@ pub async fn get_lora_civitai_info(
         "https://civitai.com/api/v1/model-versions/by-hash/{}",
         autov2
     );
-    let mut civitai_req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut civitai_req = client
         .get(&civitai_url)
         .header("User-Agent", "MooshieUI/0.3.9");
     if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
@@ -7399,6 +8320,7 @@ pub async fn get_lora_civitai_info(
         civitai_name: None,
         civitai_description: None,
         civitai_model_id: None,
+        civitai_nsfw: None,
         civitai_version_id: None,
         civitai_base_model: None,
         civitai_images: Vec::new(),
@@ -7449,6 +8371,7 @@ pub async fn get_lora_civitai_info(
                     .and_then(|v| v.as_str())
                     .map(String::from);
                 info.civitai_model_id = data.get("modelId").and_then(|v| v.as_u64());
+                info.civitai_nsfw = Some(civitai_version_is_mature(&data));
 
                 // Trigger words
                 if let Some(words) = data.get("trainedWords").and_then(|v| v.as_array()) {
@@ -7572,6 +8495,7 @@ pub async fn get_checkpoint_civitai_info(
             .and_then(|m| m.get("family").cloned()),
         thumbnail_url: sidecar_thumbnail,
         civitai_model_id: None,
+        civitai_nsfw: None,
         civitai_version_id: None,
         civitai_description: None,
         civitai_images: Vec::new(),
@@ -7610,14 +8534,17 @@ pub async fn get_checkpoint_civitai_info(
         "https://civitai.com/api/v1/model-versions/by-hash/{}",
         autov2
     );
-    let mut civitai_req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut civitai_req = client
         .get(&civitai_url)
         .header("User-Agent", "MooshieUI/0.3.9");
     if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
         civitai_req = civitai_req.bearer_auth(key);
     }
-    let civitai_resp = civitai_req.send().await;
+    let civitai_resp = civitai_req
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url);
 
     match &civitai_resp {
         Ok(resp) if !resp.status().is_success() => {
@@ -7641,6 +8568,7 @@ pub async fn get_checkpoint_civitai_info(
             if let Ok(data) = resp.json::<Value>().await {
                 info.civitai_version_id = data.get("id").and_then(|v| v.as_u64());
                 info.civitai_model_id = data.get("modelId").and_then(|v| v.as_u64());
+                info.civitai_nsfw = Some(civitai_version_is_mature(&data));
 
                 // Prefer CivitAI base model over modelspec architecture
                 if let Some(bm) = data.get("baseModel").and_then(|v| v.as_str()) {
@@ -9844,10 +10772,14 @@ where
                 break 'retry;
             }
 
-            let mut req = state
-                .http_client
-                .get(&api_url)
-                .header("User-Agent", "MooshieUI/2.0");
+            let client = match state.civitai_http_client().await {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("civitai_bulk_scan: proxy error for {}: {}", filename, e);
+                    break 'retry;
+                }
+            };
+            let mut req = client.get(&api_url).header("User-Agent", "MooshieUI/2.0");
             if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
                 req = req.bearer_auth(key);
             }
@@ -9855,7 +10787,11 @@ where
             let resp = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    log::warn!("civitai_bulk_scan: request error for {}: {}", filename, e);
+                    log::warn!(
+                        "civitai_bulk_scan: request error for {}: {}",
+                        filename,
+                        e.without_url()
+                    );
                     break 'retry;
                 }
             };
@@ -10823,6 +11759,82 @@ first_stage_model.encoder.norm_out.weight
         }
     }
 
+    /// All-in-one Anima checkpoint as ComfyUI's checkpoint save writes it: the
+    /// DiT under `model.diffusion_model.`, the Qwen3-0.6B encoder under the
+    /// text-encoder prefix and the Qwen-Image VAE under `first_stage_model.`.
+    /// CivitAI fine-tunes such as ColdMilk Anima ship this way (issue 957).
+    fn anima_all_in_one_keys(text_encoder_prefix: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        for i in 0..8 {
+            names.push(format!(
+                "model.diffusion_model.blocks.{i}.mlp.layer1.weight"
+            ));
+            names.push(format!(
+                "model.diffusion_model.llm_adapter.blocks.{i}.cross_attn.k_proj.weight"
+            ));
+            names.push(format!(
+                "{text_encoder_prefix}qwen3_06b.transformer.model.layers.{i}.mlp.up_proj.weight"
+            ));
+            names.push(format!(
+                "first_stage_model.decoder.upsamples.{i}.residual.0.gamma"
+            ));
+        }
+        names.push(format!(
+            "{text_encoder_prefix}qwen3_06b.transformer.model.embed_tokens.weight"
+        ));
+        names
+    }
+
+    #[test]
+    fn anima_all_in_one_checkpoint_is_anima_and_a_full_checkpoint() {
+        for prefix in ["cond_stage_model.", "text_encoders."] {
+            let names = anima_all_in_one_keys(prefix);
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            assert_eq!(
+                infer_architecture_from_key_names(&refs).as_deref(),
+                Some("anima"),
+                "{prefix}"
+            );
+            assert_eq!(
+                infer_model_kind_from_key_names(&refs),
+                Some("checkpoint"),
+                "{prefix}"
+            );
+        }
+    }
+
+    /// Stability's own `sd3.5_large.safetensors`: the MMDiT under
+    /// `model.diffusion_model.` and the VAE under `first_stage_model.`, with no
+    /// text encoders. `CheckpointLoaderSimple` gives it a `None` CLIP.
+    #[test]
+    fn checkpoint_without_text_encoders_is_a_diffusion_model_with_baked_vae() {
+        let mut names = Vec::new();
+        for i in 0..8 {
+            names.push(format!(
+                "model.diffusion_model.joint_blocks.{i}.x_block.attn.qkv.weight"
+            ));
+            names.push(format!(
+                "first_stage_model.decoder.up.{i}.block.0.conv1.weight"
+            ));
+        }
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        assert!(has_vae_but_no_text_encoders(&refs));
+        assert_eq!(
+            infer_model_kind_from_key_names(&refs),
+            Some("diffusion_model")
+        );
+
+        // The same file with its encoders baked in stays a full checkpoint.
+        for i in 0..8 {
+            names.push(format!(
+                "text_encoders.clip_l.transformer.text_model.encoder.layers.{i}.mlp.fc1.weight"
+            ));
+        }
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        assert!(!has_vae_but_no_text_encoders(&refs));
+        assert_eq!(infer_model_kind_from_key_names(&refs), Some("checkpoint"));
+    }
+
     #[test]
     fn model_layers_alone_is_not_an_llm() {
         // Without the token-embedding table, `model.layers.` is too generic.
@@ -10850,5 +11862,220 @@ first_stage_model.encoder.norm_out.weight
             Some("some_future_dit"),
             &["blocks.0.weight"]
         ));
+    }
+}
+
+#[cfg(test)]
+mod h3_video_lora_tests {
+    use super::*;
+
+    /// Keys of an ai-toolkit MiniMax H3 LoRA (the 360 Orbit and Anti-Burn LoRAs
+    /// look like this), trimmed to a few blocks.
+    fn h3_lora_keys() -> Vec<String> {
+        let mut keys = Vec::new();
+        for block in [
+            "blocks.0",
+            "blocks.1",
+            "token_refiner.blocks.0",
+            "token_refiner.blocks.1",
+        ] {
+            for layer in ["attn.qkv_proj", "attn.out_proj", "mlp.fc1", "mlp.fc2"] {
+                for ab in ["lora_A", "lora_B"] {
+                    keys.push(format!("diffusion_model.{block}.{layer}.{ab}.weight"));
+                }
+            }
+        }
+        keys
+    }
+
+    fn write_safetensors(
+        name: &str,
+        keys: &[String],
+        metadata: &[(&str, &str)],
+    ) -> std::path::PathBuf {
+        let mut header = serde_json::Map::new();
+        for key in keys {
+            header.insert(
+                key.clone(),
+                serde_json::json!({"dtype": "BF16", "shape": [16, 16], "data_offsets": [0, 0]}),
+            );
+        }
+        if !metadata.is_empty() {
+            let meta: serde_json::Map<String, Value> = metadata
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+                .collect();
+            header.insert("__metadata__".into(), Value::Object(meta));
+        }
+        let json = serde_json::to_vec(&Value::Object(header)).unwrap();
+        let dir = std::env::temp_dir().join(format!("mooshie-h3-lora-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        let mut bytes = (json.len() as u64).to_le_bytes().to_vec();
+        bytes.extend(json);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn civitai_and_trainer_base_models_name_minimax_h3() {
+        assert_eq!(model_family_from_base_model("MiniMax H3"), "minimaxh3");
+        assert_eq!(
+            model_family_from_base_model("minimax_h3_ref2va"),
+            "minimaxh3"
+        );
+        assert_eq!(
+            model_family_from_base_model("minimax-h3-fl2va"),
+            "minimaxh3"
+        );
+        assert_ne!(
+            model_family_from_base_model("MiniMax H3 Image"),
+            "minimaxh3"
+        );
+        assert_eq!(model_family_from_base_model("SDXL 1.0"), "sdxl");
+    }
+
+    #[test]
+    fn h3_filenames_resolve_to_minimax_h3() {
+        for name in [
+            "minimax_h3_flf2v_lora_v1.safetensors",
+            "camera_motion_h3_lora_v1_3000_pruned.safetensors",
+            "H3_StereoDepth_FL2VA.safetensors",
+            "h3-realism-people-t2v-i2v-r2v.safetensors",
+            "h3_character_swap_v1.5.safetensors",
+            "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        ] {
+            assert_eq!(
+                model_family_from_filename(name),
+                Some("minimaxh3"),
+                "{name}"
+            );
+        }
+        for name in [
+            "minimax_h3_image_pruned_bf16.safetensors",
+            "h3image_style.safetensors",
+            "flux3_klein_h300.safetensors",
+            "pony_style_v3.safetensors",
+        ] {
+            assert_ne!(
+                model_family_from_filename(name),
+                Some("minimaxh3"),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn h3_lora_keys_are_not_read_as_sd15() {
+        let keys = h3_lora_keys();
+        let names: Vec<&str> = keys.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("minimax_h3")
+        );
+        assert_eq!(family_from_architecture("minimax_h3"), Some("minimaxh3"));
+        assert_eq!(architecture_class("minimaxh3"), Some("minimax_h3"));
+    }
+
+    #[test]
+    fn h3_dit_keys_tell_video_from_image() {
+        let video = [
+            "video_patch_proj.weight",
+            "audio_patch_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&video).as_deref(),
+            Some("minimax_h3")
+        );
+        let image = ["video_patch_proj.weight", "blocks.0.attn.qkv_proj.weight"];
+        assert_eq!(
+            infer_architecture_from_key_names(&image).as_deref(),
+            Some("minimax_h3_image")
+        );
+    }
+
+    #[test]
+    fn lora_headers_decide_over_names() {
+        let h3 = write_safetensors("plain_name.safetensors", &h3_lora_keys(), &[]);
+        assert_eq!(safetensors_lora_is_h3_video(&h3), Some(true));
+
+        let image = write_safetensors(
+            "h3_named_image_lora.safetensors",
+            &h3_lora_keys(),
+            &[("ss_base_model_version", "minimax_h3_image")],
+        );
+        assert_eq!(safetensors_lora_is_h3_video(&image), Some(false));
+
+        // A kohya SDXL LoRA carries no H3 keys: not H3, even with "h3" in its name.
+        let sdxl_keys: Vec<String> = [
+            "lora_unet_input_blocks_4_1_proj_in.lora_down.weight",
+            "lora_unet_input_blocks_4_1_proj_in.lora_up.weight",
+        ]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+        let sdxl = write_safetensors("style_h3.safetensors", &sdxl_keys, &[]);
+        assert_ne!(safetensors_lora_is_h3_video(&sdxl), Some(true));
+
+        // Unrecognised keys fall back to the trainer's base-model tag.
+        let tagged = write_safetensors(
+            "tagged.safetensors",
+            &["some.custom.layer.lora_A.weight".to_string()],
+            &[("base_model", "minimax-h3-fl2va")],
+        );
+        assert_eq!(safetensors_lora_is_h3_video(&tagged), Some(true));
+    }
+
+    #[test]
+    fn lora_classification_uses_the_loras_folder() {
+        let dir = std::env::temp_dir().join(format!("mooshie-h3-classify-{}", std::process::id()));
+        let loras = dir.join("models").join("loras");
+        std::fs::create_dir_all(loras.join("video")).unwrap();
+        let src = write_safetensors("orbit_src.safetensors", &h3_lora_keys(), &[]);
+        std::fs::copy(&src, loras.join("video").join("orbit.safetensors")).unwrap();
+        std::fs::write(loras.join("anime.safetensors"), b"not a safetensors file").unwrap();
+        let root = dir.to_string_lossy().to_string();
+
+        assert!(lora_is_h3_video(&root, None, "video/orbit.safetensors"));
+        assert!(!lora_is_h3_video(&root, None, "anime.safetensors"));
+        // Not on disk (a remote server's LoRA): the name decides.
+        assert!(lora_is_h3_video(
+            &root,
+            None,
+            "camera_motion_h3_lora.safetensors"
+        ));
+        assert!(!lora_is_h3_video(&root, None, "detail_tweaker.safetensors"));
+        assert!(!lora_is_h3_video(&root, None, "../escape_h3.safetensors"));
+        // A remote ComfyUI: no local path at all.
+        assert!(lora_is_h3_video(
+            "",
+            None,
+            "minimax_h3_flf2v_lora_v1.safetensors"
+        ));
+    }
+
+    #[test]
+    fn filename_illustrious_detection_avoids_false_positives() {
+        assert_eq!(
+            model_family_from_filename("redLilyIllu_v10.safetensors"),
+            Some("illustrious")
+        );
+        assert_eq!(
+            model_family_from_filename("wai_ilxl_v14.safetensors"),
+            Some("illustrious")
+        );
+        assert_eq!(
+            model_family_from_filename("noob_vpred.safetensors"),
+            Some("illustrious")
+        );
+        assert_ne!(
+            model_family_from_filename("illusion_xl.safetensors"),
+            Some("illustrious")
+        );
+        assert_ne!(
+            model_family_from_filename("illustration_mix.safetensors"),
+            Some("illustrious")
+        );
     }
 }

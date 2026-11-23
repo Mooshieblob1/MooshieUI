@@ -103,11 +103,17 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     if out.use_split_model {
         out.diffusion_model = Some(out.checkpoint.clone());
         out.clip_model = nai.local_clip_model.clone();
-        out.clip_type = nai.local_clip_type.clone();
+        // A registered family's loader type is the family's, so a type saved
+        // before it was registered (Flux.1 used "chroma") cannot go stale.
+        out.clip_type = crate::architectures::text_encoder(&out.model_architecture)
+            .map(|encoder| encoder.clip_type.to_string())
+            .or_else(|| nai.local_clip_type.clone());
+        out.architecture_files = nai.local_architecture_files.clone();
     } else {
         out.diffusion_model = None;
         out.clip_model = None;
         out.clip_type = None;
+        out.architecture_files.clear();
     }
     out.vae = nai.local_vae.clone().filter(|v| !v.trim().is_empty());
     // Misplaced file: a split-file model sitting in checkpoints/, or a full
@@ -168,10 +174,15 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     out.positive_segments = Vec::new();
     out.negative_segments = Vec::new();
 
-    // Optional overrides. The NovelAI syntax rewrite happens while the request
-    // body is built and never touches `params`, so the top-level prompt is
-    // already the ComfyUI-syntax one this pass wants. These exist only for a
-    // caller that wants the local pass to run on different text.
+    // A NovelAI request carries its prompt as the user wrote it, NovelAI weight
+    // syntax included, and `CLIPTextEncode` would take `1.2::tag::` and `{tag}`
+    // literally. Translated here, for this pass only, into the ComfyUI syntax
+    // a local generation would have been sent with.
+    out.positive_prompt = crate::novelai::prompt_syntax::from_novelai(&out.positive_prompt);
+    out.negative_prompt = crate::novelai::prompt_syntax::from_novelai(&out.negative_prompt);
+
+    // Optional overrides, already in ComfyUI syntax, for a caller that wants
+    // the local pass to run on different text.
     if let Some(pos) = nai.local_positive_prompt.clone() {
         out.positive_prompt = pos;
     }
@@ -447,6 +458,42 @@ mod tests {
         assert!(out.model_source_category.is_none());
     }
 
+    /// Flux.1 needs CLIP-L beside T5: the local pass carries the slot files
+    /// over, fixes a stale saved loader type and loads both encoders.
+    #[test]
+    fn a_split_flux_local_pass_loads_both_encoders() {
+        let mut nai = split_nai_flux();
+        nai.local_clip_type = Some("chroma".into());
+        let out = build_params(&with_nai(nai.clone()), "nai-abc.png").expect("derived");
+        assert_eq!(out.clip_type.as_deref(), Some("flux"));
+        assert_eq!(
+            out.architecture_files.get("clip_l").map(String::as_str),
+            Some("clip_l.safetensors")
+        );
+        let wf = build(&with_nai(nai), "nai-abc.png", 1).expect("workflow");
+        let dual: Vec<_> = wf
+            .as_object()
+            .expect("object")
+            .values()
+            .filter(|n| n["class_type"] == "DualCLIPLoader")
+            .collect();
+        assert_eq!(dual.len(), 1);
+        assert_eq!(dual[0]["inputs"]["type"], "flux");
+    }
+
+    fn split_nai_flux() -> NovelAiParams {
+        NovelAiParams {
+            local_checkpoint: Some("flux1-dev-fp8.safetensors".into()),
+            local_architecture: Some("flux1d".into()),
+            local_clip_model: Some("t5xxl_fp16.safetensors".into()),
+            local_clip_type: Some("flux".into()),
+            local_vae: Some("ae.safetensors".into()),
+            local_architecture_files: [("clip_l".to_string(), "clip_l.safetensors".to_string())]
+                .into(),
+            ..split_nai()
+        }
+    }
+
     #[test]
     fn the_split_graph_loads_the_unet_and_the_text_encoder() {
         let wf = build(&with_nai(split_nai()), "nai-abc.png", 12345).expect("workflow");
@@ -522,7 +569,9 @@ mod tests {
         };
         let p = with_nai(nai);
         let out = build_params(&p, "nai-abc.png").expect("derived");
-        assert_eq!(out.positive_prompt, p.positive_prompt);
+        // Translated out of the NovelAI syntax the request carries it in.
+        assert_eq!(out.positive_prompt, "(masterpiece:1.30), girl");
+        assert_eq!(out.negative_prompt, "(bad:1.10)");
     }
 
     #[test]
@@ -785,6 +834,25 @@ mod tests {
         // The override exists precisely to bypass the extraction path and its
         // fall back to the full positive conditioning.
         assert!(!out.facefix_auto_prompt);
+    }
+
+    #[test]
+    fn novelai_weight_syntax_is_translated_for_the_local_pass() {
+        // The frontend sends a NovelAI prompt as typed. ComfyUI cannot read
+        // that syntax, so the pass that hands it to ComfyUI converts it.
+        let mut nai = local_nai();
+        nai.local_positive_prompt = None;
+        nai.local_negative_prompt = None;
+        let mut p = with_nai(nai);
+        p.positive_prompt = "1girl, 1.2::rain, night::, {smile}, -1::hat::".into();
+        p.negative_prompt = "[blurry], (lowres:1.3)".into();
+
+        let out = build_params(&p, "nai.png").expect("derived");
+        assert_eq!(
+            out.positive_prompt,
+            "1girl, (rain, night:1.20), (smile:1.05), (hat:-1.00)"
+        );
+        assert_eq!(out.negative_prompt, "(blurry:0.95), (lowres:1.3)");
     }
 
     #[test]

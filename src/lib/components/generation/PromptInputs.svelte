@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stripPromptComments } from "../../utils/promptComments.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -21,7 +22,7 @@
   import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
   import H3PromptGuide from "../video/H3PromptGuide.svelte";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
-  import { naiEnhance } from "../../stores/naiEnhance.svelte.js";
+  import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
 
   interface Props {
     showHistory?: boolean;
@@ -69,10 +70,9 @@
   const combinedPositiveTokens = $derived(
     generation.extraPositiveBoxes.length > 0
       ? estimatePromptTokens(
-          joinPromptBoxes([
-            generation.positivePrompt,
-            ...generation.extraPositiveBoxes.map((b) => b.content),
-          ]),
+          joinPromptBoxes(
+            [generation.positivePrompt, ...generation.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments),
+          ),
         )
       : 0,
   );
@@ -117,50 +117,30 @@
 
   let _pendingAction = $state<"enhance" | "enhance_h3" | "enhance_nai" | null>(null);
 
-  // Every Enhance opens the same modal; the flow picks the rewrite. The general
-  // one also covers what Compose did: with "Edit current prompt" off, the box
-  // is a description to write from.
-  function onEnhanceClick() {
-    if (!promptAssistant.isAvailable) {
-      _pendingAction = "enhance";
-      promptAssistant.setupModalOpen = true;
-      return;
-    }
-    naiEnhance.openInput("general");
-  }
-
-  function onEnhanceH3Click() {
-    if (!promptAssistant.isAvailable) {
-      _pendingAction = "enhance_h3";
-      promptAssistant.setupModalOpen = true;
-      return;
-    }
-    naiEnhance.openInput("h3");
-  }
-
   // V5 wants a natural language scene body and structured character boxes, which
   // is the opposite of what the danbooru enhance produces. V4.5 and V4 keep the
   // existing path, so this is a variant check and not an isNovelAi check.
   const naiVariant = $derived(naiV5Variant(generation.checkpoint));
   const isNaiV5 = $derived(!isVideoMode && generation.isNovelAi && naiVariant !== null);
 
-  // The V5 rewrite takes its own instructions rather than the prompt box, so the
-  // button only opens the modal; the modal owns the call and the review.
-  function onEnhanceNaiClick() {
+  /**
+   * Every Enhance opens the same chat window, on the conversation for the
+   * current model (V5, video, or every other image model).
+   */
+  function onEnhanceClick() {
+    const action = isVideoMode ? "enhance_h3" : isNaiV5 ? "enhance_nai" : "enhance";
     if (!promptAssistant.isAvailable) {
-      _pendingAction = "enhance_nai";
+      _pendingAction = action;
       promptAssistant.setupModalOpen = true;
       return;
     }
-    naiEnhance.openInput();
+    enhanceChat.openChat();
   }
 
   function onSetupInstalled() {
     const action = _pendingAction;
     _pendingAction = null;
-    if (action === "enhance") naiEnhance.openInput("general");
-    else if (action === "enhance_h3") naiEnhance.openInput("h3");
-    else if (action === "enhance_nai") naiEnhance.openInput();
+    if (action) enhanceChat.openChat();
   }
 
 </script>
@@ -249,6 +229,9 @@
           <span class="leading-none">✦</span>
           <span class="max-w-28 truncate">{activeStyle.name}</span>
           <span class="font-mono text-[9px] text-indigo-300/80">×{locale.formatDecimal(activeStyle.overallWeight, 2)}</span>
+          {#if activeStyle.negative.trim()}
+            <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: activeStyle.negative.trim() })}>{locale.t("prompt_uc.label")}</span>
+          {/if}
         </button>
       {/each}
       {#each promptPresets.activeEntries as entry (entry.preset.id)}
@@ -264,6 +247,9 @@
           <span class="leading-none">⚡</span>
           <span class="max-w-28 truncate">{entry.preset.name}</span>
           <span class="font-mono text-[9px] text-indigo-300/80">{icon}</span>
+          {#if entry.preset.negative.trim()}
+            <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: entry.preset.negative.trim() })}>{locale.t("prompt_uc.label")}</span>
+          {/if}
         </button>
       {/each}
       {#each detectedArtists as hit (hit.slug)}
@@ -294,24 +280,19 @@
     {:else}
     <div class="mb-1 flex items-center justify-between">
       <div class="flex items-center gap-1.5">
-        <!-- One enhance button, three rewrites, all through the Enhance modal.
+        <!-- One Enhance button, three conversations, all in the Enhance chat.
              The image one grounds on danbooru tags, which is exactly wrong for
              H3 prose, so video mode swaps it out rather than offering both. -->
         <button
           class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-          disabled={promptAssistant.isGenerating}
           title={isVideoMode
             ? locale.t("prompt_assistant.enhance_h3_tooltip")
             : isNaiV5
               ? locale.t("prompt_assistant.enhance_nai_tooltip")
               : locale.t("prompt_assistant.enhance_tooltip")}
-          onclick={isVideoMode
-            ? onEnhanceH3Click
-            : isNaiV5
-              ? onEnhanceNaiClick
-              : onEnhanceClick}
+          onclick={onEnhanceClick}
         >
-          {#if promptAssistant.isGenerating}
+          {#if enhanceChat.busy}
             <span class="inline-block animate-spin">⟳</span>
           {:else}
             ✨
@@ -322,14 +303,14 @@
               ? locale.t("prompt_assistant.enhance_nai")
               : locale.t("prompt_assistant.enhance")}
         </button>
-        {#if naiEnhance.showUndo}
+        {#if enhanceChat.showUndo}
           <!-- One pill for every Enhance flow: the V5 undo restores the
                character boxes too, so its label says so. -->
           <button
             class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-indigo-400 hover:bg-neutral-800"
-            onclick={() => naiEnhance.undo()}
+            onclick={() => enhanceChat.undo()}
           >
-            ↩ {naiEnhance.undoFlow === "nai"
+            ↩ {enhanceChat.undoFlow === "nai"
               ? locale.t("prompt_assistant.nai_undo")
               : locale.t("prompt_assistant.undo")}
           </button>
@@ -450,6 +431,7 @@
       minHeight="min-h-18"
       storageKey="mooshieui.promptHeight.negative"
       tagAssist={!isVideoMode}
+      suggestLoraKeywords={false}
     />
     {#if generation.isNovelAi}
       <NovelAiTokenBar side="negative" />

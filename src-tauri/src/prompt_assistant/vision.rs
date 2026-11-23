@@ -5,10 +5,198 @@
 //! working out which models can read one at all.
 
 use base64::Engine;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::error::AppError;
 use crate::state::AppState;
+
+/// Whether an external provider/model is known to accept image inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisionSupport {
+    Supported,
+    Unsupported,
+    Unknown,
+}
+
+const VISION_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+const VISION_CACHE_MAX: usize = 256;
+
+type VisionCache = HashMap<(String, String), (Instant, VisionSupport)>;
+
+static VISION_CACHE: Mutex<Option<VisionCache>> = Mutex::new(None);
+
+fn cache_key(base_url: &str, model: &str) -> (String, String) {
+    (
+        ollama_root(base_url).to_ascii_lowercase(),
+        model.trim().to_ascii_lowercase(),
+    )
+}
+
+/// Record the observed vision capability of an external `(base_url, model)`.
+pub fn record_external_vision(base_url: &str, model: &str, support: VisionSupport) {
+    if support == VisionSupport::Unknown || model.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut guard) = VISION_CACHE.lock() {
+        let map = guard.get_or_insert_with(HashMap::new);
+        if map.len() >= VISION_CACHE_MAX {
+            map.clear();
+        }
+        map.insert(cache_key(base_url, model), (Instant::now(), support));
+    }
+}
+
+fn cached_probe(base_url: &str, model: &str) -> Option<VisionSupport> {
+    let guard = VISION_CACHE.lock().ok()?;
+    let map = guard.as_ref()?;
+    let (at, support) = map.get(&cache_key(base_url, model))?;
+    if at.elapsed() < VISION_CACHE_TTL {
+        Some(*support)
+    } else {
+        None
+    }
+}
+
+fn openai_vision_support(model: &str) -> Option<bool> {
+    let m = model.trim().to_ascii_lowercase();
+    if m.is_empty() {
+        return None;
+    }
+    if m.starts_with("gpt-3.5")
+        || m.starts_with("o1-mini")
+        || m.starts_with("o1-preview")
+        || m.starts_with("o3-mini")
+    {
+        return Some(false);
+    }
+    if m.starts_with("gpt-4o")
+        || m.starts_with("chatgpt-4o")
+        || m.starts_with("gpt-4.1")
+        || m.starts_with("gpt-4.5")
+        || m.starts_with("gpt-5")
+        || m.starts_with("gpt-4-turbo")
+        || m.starts_with("gpt-4-vision")
+        || m == "o1"
+        || m.starts_with("o1-")
+        || m == "o3"
+        || m.starts_with("o3-")
+        || m.starts_with("o4")
+    {
+        return Some(true);
+    }
+    None
+}
+
+fn xai_vision_support(model: &str) -> Option<bool> {
+    let m = model.trim().to_ascii_lowercase();
+    if m.is_empty() {
+        return None;
+    }
+    if m.contains("vision") || m.starts_with("grok-4") || m.starts_with("grok-5") {
+        return Some(true);
+    }
+    if m.starts_with("grok-3") {
+        return Some(false);
+    }
+    None
+}
+
+/// Non-blocking check of whether the configured external `(provider_id, base_url, model)`
+/// supports image inputs: `Some(true)` = yes, `Some(false)` = text-only, `None` = unknown.
+pub fn cached_external_vision_support(
+    provider_id: &str,
+    base_url: &str,
+    model: &str,
+) -> Option<bool> {
+    let base = super::providers::effective_base_url(provider_id, base_url);
+    match provider_id {
+        "anthropic" | "chatgpt" | "gemini-cli" => Some(true),
+        "openai" => openai_vision_support(model),
+        "xai" | "xai-oauth" => xai_vision_support(model),
+        "openrouter" => super::reasoning::cached_openrouter_vision(model),
+        _ => match cached_probe(&base, model) {
+            Some(VisionSupport::Supported) => Some(true),
+            Some(VisionSupport::Unsupported) => Some(false),
+            _ => None,
+        },
+    }
+}
+
+/// Determine whether the active external `(provider_id, base_url, model)` accepts
+/// image inputs, probing Ollama / LM Studio / OpenRouter metadata when unknown.
+pub async fn probe_external_vision_support(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base_url: &str,
+    model: &str,
+) -> VisionSupport {
+    match cached_external_vision_support(provider_id, base_url, model) {
+        Some(true) => return VisionSupport::Supported,
+        Some(false) => return VisionSupport::Unsupported,
+        None => {}
+    }
+    let base = super::providers::effective_base_url(provider_id, base_url);
+    if provider_id == "openrouter" {
+        return match super::reasoning::openrouter_vision(client, &base, model).await {
+            Some(true) => VisionSupport::Supported,
+            Some(false) => VisionSupport::Unsupported,
+            None => VisionSupport::Unknown,
+        };
+    }
+    if !super::providers::is_custom_endpoint(provider_id)
+        || base.is_empty()
+        || model.trim().is_empty()
+    {
+        return VisionSupport::Unknown;
+    }
+    let root = ollama_root(&base);
+    if root.is_empty() {
+        return VisionSupport::Unknown;
+    }
+    let ollama = probe_ollama_model_vision(client, &root, model).await;
+    if ollama != VisionSupport::Unknown {
+        record_external_vision(&base, model, ollama);
+        return ollama;
+    }
+    let lms = probe_lmstudio_model_vision(client, &root, model).await;
+    if lms != VisionSupport::Unknown {
+        record_external_vision(&base, model, lms);
+        return lms;
+    }
+    VisionSupport::Unknown
+}
+
+/// Whether an error returned by an external provider means the model or
+/// endpoint rejected image inputs (text-only model).
+pub fn is_vision_rejection(err: &AppError) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    if msg.contains("provider_no_vision") || msg.contains("no_image") {
+        return true;
+    }
+    let is_4xx_body = msg.contains("400") || msg.contains("422") || msg.contains("415");
+    if !is_4xx_body {
+        return false;
+    }
+    [
+        "vision",
+        "image_url",
+        "input_image",
+        "multimodal",
+        "mmproj",
+        "does not support image",
+        "not support image",
+        "images are not supported",
+        "cannot process image",
+        "cannot read image",
+        "expected a string",
+        "invalid type: sequence",
+        "not a vlm",
+    ]
+    .iter()
+    .any(|needle| msg.contains(needle))
+}
 
 /// Fetch an image already uploaded to ComfyUI's input folder and encode it for a
 /// vision request, or `None` with a log line if any step fails.
@@ -79,6 +267,14 @@ const JPEG_QUALITY: u8 = 85;
 pub fn encode_downscaled(bytes: &[u8], max_pixels: u32) -> Result<VisionImage, AppError> {
     let img = image::load_from_memory(bytes)
         .map_err(|e| AppError::LlmError(format!("Could not read the frame image: {e}")))?;
+    encode_image_downscaled(img, max_pixels)
+}
+
+/// [`encode_downscaled`] for an image that is already decoded.
+pub fn encode_image_downscaled(
+    img: image::DynamicImage,
+    max_pixels: u32,
+) -> Result<VisionImage, AppError> {
     let (w, h) = (img.width().max(1), img.height().max(1));
     let pixels = u64::from(w) * u64::from(h);
     let img = if pixels > u64::from(max_pixels) {
@@ -105,6 +301,64 @@ pub fn encode_downscaled(bytes: &[u8], max_pixels: u32) -> Result<VisionImage, A
         media_type: "image/jpeg".to_string(),
         base64: base64::engine::general_purpose::STANDARD.encode(&buf),
     })
+}
+
+/// An interrogated image, kept as it arrived so describing it later costs
+/// nothing unless someone asks.
+#[derive(Clone)]
+pub enum Frame {
+    /// Encoded file bytes (PNG, JPEG, JPEG XL, ...).
+    Bytes(std::sync::Arc<Vec<u8>>),
+    /// Pixels with no file behind them (the clipboard).
+    Image(std::sync::Arc<image::DynamicImage>),
+}
+
+impl Frame {
+    /// Downscale and encode for a vision request, off the async runtime.
+    pub async fn encode(self) -> Result<VisionImage, AppError> {
+        tokio::task::spawn_blocking(move || match self {
+            Frame::Bytes(bytes) => encode_downscaled(&bytes, VISION_MAX_PIXELS),
+            Frame::Image(img) => encode_image_downscaled((*img).clone(), VISION_MAX_PIXELS),
+        })
+        .await
+        .map_err(|e| AppError::LlmError(format!("image encode task failed: {e}")))?
+    }
+}
+
+/// How many interrogated images stay describable. Interrogate shows one
+/// result at a time; a few spare cover a second window or a quick re-run.
+const FRAME_CACHE_SLOTS: usize = 4;
+
+/// The last few interrogated images, each behind a random token that the
+/// interrogation result carries back to the client.
+///
+/// The token is the only way to reach an image, so in browser mode, where
+/// every user shares this cache, one user cannot describe another's picture
+/// without having been handed its token.
+#[derive(Default)]
+pub struct FrameCache {
+    slots: std::sync::Mutex<std::collections::VecDeque<(String, Frame)>>,
+}
+
+impl FrameCache {
+    /// Keep `frame` and return the token that reaches it, evicting the oldest.
+    pub fn insert(&self, frame: Frame) -> String {
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        if slots.len() >= FRAME_CACHE_SLOTS {
+            slots.pop_front();
+        }
+        slots.push_back((token.clone(), frame));
+        token
+    }
+
+    pub fn get(&self, token: &str) -> Option<Frame> {
+        let slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        slots
+            .iter()
+            .find(|(t, _)| t == token)
+            .map(|(_, f)| f.clone())
+    }
 }
 
 /// Ollama's native API root, derived from whatever OpenAI-compatible base URL
@@ -161,33 +415,106 @@ pub async fn ollama_vision_models(client: &reqwest::Client, base_url: &str) -> O
 
     let mut vision = Vec::new();
     for name in names {
-        if model_has_vision(client, &root, &name).await {
+        let support =
+            probe_ollama_model_vision_with_timeout(client, &root, &name, Duration::from_secs(15))
+                .await;
+        record_external_vision(base_url, &name, support);
+        if let Some(stem) = name.strip_suffix(":latest") {
+            record_external_vision(base_url, stem, support);
+        }
+        if support == VisionSupport::Supported {
             vision.push(name);
         }
     }
     Some(vision)
 }
 
+/// Probe Ollama `/api/show` with a short timeout for `Describe image` routing.
+async fn probe_ollama_model_vision(
+    client: &reqwest::Client,
+    root: &str,
+    name: &str,
+) -> VisionSupport {
+    probe_ollama_model_vision_with_timeout(client, root, name, Duration::from_secs(3)).await
+}
+
 /// Whether `/api/show` reports the `vision` capability for one model.
-async fn model_has_vision(client: &reqwest::Client, root: &str, name: &str) -> bool {
+async fn probe_ollama_model_vision_with_timeout(
+    client: &reqwest::Client,
+    root: &str,
+    name: &str,
+    timeout: Duration,
+) -> VisionSupport {
     let resp = client
         .post(format!("{root}/api/show"))
         .json(&serde_json::json!({ "model": name }))
-        .timeout(Duration::from_secs(15))
+        .timeout(timeout)
         .send()
         .await;
-    let Ok(resp) = resp else { return false };
+    let Ok(resp) = resp else {
+        return VisionSupport::Unknown;
+    };
     if !resp.status().is_success() {
-        return false;
+        return VisionSupport::Unknown;
     }
     let Ok(v) =
         super::server::bounded_json(resp, super::server::RESPONSE_LIMIT, "Ollama model info").await
     else {
-        return false;
+        return VisionSupport::Unknown;
     };
-    v["capabilities"]
-        .as_array()
-        .is_some_and(|caps| caps.iter().any(|c| c.as_str() == Some("vision")))
+    if let Some(caps) = v["capabilities"].as_array() {
+        return if caps.iter().any(|c| c.as_str() == Some("vision")) {
+            VisionSupport::Supported
+        } else {
+            VisionSupport::Unsupported
+        };
+    }
+    if v["projector_info"].is_object() {
+        return VisionSupport::Supported;
+    }
+    VisionSupport::Unknown
+}
+
+/// Probe LM Studio `/api/v0/models` to tell `"vlm"` apart from `"llm"`.
+async fn probe_lmstudio_model_vision(
+    client: &reqwest::Client,
+    root: &str,
+    name: &str,
+) -> VisionSupport {
+    let Ok(resp) = client
+        .get(format!("{root}/api/v0/models"))
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+    else {
+        return VisionSupport::Unknown;
+    };
+    if !resp.status().is_success() {
+        return VisionSupport::Unknown;
+    }
+    let Ok(v) =
+        super::server::bounded_json(resp, super::server::RESPONSE_LIMIT, "LM Studio model list")
+            .await
+    else {
+        return VisionSupport::Unknown;
+    };
+    let Some(list) = v["data"].as_array() else {
+        return VisionSupport::Unknown;
+    };
+    for entry in list {
+        let Some(id) = entry["id"].as_str() else {
+            continue;
+        };
+        if id != name && !model_id_matches(id, name) {
+            continue;
+        }
+        return match entry["type"].as_str() {
+            Some("vlm") => VisionSupport::Supported,
+            Some("llm") | Some("embeddings") => VisionSupport::Unsupported,
+            _ => VisionSupport::Unknown,
+        };
+    }
+    VisionSupport::Unknown
 }
 
 /// Whether `id` from an OpenAI-compatible `/models` list names the same model
@@ -390,8 +717,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_frame_cache_keeps_the_newest_few_behind_tokens() {
+        let cache = FrameCache::default();
+        let first = cache.insert(Frame::Bytes(std::sync::Arc::new(png_bytes(8, 8))));
+        assert!(cache.get(&first).is_some());
+        assert!(cache.get("not-a-token").is_none());
+        let later: Vec<String> = (0..FRAME_CACHE_SLOTS)
+            .map(|_| cache.insert(Frame::Bytes(std::sync::Arc::new(png_bytes(8, 8)))))
+            .collect();
+        assert!(cache.get(&first).is_none(), "the oldest is evicted");
+        assert!(later.iter().all(|t| cache.get(t).is_some()));
+        let img = cache.get(&later[0]).unwrap().encode().await.unwrap();
+        assert_eq!(img.media_type, "image/jpeg");
+    }
+
+    #[tokio::test]
     async fn empty_input_makes_no_images() {
         assert!(load_inline_images(Vec::new()).await.is_empty());
         assert!(load_inline_images(vec![String::new()]).await.is_empty());
+    }
+
+    #[test]
+    fn static_provider_vision_support_handles_known_models() {
+        assert_eq!(
+            cached_external_vision_support("anthropic", "", "claude-sonnet-5"),
+            Some(true)
+        );
+        assert_eq!(
+            cached_external_vision_support("chatgpt", "", ""),
+            Some(true)
+        );
+        assert_eq!(
+            cached_external_vision_support("openai", "", "gpt-4o-mini"),
+            Some(true)
+        );
+        assert_eq!(
+            cached_external_vision_support("openai", "", "o1-mini"),
+            Some(false)
+        );
+        assert_eq!(
+            cached_external_vision_support("xai", "", "grok-4.7"),
+            Some(true)
+        );
+        assert_eq!(
+            cached_external_vision_support("xai", "", "grok-3"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn detects_vision_rejection_errors_without_catching_auth_or_rate_limits() {
+        assert!(is_vision_rejection(&AppError::LlmError(
+            "External LLM returned 400 Bad Request: model does not support images".into()
+        )));
+        assert!(is_vision_rejection(&AppError::LlmError(
+            "External LLM returned 422 Unprocessable Entity: image_url is not supported".into()
+        )));
+        assert!(!is_vision_rejection(&AppError::LlmError(
+            "External LLM returned 401 Unauthorized: invalid key".into()
+        )));
+        assert!(!is_vision_rejection(&AppError::LlmUnavailable(
+            "External LLM returned 429 Too Many Requests: slow down".into()
+        )));
+    }
+
+    #[tokio::test]
+    async fn probes_ollama_and_lmstudio_for_vision_capability() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new()
+            .route(
+                "/api/show",
+                axum::routing::post(
+                    |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                        let model = body["model"].as_str().unwrap_or("");
+                        match model {
+                            "qwen3:8b" => axum::Json(serde_json::json!({
+                                "capabilities": ["completion"]
+                            }))
+                            .into_response(),
+                            "qwen3-vl:8b" => axum::Json(serde_json::json!({
+                                "capabilities": ["completion", "vision"]
+                            }))
+                            .into_response(),
+                            _ => axum::http::StatusCode::NOT_FOUND.into_response(),
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v0/models",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({
+                        "data": [
+                            { "id": "llama-3-8b", "type": "llm" },
+                            { "id": "qwen2.5-vl-7b", "type": "vlm" }
+                        ]
+                    }))
+                }),
+            );
+        use axum::response::IntoResponse;
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}/v1");
+        assert_eq!(
+            probe_external_vision_support(&client, "custom", &base, "qwen3:8b").await,
+            VisionSupport::Unsupported
+        );
+        assert_eq!(
+            probe_external_vision_support(&client, "custom", &base, "qwen3-vl:8b").await,
+            VisionSupport::Supported
+        );
+        assert_eq!(
+            probe_external_vision_support(&client, "custom", &base, "llama-3-8b").await,
+            VisionSupport::Unsupported
+        );
+        assert_eq!(
+            probe_external_vision_support(&client, "custom", &base, "qwen2.5-vl-7b").await,
+            VisionSupport::Supported
+        );
     }
 }

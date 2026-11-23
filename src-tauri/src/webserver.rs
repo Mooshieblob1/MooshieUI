@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{future::Future, pin::Pin};
 
-use axum::extract::{ConnectInfo, Path, State as AxumState};
+use axum::body::Bytes;
+use axum::extract::{ConnectInfo, Path, Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -40,6 +41,10 @@ pub struct WebState {
     pub app: Arc<AppState>,
     pub auth: Arc<AuthState>,
     pub lan_enabled: bool,
+    /// Set only for requests the desktop window makes in-process (see
+    /// [`desktop_lan_admin`]). The window is the machine owner, so it gets the
+    /// admin rights a trusted localhost browser has, without HTTP headers.
+    pub desktop_owner: bool,
 }
 
 pub type SharedState = Arc<WebState>;
@@ -111,7 +116,7 @@ fn host_without_port(host: &str) -> &str {
 /// point at it: `localhost`, a `*.localhost` name, or an IP literal. DNS
 /// rebinding needs an attacker-controlled domain name, so it never passes.
 /// A missing header (non-browser clients) is accepted.
-fn host_header_is_local(headers: &HeaderMap) -> bool {
+pub(crate) fn host_header_is_local(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(axum::http::header::HOST) else {
         return true;
     };
@@ -197,6 +202,9 @@ fn local_trust_active(enabled: bool, has_admin_account: impl FnOnce() -> bool) -
 /// indistinguishable from a local client, which is what the `trust_localhost`
 /// setting is for.
 fn is_trusted_local_request(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> bool {
+    if state.desktop_owner {
+        return true;
+    }
     local_request_is_trusted(is_localhost(remote) || !state.lan_enabled, headers)
         && local_trust_active(
             state
@@ -586,6 +594,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_provider",
     "set_llm_api_key",
     "set_llm_model",
+    "set_llm_fallback_models",
     "set_llm_base_url",
     "set_llm_xai_client",
     "connect_llm_oauth",
@@ -620,6 +629,8 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "unload_llm",
     // writes `{stem}.png` next to a shared model file, which every account sees
     "save_model_sidecar_thumbnail",
+    // downloads the shared watermark models (about 65 MB) onto the host
+    "prepare_watermark",
 ];
 
 /// Commands only an admin may run. Each one reads or writes an arbitrary host
@@ -627,6 +638,9 @@ const MODERATOR_COMMANDS: &[&str] = &[
 /// so granting it to a moderator would hand them the host account.
 const ADMIN_COMMANDS: &[&str] = &[
     "switch_to_app_mode",
+    // one shared folder on the host; other accounts can read it, not change it
+    "save_wildcard",
+    "delete_wildcard",
     "set_gallery_path",
     "import_image_directory",
     "open_directory",
@@ -635,6 +649,18 @@ const ADMIN_COMMANDS: &[&str] = &[
     "save_image_file",
     "save_text_file",
     "upload_image",
+    // the MCP token is a key to the owner's queue and gallery
+    "get_mcp_status",
+    "set_mcp_settings",
+    "regenerate_mcp_token",
+    // the owner's saved NovelAI keys (named accounts are refused in the arm too)
+    "list_novelai_keys",
+    "save_novelai_key",
+    "delete_novelai_key",
+    "use_novelai_key",
+    // Eagle runs on the host: only the owner's library, only the owner's gallery
+    "eagle_status",
+    "send_to_eagle",
 ];
 
 /// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
@@ -1044,8 +1070,9 @@ pub async fn start_server(
 
     let web_state = Arc::new(WebState {
         app: state.clone(),
-        auth: Arc::new(AuthState::new()),
+        auth: state.web_auth(),
         lan_enabled,
+        desktop_owner: false,
     });
     web_state
         .auth
@@ -1091,6 +1118,16 @@ pub async fn start_server(
         .route(
             "/internal-api/_user/prefs",
             get(user_prefs_get_handler).put(user_prefs_put_handler),
+        )
+        // Single-ZIP backup & restore
+        .route("/internal-api/_backup/export", post(backup_export_handler))
+        .route(
+            "/internal-api/_backup/inspect",
+            post(backup_inspect_handler),
+        )
+        .route(
+            "/internal-api/_backup/apply_admin",
+            post(backup_apply_admin_handler),
         )
         // Storage management
         .route("/internal-api/_storage/info", get(storage_info_handler))
@@ -1808,7 +1845,7 @@ async fn sse_handler(
                     "event": "mooshie:queue_update",
                     "payload": {
                         "prompt_id": pid, "position": pos, "total": total,
-                        "kind": if app.prompt_queue.is_music(pid) { "music" } else { "generation" },
+                        "kind": app.prompt_queue.kind(pid),
                     }
                 });
                 evts.push(Ok(Event::default().data(json.to_string())));
@@ -2010,17 +2047,31 @@ async fn thumbnail_handler(
         }
     };
 
-    match commands::api::generate_thumbnail(&gallery_dir, &filename, max_size) {
-        Ok(data) => (
+    let cache_control = crate::thumbnail_cache::cache_control_for_query(query);
+
+    // Decoding a JXL and encoding WebP is CPU-bound. Run it off the async
+    // runtime, like the full-image route, so a gallery page requesting dozens of
+    // uncached thumbnails at once can't stall every other request on the server.
+    let thumbnail = tokio::task::spawn_blocking(move || {
+        commands::api::generate_thumbnail(&gallery_dir, &filename, max_size)
+    })
+    .await;
+    match thumbnail {
+        Ok(Ok(data)) => (
             StatusCode::OK,
             [
                 ("content-type", "image/webp".to_string()),
-                ("cache-control", "no-cache".to_string()),
+                ("cache-control", cache_control.to_string()),
             ],
             data,
         )
             .into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, format!("Thumbnail error: {}", e)).into_response(),
+        Ok(Err(e)) => (StatusCode::NOT_FOUND, format!("Thumbnail error: {}", e)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Thumbnail task failed: {}", e),
+        )
+            .into_response(),
     }
 }
 
@@ -2390,26 +2441,44 @@ async fn embed_temp_metadata_handler(
             Err(_) => return (StatusCode::BAD_REQUEST, "Invalid metadata").into_response(),
         };
 
-    let metadata_mode = args["metadataMode"].as_str().unwrap_or("stealth");
+    let _ = args.get("metadataMode");
 
     let bytes = match crate::temp_images::load(temp_filename) {
         Some(b) => b,
         None => return (StatusCode::NOT_FOUND, "Temp image not found").into_response(),
     };
 
-    let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
+    let embed_mode = crate::metadata::MetadataMode::Both;
     let detected_format = crate::metadata::detect_format(&bytes);
 
-    // A NovelAI PNG is handed back as-is. This endpoint exists so a browser
+    // A NovelAI PNG is never re-encoded. This endpoint exists so a browser
     // right-click "Copy Image" carries our metadata, but NovelAI's own chunks
     // and stealth alpha are worth more here: they are what its site reads, and
-    // the app reads them back too. Re-encoding would lose both.
+    // the app reads them back too. Re-encoding would lose both, so the image
+    // only gains the MooshieUI marker chunk, and an already marked one is
+    // handed back as-is.
     if matches!(detected_format, crate::metadata::ImageFormat::Png)
         && crate::metadata::png_carries_novelai_metadata(&bytes)
     {
-        log::info!("embed_temp_metadata: preserving NovelAI PNG bytes verbatim");
-        let json = serde_json::json!({ "tempFilename": temp_filename });
-        return axum::Json(json).into_response();
+        let marked = crate::metadata::mark_novelai_png(&bytes, &metadata);
+        if marked == bytes {
+            log::info!("embed_temp_metadata: NovelAI PNG already marked, keeping it");
+            let json = serde_json::json!({ "tempFilename": temp_filename });
+            return axum::Json(json).into_response();
+        }
+        log::info!(
+            "embed_temp_metadata: keeping NovelAI PNG bytes, adding only the MooshieUI marker"
+        );
+        return match crate::temp_images::save(&marked, "png") {
+            Some(new_filename) => {
+                axum::Json(serde_json::json!({ "tempFilename": new_filename })).into_response()
+            }
+            None => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to save embedded image",
+            )
+                .into_response(),
+        };
     }
 
     let (embedded, out_ext) = match detected_format {
@@ -2718,6 +2787,7 @@ async fn dispatch_command(
             config::normalize_config_fields(&mut new_config);
             let mut current = state.config.write().await;
             preserve_config_secrets_for_role(&mut new_config, &current, caller_role);
+            config::validate_civitai_proxy(new_config.civitai_proxy.as_deref())?;
             config::save_config(&new_config)?;
             state.trust_localhost.store(
                 config::local_trust_enabled(new_config.trust_localhost),
@@ -2984,6 +3054,7 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(result))
         }
+        "list_model_architectures" => Ok(serde_json::json!(crate::architectures::list())),
         "get_samplers" => {
             let result = state
                 .get_samplers_and_schedulers()
@@ -3319,6 +3390,19 @@ async fn dispatch_command(
             });
             Ok(serde_json::json!(files))
         }
+        "find_gallery_visual_duplicates" => {
+            let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            let max_distance = args["max_distance"]
+                .as_u64()
+                .map(|v| v.min(32) as u32)
+                .unwrap_or(crate::watermark::fingerprint::MATCH_DISTANCE);
+            let groups = tokio::task::spawn_blocking(move || {
+                crate::gallery_index::find_visual_duplicates(&dir, max_distance)
+            })
+            .await
+            .map_err(|e| format!("Task panicked: {e}"))?;
+            Ok(serde_json::json!(groups))
+        }
         "load_gallery_image" => {
             let filename = args["filename"]
                 .as_str()
@@ -3383,10 +3467,10 @@ async fn dispatch_command(
                         Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
                             &png,
                             &meta,
-                            crate::metadata::MetadataMode::TextChunk,
+                            crate::metadata::MetadataMode::Both,
                         )
-                        .unwrap_or(png)),
-                        _ => Ok(png),
+                        .unwrap_or_else(|_| crate::metadata::ensure_iptc_ai_disclosure(&png))),
+                        _ => Ok(crate::metadata::ensure_iptc_ai_disclosure(&png)),
                     }
                 })
                 .await
@@ -3433,11 +3517,32 @@ async fn dispatch_command(
             // Tauri command, so it needs the same NovelAI -> local model swap.
             crate::templates::upscale_standalone::rewrite_novelai_request(&mut params)?;
             crate::templates::validate_generation_params(&params)?;
+            crate::comfyui::nodes::verify_snapref_for_generation(
+                &state.http_client,
+                &state.base_url().await,
+                &params,
+            )
+            .await?;
+            crate::comfyui::nodes::verify_architecture_nodes_for_generation(
+                &state.http_client,
+                &state.base_url().await,
+                &params,
+            )
+            .await?;
             {
                 // Skipped for a remote ComfyUI, whose LoRAs live on that server.
                 let config = state.config.read().await;
                 crate::commands::api::validate_generation_loras(&config, &params.loras)
                     .map_err(|e| e.to_string())?;
+                if params.mode == "video" {
+                    crate::commands::api::validate_generation_loras(&config, &params.video_loras)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            // The MCP server acts as the owner, so only the owner's runs
+            // become setups it can reuse.
+            if username.is_none() {
+                crate::mcp::setups::remember(&params);
             }
             // Mirrors the same check in the Tauri `generate` command: catches a
             // missing MiniMax H3 node before submission instead of surfacing
@@ -3630,6 +3735,35 @@ async fn dispatch_command(
                 "queue_total": queue_total,
             }))
         }
+        "get_mcp_status" => {
+            serde_json::to_value(crate::mcp::status().await).map_err(|e| e.to_string())
+        }
+        "get_watermark_status" => Ok(serde_json::json!(crate::watermark::is_ready())),
+        "prepare_watermark" => {
+            crate::watermark::prepare(&state.http_client)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(crate::watermark::is_ready()))
+        }
+        "set_mcp_settings" => {
+            let enabled = args["enabled"].as_bool().ok_or("Missing enabled")?;
+            let port = args["port"]
+                .as_u64()
+                .and_then(|p| u16::try_from(p).ok())
+                .ok_or("Missing or invalid port")?;
+            let update = crate::mcp::SettingsUpdate {
+                enabled,
+                port,
+                tunnel: args["tunnel"].as_bool(),
+                public_url: args["publicUrl"].as_str().map(str::to_string),
+            };
+            let status = crate::mcp::set_settings(state.clone(), update).await?;
+            serde_json::to_value(status).map_err(|e| e.to_string())
+        }
+        "regenerate_mcp_token" => {
+            let status = crate::mcp::regenerate_token().await?;
+            serde_json::to_value(status).map_err(|e| e.to_string())
+        }
         "novelai_generate" => {
             crate::temp_images::cleanup(300);
 
@@ -3648,6 +3782,11 @@ async fn dispatch_command(
             let credential = crate::novelai::resolve_credential(&state, username)
                 .await
                 .map_err(|e| e.to_string())?;
+            // The MCP server acts as the owner, so only the owner's runs
+            // become setups it can reuse.
+            if username.is_none() {
+                crate::mcp::setups::remember(&params);
+            }
 
             let prompt_id = crate::novelai::new_prompt_id();
             let seed = params.seed;
@@ -3958,6 +4097,24 @@ async fn dispatch_command(
             .map_err(|e| e.to_string())?;
             serde_json::to_value(ids).map_err(|e| e.to_string())
         }
+        "list_novelai_keys" | "save_novelai_key" | "delete_novelai_key" | "use_novelai_key" => {
+            if username.is_some() {
+                return Err("Saved NovelAI keys belong to the instance owner".to_string());
+            }
+            let label = args["label"].as_str().unwrap_or("");
+            let current = state.config.read().await.novelai_api_key.clone();
+            let list = match command {
+                "list_novelai_keys" => crate::novelai_keys::list(current.as_deref()),
+                "save_novelai_key" => crate::novelai_keys::save(
+                    label,
+                    args["apiKey"].as_str().unwrap_or(""),
+                    current.as_deref(),
+                ),
+                "delete_novelai_key" => crate::novelai_keys::delete(label, current.as_deref()),
+                _ => crate::novelai_keys::switch(&state, label).await,
+            }?;
+            serde_json::to_value(list).map_err(|e| e.to_string())
+        }
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
             crate::key_source::check(&api_key)?;
@@ -4129,6 +4286,26 @@ async fn dispatch_command(
         }
 
         // --- Gallery write operations (per-user isolated in LAN mode) ---
+        "related_tags" => {
+            let tag = args["tag"].as_str().unwrap_or("");
+            let dir = user_gallery_dir(username);
+            let related =
+                crate::related_tags::lookup(&state.http_client, tag, dir.as_deref()).await?;
+            serde_json::to_value(related).map_err(|e| e.to_string())
+        }
+        "eagle_status" => crate::eagle::status(&state.http_client)
+            .await
+            .map(|v| serde_json::json!(v))
+            .map_err(|e| e.to_string()),
+        "send_to_eagle" => {
+            let filenames: Vec<String> = serde_json::from_value(args["filenames"].clone())
+                .map_err(|e| format!("Invalid filenames: {}", e))?;
+            let folder = state.config.read().await.eagle_folder_id.clone();
+            crate::eagle::send_gallery_files(&state.http_client, &filenames, folder.as_deref())
+                .await
+                .map(|n| serde_json::json!(n))
+                .map_err(|e| e.to_string())
+        }
         "save_to_gallery" => {
             let filename = args["filename"]
                 .as_str()
@@ -4177,6 +4354,7 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
                 output_template.as_deref(),
+                watermark_choice(args, username),
             )?;
             let payload = serde_json::json!({
                 "filename": result.clone(),
@@ -4230,6 +4408,7 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
                 output_template.as_deref(),
+                watermark_choice(args, username),
             )?;
             let payload = serde_json::json!({
                 "filename": result.clone(),
@@ -4289,6 +4468,7 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
                 output_template.as_deref(),
+                watermark_choice(args, username),
             )?;
             let payload = serde_json::json!({
                 "filename": result.clone(),
@@ -4363,14 +4543,23 @@ async fn dispatch_command(
         "read_image_metadata_bytes" => {
             let image_bytes: Vec<u8> = serde_json::from_value(args["imageBytes"].clone())
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
-            let result =
-                crate::metadata::read_image_metadata(&image_bytes).map_err(|e| e.to_string())?;
+            let dir = user_gallery_dir(username);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::watermark::read_or_recover(&image_bytes, dir.as_deref())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "read_image_metadata_path" => {
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let result = crate::metadata::read_image_metadata(&bytes).map_err(|e| e.to_string())?;
+            let dir = user_gallery_dir(username);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::watermark::read_or_recover(&bytes, dir.as_deref())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "embed_image_metadata_bytes" => {
@@ -4379,13 +4568,8 @@ async fn dispatch_command(
             let metadata: std::collections::HashMap<String, String> =
                 serde_json::from_value(args["metadata"].clone())
                     .map_err(|e| format!("Invalid metadata: {}", e))?;
-            let metadata_mode = args
-                .get("metadataMode")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let mode = crate::metadata::MetadataMode::from_str(
-                metadata_mode.as_deref().unwrap_or("text_chunk"),
-            );
+            let _ = args.get("metadataMode");
+            let mode = crate::metadata::MetadataMode::Both;
             let result = crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode)
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(result))
@@ -4899,6 +5083,14 @@ async fn dispatch_command(
                     .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
+        "detect_h3_video_loras" => {
+            let filenames: Vec<String> = serde_json::from_value(args["filenames"].clone())
+                .map_err(|e| format!("Invalid filenames: {}", e))?;
+            let result = crate::commands::api::h3_video_loras_internal(&state, filenames)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
 
         // --- CivitAI ---
         "civitai_search_models" => {
@@ -4976,8 +5168,11 @@ async fn dispatch_command(
             .collect();
 
             // Try to fetch more from CivitAI API
-            let mut req = state
-                .http_client
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client
                 .get("https://civitai.com/api/v1/models?limit=1")
                 .header("User-Agent", "MooshieUI/0.3.9");
             if let Some(ref key) = api_key {
@@ -5017,11 +5212,15 @@ async fn dispatch_command(
             }
             let api_key = state.config.read().await.civitai_key();
             let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
-            let mut req = state.http_client.get(&url);
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client.get(&url);
             if let Some(ref key) = api_key {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(val)
         }
@@ -5038,11 +5237,15 @@ async fn dispatch_command(
                 "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
                 image_id
             );
-            let mut req = state.http_client.get(&url);
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client.get(&url);
             if let Some(ref key) = api_key {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(val)
         }
@@ -5139,8 +5342,11 @@ async fn dispatch_command(
                 "https://civitai.com/api/v1/model-versions/by-hash/{}",
                 autov2
             );
-            let mut civitai_req = state
-                .http_client
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut civitai_req = civitai_client
                 .get(&civitai_url)
                 .header("User-Agent", "MooshieUI/0.7");
             if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
@@ -5186,6 +5392,8 @@ async fn dispatch_command(
                     serde_json::json!(data.get("id").and_then(|v| v.as_u64()));
                 result["civitai_model_id"] =
                     serde_json::json!(data.get("modelId").and_then(|v| v.as_u64()));
+                result["civitai_nsfw"] =
+                    serde_json::json!(crate::commands::api::civitai_version_is_mature(&data));
                 if let Some(bm) = data.get("baseModel").and_then(|v| v.as_str()) {
                     if command == "get_checkpoint_civitai_info" {
                         result["base_model"] = serde_json::json!(bm);
@@ -5611,8 +5819,12 @@ async fn dispatch_command(
             let dest = models_dir.join(&filename);
 
             // Skip if the file on disk is complete and matches the expected hash.
+            let dl_client = state
+                .http_client_for_url(&url)
+                .await
+                .map_err(|e| e.to_string())?;
             if crate::comfyui::client::reuse_existing_model_download(
-                &state.http_client,
+                &dl_client,
                 &url,
                 &dest,
                 &filename,
@@ -5626,10 +5838,7 @@ async fn dispatch_command(
 
             // Download with progress broadcast
             let event_tx = state.event_tx.clone();
-            let mut req = state
-                .http_client
-                .get(&url)
-                .header("User-Agent", "MooshieUI/1.3.0");
+            let mut req = dl_client.get(&url).header("User-Agent", "MooshieUI/1.3.0");
             if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
                 req = req.bearer_auth(token);
             } else if crate::comfyui::client::is_civitai_url(&url) && !url_has_token_param(&url) {
@@ -5783,7 +5992,13 @@ async fn dispatch_command(
                     }
                     _ => unreachable!(),
                 };
-                let result = run_interrogation_headless(&state, image_bytes).await?;
+                let image_bytes = Arc::new(image_bytes);
+                let mut result = run_interrogation_headless(&state, image_bytes.clone()).await?;
+                result.image_token = Some(
+                    state
+                        .interrogate_frames
+                        .insert(crate::prompt_assistant::vision::Frame::Bytes(image_bytes)),
+                );
                 serde_json::to_value(result).map_err(|e| e.to_string())
             }
         }
@@ -5914,12 +6129,30 @@ async fn dispatch_command(
             // `external_enabled` decides whether the frontend offers the
             // assistant at all: with an external provider configured it is
             // usable with no local model installed.
-            let external_enabled = state.config.read().await.llm_external_enabled;
+            let (external_enabled, external_vision, local_model_id) = {
+                let cfg = state.config.read().await;
+                let ext_vision = if cfg.llm_external_enabled {
+                    crate::prompt_assistant::vision::cached_external_vision_support(
+                        &cfg.llm_provider,
+                        &cfg.llm_external_base_url,
+                        &cfg.llm_external_model,
+                    )
+                } else {
+                    None
+                };
+                (
+                    cfg.llm_external_enabled,
+                    ext_vision,
+                    cfg.prompt_assistant_model_id.clone(),
+                )
+            };
             Ok(serde_json::json!({
                 "installed_models": pa.installed_models(),
                 "active_model": pa.server.active_model(),
                 "server_running": pa.server.is_running(),
                 "external_enabled": external_enabled,
+                "external_vision": external_vision,
+                "describe_model": pa.vision_model(local_model_id.as_deref()),
             }))
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -5954,6 +6187,11 @@ async fn dispatch_command(
                         .collect()
                 })
                 .unwrap_or_default();
+            let character_notes = args["opts"]["character_notes"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            let chat = args["opts"]["chat"].as_bool().unwrap_or(false);
             let image_data: Option<Vec<String>> = args["imageData"].as_array().map(|a| {
                 a.iter()
                     .filter_map(|v| v.as_str().map(str::to_string))
@@ -5972,19 +6210,26 @@ async fn dispatch_command(
                     let owner = username.map(|s| s.to_string());
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let (event, payload) = match run_prompt_assistant_headless(
-                            &state,
-                            &input,
-                            &history,
-                            &family,
-                            mode,
-                            length.as_deref(),
-                            include_artists,
-                            &instruction,
-                            &labels,
-                            image_data,
+                        let (event, payload) = match crate::prompt_assistant::cancel::run(
+                            Some(&request_id),
+                            owner.as_deref(),
+                            run_prompt_assistant_headless(
+                                &state,
+                                &input,
+                                &history,
+                                &family,
+                                mode,
+                                length.as_deref(),
+                                include_artists,
+                                &instruction,
+                                &labels,
+                                &character_notes,
+                                chat,
+                                image_data,
+                            ),
                         )
                         .await
+                        .unwrap_or_else(|| Err(crate::prompt_assistant::cancel::CANCELLED.into()))
                         {
                             Ok(text) => (
                                 "llm:result",
@@ -6019,6 +6264,8 @@ async fn dispatch_command(
                         include_artists,
                         &instruction,
                         &labels,
+                        &character_notes,
+                        chat,
                         image_data,
                     )
                     .await?;
@@ -6047,7 +6294,13 @@ async fn dispatch_command(
                 .download_model(&state.http_client, &id, &variant, &progress)
                 .await
                 .map_err(|e| e.to_string())?;
-            // Persist selected model id + mark setup done.
+            // Persist selected model id + mark setup done, under the same rule
+            // as the desktop command: never a captioner, and not when the
+            // download was only to describe images.
+            let select = args["select"].as_bool().unwrap_or(true);
+            if select
+                && crate::prompt_assistant::catalog::entry(&id)
+                    .is_some_and(|e| e.purpose != "captioner")
             {
                 let mut cfg = state.config.write().await;
                 cfg.prompt_assistant_model_id = Some(id.clone());
@@ -6110,6 +6363,21 @@ async fn dispatch_command(
             serde_json::to_value(s).map_err(|e| e.to_string())
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_fallback_models" => {
+            let models: Vec<String> = args["models"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let s = crate::prompt_assistant::providers::set_fallback_models(&state.config, &models)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
         "set_llm_base_url" => {
             let base_url = args["baseUrl"].as_str().unwrap_or("").to_string();
             let s = crate::prompt_assistant::providers::set_base_url(&state.config, &base_url)
@@ -6148,6 +6416,14 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(s).map_err(|e| e.to_string())
         }
+        // Stops the caller's own request only: the id is checked against the
+        // account that started it.
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "cancel_llm_request" => {
+            let request_id = args["requestId"].as_str().unwrap_or("");
+            crate::prompt_assistant::cancel::cancel(request_id, username);
+            Ok(serde_json::Value::Null)
+        }
         #[cfg(any(feature = "desktop", feature = "server"))]
         "cancel_llm_oauth" => {
             crate::prompt_assistant::companion::cancel_login();
@@ -6162,6 +6438,53 @@ async fn dispatch_command(
             .await
             .map_err(|e| e.to_string())?;
             serde_json::to_value(models).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "describe_image" => {
+            use crate::prompt_assistant::describe;
+            let token = args["imageToken"].as_str().unwrap_or("").to_string();
+            let frame = state
+                .interrogate_frames
+                .get(&token)
+                .ok_or_else(|| "prompt_assistant.describe_expired".to_string())?;
+            let image = frame.encode().await.map_err(|e| e.to_string())?;
+            let length = describe::Length::parse(args["length"].as_str());
+            let run = {
+                let state = state.clone();
+                move || async move { describe_image_headless(&state, &[image], length).await }
+            };
+            match args["requestId"].as_str() {
+                // Same SSE hand-off as `call_external_llm`: loading a vision
+                // model and reading the image can outlast the proxy's limit.
+                Some(request_id) => {
+                    let request_id = request_id.to_string();
+                    let owner = username.map(|s| s.to_string());
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        let (event, payload) = match run().await {
+                            Ok(text) => (
+                                "llm:result",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "result": text,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                            Err(e) => (
+                                "llm:error",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "error": e,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                        };
+                        state.broadcast(event, payload);
+                    });
+                    Ok(serde_json::json!({ "queued": true }))
+                }
+                None => Ok(serde_json::Value::String(run().await?)),
+            }
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
         "call_external_llm" => {
@@ -6186,6 +6509,11 @@ async fn dispatch_command(
             )
             .await;
             let history = crate::prompt_assistant::history::history_from_args(&args["history"]);
+            let sampling = crate::prompt_assistant::server::Sampling {
+                temperature: args["temperature"].as_f64(),
+                json: args["json"].as_bool().unwrap_or(false),
+            };
+            let system_cache_prefix = args["systemCachePrefix"].as_str().map(str::to_string);
 
             match args["requestId"].as_str() {
                 // Same SSE hand-off as enhance/compose: a long rewrite would
@@ -6196,10 +6524,27 @@ async fn dispatch_command(
                     let owner = username.map(|s| s.to_string());
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let (event, payload) = match chat_any_headless(
-                            &state, &system, &history, &prompt, max_tokens, &images,
+                        let (event, payload) = match crate::prompt_assistant::cancel::run(
+                            Some(&request_id),
+                            owner.as_deref(),
+                            crate::prompt_assistant::server::with_sampling(
+                                sampling,
+                                crate::prompt_assistant::server::with_system_cache_prefix(
+                                    system_cache_prefix,
+                                    chat_any_headless(
+                                        &state,
+                                        &system,
+                                        &history,
+                                        &prompt,
+                                        max_tokens,
+                                        &images,
+                                        crate::prompt_assistant::LocalPick::Assistant,
+                                    ),
+                                ),
+                            ),
                         )
                         .await
+                        .unwrap_or_else(|| Err(crate::prompt_assistant::cancel::CANCELLED.into()))
                         {
                             Ok(text) => (
                                 "llm:result",
@@ -6223,9 +6568,22 @@ async fn dispatch_command(
                     Ok(serde_json::json!({ "queued": true }))
                 }
                 None => {
-                    let text =
-                        chat_any_headless(&state, &system, &history, &prompt, max_tokens, &images)
-                            .await?;
+                    let text = crate::prompt_assistant::server::with_sampling(
+                        sampling,
+                        crate::prompt_assistant::server::with_system_cache_prefix(
+                            system_cache_prefix,
+                            chat_any_headless(
+                                &state,
+                                &system,
+                                &history,
+                                &prompt,
+                                max_tokens,
+                                &images,
+                                crate::prompt_assistant::LocalPick::Assistant,
+                            ),
+                        ),
+                    )
+                    .await?;
                     Ok(serde_json::Value::String(text))
                 }
             }
@@ -6408,6 +6766,97 @@ async fn dispatch_command(
                     .map(|audio| serde_json::json!(audio))
                     .map_err(|e| e.to_string())
             }
+        }
+        "get_splat_capabilities" => {
+            let result = commands::splat::capabilities(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "generate_splat" => {
+            let params = serde_json::from_value(args["params"].clone())
+                .map_err(|e| format!("Invalid 3D params: {e}"))?;
+            let image = args["imageBase64"].as_str().ok_or("Missing imageBase64")?;
+            commands::splat::submit(&state, params, image, username.map(str::to_string))
+                .await
+                .map_err(|e| e.to_string())
+        }
+        "get_splat_status" | "load_splat_ply" => {
+            let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            let worker_id = args["workerId"]
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .ok_or("Invalid workerId")?;
+            ensure_prompt_owned(&state, prompt_id, username)?;
+            if command == "get_splat_status" {
+                commands::splat::status(&state, prompt_id, worker_id)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                commands::splat::ply(&state, prompt_id, worker_id)
+                    .await
+                    .map(|ply| serde_json::json!(ply))
+                    .map_err(|e| e.to_string())
+            }
+        }
+        "get_mesh_capabilities" => {
+            let result = commands::mesh3d::capabilities(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "generate_mesh" => {
+            let params = serde_json::from_value(args["params"].clone())
+                .map_err(|e| format!("Invalid 3D params: {e}"))?;
+            let image = args["imageBase64"].as_str().ok_or("Missing imageBase64")?;
+            commands::mesh3d::submit(&state, params, image, username.map(str::to_string))
+                .await
+                .map_err(|e| e.to_string())
+        }
+        "get_mesh_status" | "load_mesh_glb" => {
+            let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            let worker_id = args["workerId"]
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .ok_or("Invalid workerId")?;
+            ensure_prompt_owned(&state, prompt_id, username)?;
+            if command == "get_mesh_status" {
+                commands::mesh3d::status(&state, prompt_id, worker_id)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                commands::mesh3d::glb(&state, prompt_id, worker_id)
+                    .await
+                    .map(|glb| serde_json::json!(glb))
+                    .map_err(|e| e.to_string())
+            }
+        }
+        "list_wildcards" => {
+            let listing = tokio::task::spawn_blocking(commands::wildcards::list)
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(listing).map_err(|e| e.to_string())
+        }
+        "save_wildcard" => {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing path")?;
+            let content = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing content")?;
+            commands::wildcards::save(path, content).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "delete_wildcard" => {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing path")?;
+            commands::wildcards::delete(path).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
         }
         "get_h3_upscaler_status" => Ok(commands::video_drafts::upscaler_status(&state).await),
         "install_h3_upscaler" => commands::video_drafts::install_upscaler(&state)
@@ -6671,7 +7120,7 @@ async fn dispatch_command(
 #[cfg(any(feature = "desktop", feature = "server"))]
 async fn run_interrogation_headless(
     state: &Arc<AppState>,
-    image_bytes: Vec<u8>,
+    image_bytes: Arc<Vec<u8>>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
     let (model_id, custom_models, general_threshold, character_threshold, artist_threshold) = {
         let config = state.config.read().await;
@@ -6770,8 +7219,8 @@ pub async fn chat_any_headless(
     user: &str,
     max_tokens: u32,
     images: &[crate::prompt_assistant::vision::VisionImage],
+    pick: crate::prompt_assistant::LocalPick,
 ) -> Result<String, String> {
-    use crate::prompt_assistant::hardware;
     let history = crate::prompt_assistant::history::sanitize(history);
 
     // Same reason as the desktop path: an OAuth provider parks its access token
@@ -6779,7 +7228,17 @@ pub async fn chat_any_headless(
     // copies it out.
     crate::prompt_assistant::providers::ensure_fresh_token(&state.http_client, &state.config).await;
 
-    let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
+    let (
+        mut model_id,
+        idle_secs,
+        ext_enabled,
+        provider,
+        ext_base,
+        ext_key,
+        ext_models,
+        fallback_local,
+        reasoning_effort,
+    ) = {
         let cfg = state.config.read().await;
         (
             cfg.prompt_assistant_model_id.clone(),
@@ -6788,33 +7247,50 @@ pub async fn chat_any_headless(
             cfg.llm_provider.clone(),
             cfg.llm_external_base_url.clone(),
             cfg.llm_api_key(),
-            cfg.llm_external_model.clone(),
+            crate::prompt_assistant::server::model_chain(
+                &cfg.llm_external_model,
+                &cfg.llm_fallback_models,
+            ),
+            cfg.llm_fallback_local,
+            cfg.llm_reasoning_effort.clone(),
         )
     };
 
     if ext_enabled {
         crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         state.broadcast("llm:stage", serde_json::json!("generating"));
-        return crate::prompt_assistant::server::chat_provider(
+        let answer = crate::prompt_assistant::server::chat_provider_chain(
             &state.http_client,
             &provider,
             &ext_base,
             &ext_key,
-            &ext_model,
+            &ext_models,
             system,
             &history,
             user,
             max_tokens,
             images,
+            &reasoning_effort,
         )
-        .await
-        .map_err(|e| e.to_string());
-    }
-
-    if !images.is_empty() {
-        log::info!(
-            "[prompt-assistant] the bundled local model has no vision; \
-             answering from the prompt text alone"
+        .await;
+        // Same stand-in as the desktop path: down or busy, and the owner asked
+        // for the bundled model, so carry on to the local path below.
+        match answer {
+            Err(e) if fallback_local && e.is_llm_unavailable() => {
+                let Some(local) = state.prompt_assistant.stand_in(model_id.as_deref(), pick) else {
+                    return Err(e.to_string());
+                };
+                log::warn!("[prompt-assistant] external LLM unavailable ({e}); answering with local model {local}");
+                model_id = Some(local);
+            }
+            other => return other.map_err(|e| e.to_string()),
+        }
+    } else if pick == crate::prompt_assistant::LocalPick::Vision {
+        model_id = Some(
+            state
+                .prompt_assistant
+                .vision_model(model_id.as_deref())
+                .ok_or_else(|| "prompt_assistant.no_vision_model".to_string())?,
         );
     }
 
@@ -6827,11 +7303,28 @@ pub async fn chat_any_headless(
         Some(id) => id,
         None => state
             .prompt_assistant
-            .installed_models()
-            .into_iter()
-            .next()
+            .default_assistant_model()
             .ok_or_else(|| "prompt_assistant.no_model".to_string())?,
     };
+    run_local_chat_headless(
+        state, &model_id, idle_secs, system, &history, user, max_tokens, images,
+    )
+    .await
+}
+
+#[cfg(any(feature = "desktop", feature = "server"))]
+#[allow(clippy::too_many_arguments)]
+async fn run_local_chat_headless(
+    state: &Arc<AppState>,
+    model_id: &str,
+    idle_secs: u64,
+    system: &str,
+    history: &[crate::prompt_assistant::history::ChatMessage],
+    user: &str,
+    max_tokens: u32,
+    images: &[crate::prompt_assistant::vision::VisionImage],
+) -> Result<String, String> {
+    use crate::prompt_assistant::hardware;
     let hw = tokio::task::spawn_blocking(hardware::detect)
         .await
         .map_err(|e| e.to_string())?;
@@ -6846,7 +7339,7 @@ pub async fn chat_any_headless(
         .prompt_assistant
         .ensure_running(
             &state.http_client,
-            &model_id,
+            model_id,
             hw.total_vram_mb,
             idle_secs,
             &noop,
@@ -6854,12 +7347,198 @@ pub async fn chat_any_headless(
         .await
         .map_err(|e| e.to_string())?;
     state.broadcast("llm:stage", serde_json::json!("generating"));
+    let images = crate::prompt_assistant::images_for(model_id, images);
     state
         .prompt_assistant
         .server
-        .chat(&state.http_client, port, system, &history, user, max_tokens)
+        .chat(
+            &state.http_client,
+            port,
+            system,
+            history,
+            user,
+            max_tokens,
+            images,
+        )
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Browser-mode twin of `describe_image_inline`: route `Describe image` to an
+/// installed bundled vision model (preferring JoyCaption) when the external
+/// provider is disabled or its active model is text-only.
+#[cfg(any(feature = "desktop", feature = "server"))]
+async fn describe_image_headless(
+    state: &Arc<AppState>,
+    images: &[crate::prompt_assistant::vision::VisionImage],
+    length: crate::prompt_assistant::describe::Length,
+) -> Result<String, String> {
+    use crate::prompt_assistant::{describe, vision};
+    crate::prompt_assistant::providers::ensure_fresh_token(&state.http_client, &state.config).await;
+
+    let (
+        model_id,
+        idle_secs,
+        ext_enabled,
+        provider,
+        ext_base,
+        ext_key,
+        ext_models,
+        fallback_local,
+        reasoning_effort,
+    ) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.prompt_assistant_model_id.clone(),
+            cfg.prompt_assistant_idle_timeout_secs,
+            cfg.llm_external_enabled,
+            cfg.llm_provider.clone(),
+            cfg.llm_external_base_url.clone(),
+            cfg.llm_api_key(),
+            crate::prompt_assistant::server::model_chain(
+                &cfg.llm_external_model,
+                &cfg.llm_fallback_models,
+            ),
+            cfg.llm_fallback_local,
+            cfg.llm_reasoning_effort.clone(),
+        )
+    };
+
+    let local_vision = state.prompt_assistant.vision_model(model_id.as_deref());
+    let vision_support = if ext_enabled {
+        vision::probe_external_vision_support(
+            &state.http_client,
+            &provider,
+            &ext_base,
+            &ext_models[0],
+        )
+        .await
+    } else {
+        vision::VisionSupport::Unknown
+    };
+
+    let route = describe::plan_route(ext_enabled, vision_support, local_vision)
+        .map_err(|e| e.to_string())?;
+    let raw = match route {
+        describe::DescribeRoute::Local(local_model) => {
+            if ext_enabled {
+                log::info!(
+                    "[prompt-assistant] external model is text-only; describing image with local model {local_model}"
+                );
+            }
+            run_local_chat_headless(
+                state,
+                &local_model,
+                idle_secs,
+                describe::SYSTEM,
+                &[],
+                describe::instruction(length),
+                length.max_tokens(),
+                images,
+            )
+            .await?
+        }
+        describe::DescribeRoute::External {
+            fallback_local_vision,
+        } => {
+            crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base)
+                .await;
+            state.broadcast("llm:stage", serde_json::json!("generating"));
+            let answer = crate::prompt_assistant::server::chat_provider_chain(
+                &state.http_client,
+                &provider,
+                &ext_base,
+                &ext_key,
+                &ext_models,
+                describe::SYSTEM,
+                &[],
+                describe::instruction(length),
+                length.max_tokens(),
+                images,
+                &reasoning_effort,
+            )
+            .await;
+            match answer {
+                Ok(text) if !describe::saw_no_image(&text) => text,
+                Ok(_) => {
+                    vision::record_external_vision(
+                        &ext_base,
+                        &ext_models[0],
+                        vision::VisionSupport::Unsupported,
+                    );
+                    if let Some(local_model) = fallback_local_vision {
+                        log::info!(
+                            "[prompt-assistant] external model reported NO_IMAGE; falling back to local model {local_model}"
+                        );
+                        run_local_chat_headless(
+                            state,
+                            &local_model,
+                            idle_secs,
+                            describe::SYSTEM,
+                            &[],
+                            describe::instruction(length),
+                            length.max_tokens(),
+                            images,
+                        )
+                        .await?
+                    } else {
+                        return Err("prompt_assistant.provider_no_vision".to_string());
+                    }
+                }
+                Err(e) if vision::is_vision_rejection(&e) => {
+                    vision::record_external_vision(
+                        &ext_base,
+                        &ext_models[0],
+                        vision::VisionSupport::Unsupported,
+                    );
+                    if let Some(local_model) = fallback_local_vision {
+                        log::info!(
+                            "[prompt-assistant] external model rejected image ({e}); falling back to local model {local_model}"
+                        );
+                        run_local_chat_headless(
+                            state,
+                            &local_model,
+                            idle_secs,
+                            describe::SYSTEM,
+                            &[],
+                            describe::instruction(length),
+                            length.max_tokens(),
+                            images,
+                        )
+                        .await?
+                    } else {
+                        return Err("prompt_assistant.provider_no_vision".to_string());
+                    }
+                }
+                Err(e) if fallback_local && e.is_llm_unavailable() => {
+                    if let Some(local_model) = fallback_local_vision {
+                        log::warn!(
+                            "[prompt-assistant] external LLM unavailable ({e}); describing with local model {local_model}"
+                        );
+                        run_local_chat_headless(
+                            state,
+                            &local_model,
+                            idle_secs,
+                            describe::SYSTEM,
+                            &[],
+                            describe::instruction(length),
+                            length.max_tokens(),
+                            images,
+                        )
+                        .await?
+                    } else {
+                        return Err(e.to_string());
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    };
+
+    if describe::saw_no_image(&raw) {
+        return Err("prompt_assistant.provider_no_vision".to_string());
+    }
+    Ok(describe::clean(&raw))
 }
 
 #[cfg(any(feature = "desktop", feature = "server"))]
@@ -6876,6 +7555,8 @@ pub async fn run_prompt_assistant_headless(
     include_artists: bool,
     instruction: &str,
     reference_labels: &[String],
+    character_notes: &str,
+    chat: bool,
     image_data: Option<Vec<String>>,
 ) -> Result<String, String> {
     use crate::prompt_assistant::grounding;
@@ -6895,16 +7576,27 @@ pub async fn run_prompt_assistant_headless(
             cfg.llm_external_enabled,
         )
     };
+    // Images go to an external provider or a bundled model that can see them.
+    let resolved_model_id = if ext_enabled {
+        model_id
+    } else {
+        match model_id {
+            Some(id) => Some(id),
+            None => state.prompt_assistant.default_assistant_model(),
+        }
+    };
+    let sees_images = ext_enabled
+        || resolved_model_id
+            .as_deref()
+            .and_then(crate::prompt_assistant::catalog::entry)
+            .is_some_and(|e| e.has_vision());
     // A purpose-built tag upsampler is always tag-only regardless of family.
     let purpose = if ext_enabled {
         "natural_language".to_string()
     } else {
-        let resolved = match model_id {
-            Some(id) => Some(id),
-            None => state.prompt_assistant.installed_models().into_iter().next(),
-        };
-        resolved
-            .and_then(|id| crate::prompt_assistant::catalog::entry(&id))
+        resolved_model_id
+            .as_deref()
+            .and_then(crate::prompt_assistant::catalog::entry)
             .map(|e| e.purpose)
             .unwrap_or_else(|| "natural_language".to_string())
     };
@@ -6915,7 +7607,7 @@ pub async fn run_prompt_assistant_headless(
     } else {
         mode
     };
-    let images = if ext_enabled {
+    let images = if sees_images {
         crate::prompt_assistant::vision::collect_images(state, None, image_data).await
     } else {
         Vec::new()
@@ -6925,21 +7617,46 @@ pub async fn run_prompt_assistant_headless(
         .collect();
     let style = grounding::prompt_style(&purpose, family);
     let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
+    let notes = if purpose == "natural_language" {
+        let budget = grounding::character_notes_budget(ext_enabled, resolved_model_id.as_deref());
+        grounding::character_notes_with_limit(character_notes, budget)
+    } else {
+        String::new()
+    };
     let system = grounding::system_prompt(style, mode, &candidates, include_artists)
-        + &grounding::reference_rules(images.len());
+        + &grounding::reference_rules(images.len())
+        + &notes
+        + grounding::chat_rules(chat, &purpose);
     // Mirror the desktop token budget so browser Enhance honors the user's
     // length pick instead of always generating at the medium default.
-    let max_tokens = grounding::max_tokens(mode, length);
+    let max_tokens = grounding::max_tokens(mode, length) + grounding::chat_reply_tokens(chat);
     let user = grounding::user_turn(mode, input, instruction, &labels);
     let history = crate::prompt_assistant::history::sanitize(
         crate::prompt_assistant::history::for_purpose(&purpose, history),
     );
     let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
-    let raw = chat_any_headless(state, &system, &history, &user, max_tokens, &images).await?;
+    let raw = chat_any_headless(
+        state,
+        &system,
+        &history,
+        &user,
+        max_tokens,
+        &images,
+        crate::prompt_assistant::LocalPick::Assistant,
+    )
+    .await?;
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose and for prose families. The desktop path
     // runs this too; omitting it here made browser Enhance silently drop user tags.
-    Ok(grounding::finish(input, &raw, mode, style))
+    // Memory facts and the chat's `<reply>` block are split off around it.
+    Ok(grounding::finish_answer(
+        input,
+        raw,
+        mode,
+        style,
+        !notes.is_empty(),
+        chat && purpose == "natural_language",
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -7680,6 +8397,65 @@ async fn auth_lan_firewall_allow_handler(
     }
 }
 
+/// Run one of the LAN settings endpoints for the desktop window, which talks to
+/// the backend over Tauri IPC rather than HTTP. It goes through the same
+/// handlers as the browser, so validation and side effects stay in one place;
+/// the window is the machine owner and gets the admin rights of a trusted
+/// localhost browser. Returns the HTTP status and the JSON body.
+#[cfg(feature = "desktop")]
+pub(crate) async fn desktop_lan_admin(
+    app: Arc<AppState>,
+    action: &str,
+    body: serde_json::Value,
+) -> (u16, serde_json::Value) {
+    // Mirror the running server, if any: before it is on the LAN, `lan_info`
+    // reports `listening: false` so Settings can ask for a restart.
+    let lan_enabled = crate::lan_discovery::snapshot()
+        .0
+        .is_some_and(|endpoint| endpoint.lan);
+    let state: SharedState = Arc::new(WebState {
+        auth: app.web_auth(),
+        app,
+        lan_enabled,
+        desktop_owner: true,
+    });
+    let remote = ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    let headers = HeaderMap::new();
+    let st = AxumState(state);
+    let response = match action {
+        "accounts" => auth_list_accounts_handler(st, remote, headers).await,
+        "lan_info" => auth_lan_info_handler(st, remote, headers).await,
+        "lan_firewall" => auth_lan_firewall_status_handler(st, remote, headers).await,
+        "lan_firewall_allow" => auth_lan_firewall_allow_handler(st, remote, headers).await,
+        "register" => match serde_json::from_value::<AuthRequest>(body) {
+            Ok(req) => auth_register_handler(st, remote, headers, Json(req)).await,
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+        "delete" => auth_delete_account_handler(st, remote, headers, Json(body)).await,
+        "reset_password" => auth_reset_password_handler(st, remote, headers, Json(body)).await,
+        "set_role" => auth_set_role_handler(st, remote, headers, Json(body)).await,
+        "set_modelhub_access" => {
+            auth_set_modelhub_access_handler(st, remote, headers, Json(body)).await
+        }
+        "set_storage_limit" => storage_set_limit_handler(st, remote, headers, Json(body)).await,
+        _ => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Unknown LAN action: {action}") })),
+        )
+            .into_response(),
+    };
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap_or_default();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
 /// Resolve the gallery directory for a given user.
 /// Admin/localhost (username=None) uses the root gallery dir.
 /// LAN users get a per-user subdirectory: `gallery/users/{username}/`.
@@ -7702,9 +8478,23 @@ fn user_gallery_subdir(username: &str) -> Option<String> {
     is_single_safe_filename(&safe).then_some(safe)
 }
 
+/// The `watermark` flag of a save request. The owner's (no signed-in user)
+/// choice is also remembered for saves MCP makes on their behalf.
+fn watermark_choice(args: &serde_json::Value, username: Option<&str>) -> bool {
+    let enabled = args
+        .get("watermark")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if username.is_none() {
+        crate::watermark::remember_owner_choice(enabled);
+    }
+    enabled
+}
+
 /// Save image bytes to a specific gallery directory with metadata embedding.
 /// This is a per-directory variant of `commands::api::save_to_gallery_inner`.
-fn save_to_gallery_in_dir(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_to_gallery_in_dir(
     dir: &std::path::Path,
     bytes: &[u8],
     filename: &str,
@@ -7713,6 +8503,7 @@ fn save_to_gallery_in_dir(
     metadata: Option<&std::collections::HashMap<String, String>>,
     metadata_mode: Option<&str>,
     output_template: Option<&str>,
+    watermark: bool,
 ) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
@@ -7843,30 +8634,26 @@ fn save_to_gallery_in_dir(
         _ => "png",
     };
 
-    let raw_mode = metadata_mode.unwrap_or("text_chunk");
-    let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
+    let _ = metadata_mode;
+    let embed_mode = crate::metadata::MetadataMode::Both;
 
-    if matches!(detected_format, crate::metadata::ImageFormat::Png)
-        && embed_mode == crate::metadata::MetadataMode::StealthAlpha
-    {
-        if let Ok(true) = crate::metadata::is_png_16bit(bytes) {
-            embed_mode = crate::metadata::MetadataMode::Both;
-        }
-    }
+    // Watermark first (it rewrites the pixels), then embed the metadata.
+    let protected = crate::watermark::protect_for_save(bytes, watermark);
+    let bytes = protected.bytes.as_slice();
 
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
-            // Byte-for-byte counterpart of the guard in `save_to_gallery_inner`:
-            // a PNG that still carries NovelAI's own metadata goes to disk
-            // untouched, because re-encoding to embed our copy would strip its
-            // chunks and overwrite the alpha bits its stealth payload lives in.
+            // Counterpart of the guard in `save_to_gallery_inner`: a PNG that
+            // still carries NovelAI's own metadata is never re-encoded, because
+            // that would strip its chunks and overwrite the alpha bits its
+            // stealth payload lives in. It only gains the MooshieUI marker.
             crate::metadata::ImageFormat::Png
                 if crate::metadata::png_carries_novelai_metadata(bytes) =>
             {
                 log::info!(
-                    "save_to_gallery_in_dir: preserving NovelAI PNG bytes verbatim (no metadata embed)"
+                    "save_to_gallery_in_dir: keeping NovelAI PNG bytes, adding only the MooshieUI marker"
                 );
-                bytes.to_vec()
+                crate::metadata::mark_novelai_png(bytes, meta)
             }
             crate::metadata::ImageFormat::Png => {
                 crate::metadata::embed_png_metadata(bytes, meta, embed_mode)
@@ -7885,7 +8672,7 @@ fn save_to_gallery_in_dir(
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
-        bytes.to_vec()
+        crate::metadata::ensure_iptc_ai_disclosure(bytes)
     };
 
     // Never overwrite: the template can render one name for distinct images.
@@ -7893,6 +8680,7 @@ fn save_to_gallery_in_dir(
         commands::api::write_new_gallery_file(dir, &rendered_base, ext, &final_bytes)
             .map_err(|e| e.to_string())?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
+    crate::watermark::index_saved(&path, &final_bytes, &protected);
     Ok(gallery_filename)
 }
 
@@ -7959,6 +8747,160 @@ async fn user_prefs_put_handler(
             .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct BackupExportRequest {
+    bundle: crate::backup::BackupBundleInput,
+    include_admin_data: bool,
+}
+
+fn resolve_display_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> String {
+    if let Some(user) = resolve_username(state, headers, remote) {
+        return user;
+    }
+    if let Some(token) = extract_token(headers) {
+        if let Some(user) = state.auth.validate_token(&token) {
+            return user;
+        }
+    }
+    "admin".to_string()
+}
+
+/// POST /internal-api/_backup/export — stream a single-ZIP backup for the current account.
+/// Attaches sanitized `app_config.json` and `wildcards/` only when `UserRole::Admin` requests it.
+async fn backup_export_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<BackupExportRequest>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return unauthorized_response("Authentication required.");
+    }
+
+    let allow_admin = role == UserRole::Admin && req.include_admin_data;
+    let username = resolve_display_username(&state, &headers, &remote);
+    let app_config = if allow_admin {
+        Some(state.app.config.read().await.clone())
+    } else {
+        None
+    };
+
+    let built = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let wildcards = if allow_admin {
+            commands::wildcards::list()
+                .map_err(|e| e.to_string())?
+                .files
+        } else {
+            Vec::new()
+        };
+        let (bytes, _) =
+            crate::backup::build_backup_zip_with_manifest(crate::backup::BackupBuildParams {
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
+                username,
+                bundle: req.bundle,
+                app_config,
+                wildcards,
+            })?;
+        Ok(bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|r| r);
+
+    match built {
+        Ok(bytes) => {
+            let date = chrono::Utc::now().format("%Y-%m-%d");
+            let disposition = format!("attachment; filename=\"mooshieui-backup-{date}.zip\"");
+            (
+                StatusCode::OK,
+                [
+                    (
+                        axum::http::header::CONTENT_TYPE,
+                        "application/zip".to_string(),
+                    ),
+                    (axum::http::header::CONTENT_DISPOSITION, disposition),
+                    (axum::http::header::CACHE_CONTROL, "no-store".to_string()),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_backup/inspect — accept a `.zip` upload (up to 64 MB) and return
+/// its manifest, parsed payloads, and item counts.
+async fn backup_inspect_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return unauthorized_response("Authentication required.");
+    }
+    if body.len() > crate::backup::MAX_ZIP_UPLOAD_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": "Backup archive exceeds 64 MB upload limit." })),
+        )
+            .into_response();
+    }
+
+    let bytes = body.to_vec();
+    let inspected =
+        tokio::task::spawn_blocking(move || crate::backup::inspect_backup_zip_bytes(&bytes))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r);
+
+    match inspected {
+        Ok(data) => (StatusCode::OK, Json(data)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_backup/apply_admin — admin-only endpoint to apply `app_config.json`
+/// and/or `wildcards/` from an uploaded `.zip` backup while preserving existing secrets.
+async fn backup_apply_admin_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(opts): Query<crate::backup::ApplyBackupAdminOptions>,
+    body: Bytes,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) != UserRole::Admin {
+        return forbidden_response("Admin access required.");
+    }
+    if body.len() > crate::backup::MAX_ZIP_UPLOAD_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": "Backup archive exceeds 64 MB upload limit." })),
+        )
+            .into_response();
+    }
+
+    match crate::backup::apply_backup_admin_data_bytes(&state.app, &body, &opts).await {
+        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),
@@ -8330,6 +9272,7 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
                     // ComfyUI queue doesn't keep running after the tab closes.
                     let _ = state.gpu_manager.interrupt(None).await;
                     crate::media_tools::shutdown(&state).await;
+                    crate::mcp::shutdown().await;
                     #[cfg(any(feature = "desktop", feature = "server"))]
                     crate::prompt_assistant::companion::shutdown().await;
                     commands::music_link::shutdown(&state).await;

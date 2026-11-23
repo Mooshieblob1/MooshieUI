@@ -37,23 +37,33 @@ export interface SanitizeOptions {
    * then renders the comma into the image.
    */
   keepNewlines?: boolean;
+  /**
+   * Keep `BREAK` boundaries (and normalize `<break>` to `BREAK`) for CLIP-based
+   * ComfyUI models so the backend can split chunks via `ConditioningConcat`.
+   * Off for LLM text encoders and NovelAI, where `BREAK` is dead weight.
+   */
+  keepBreak?: boolean;
 }
 
 /**
- * Remove BREAK / <break> tokens and normalize newlines to ", " so the outgoing
- * prompt is a single clean comma-separated string regardless of how the user
- * laid it out in the textarea.
+ * Remove BREAK / <break> tokens (unless `keepBreak` is true) and normalize
+ * newlines to ", " so the outgoing prompt is a single clean comma-separated
+ * string regardless of how the user laid it out in the textarea.
  *
  * With `keepNewlines` every line is cleaned on its own and the line structure
  * survives, with runs of blank lines collapsed to a single blank line.
  */
 export function sanitizePromptForSend(prompt: string, options: SanitizeOptions = {}): string {
   if (!prompt) return "";
-  const stripped = prompt
-    // A1111 chunk keyword — case-sensitive whole word so "BREAKFAST" survives.
-    .replace(/\bBREAK\b/g, " ")
-    // Angle-bracket form some tools emit; case-insensitive.
-    .replace(/<break>/gi, " ");
+  const stripped = options.keepBreak
+    ? prompt
+        // Normalize angle-bracket form to canonical BREAK for backend chunking.
+        .replace(/<break>/gi, " BREAK ")
+    : prompt
+        // A1111 chunk keyword — case-sensitive whole word so "BREAKFAST" survives.
+        .replace(/\bBREAK\b/g, " ")
+        // Angle-bracket form some tools emit; case-insensitive.
+        .replace(/<break>/gi, " ");
   if (options.keepNewlines) {
     return stripped
       .replace(/\r\n?/g, "\n")
@@ -155,4 +165,46 @@ export function mergeNovelAiTags(prompt: string, tags: string, where: "before" |
   // The tail carries its own leading newline unless the prompt began with the
   // label itself, in which case the block needs one to stay on its own line.
   return text.startsWith("\n") ? `${merged}${text}` : `${merged}\n${text}`;
+}
+
+/**
+ * Merge a system tag fragment (auto quality tags, style preset, Artist Style,
+ * Prompt Chunk) into a ComfyUI prompt, in front of it or after it.
+ *
+ * Only the incoming tags are deduped: one already in the prompt, or earlier in
+ * the fragment, is skipped (case-insensitive). The prompt's own tags all stay,
+ * in their order, repeats included. A multi-character prompt repeats tags on
+ * purpose (`2girls, A, long hair, smile, B, long hair, smile`), and dropping the
+ * second copy leaves that trait on the first character only, which reads as
+ * the characters' tags bleeding together.
+ */
+export function mergeComfyTags(prompt: string, tags: string, where: "before" | "after"): string {
+  if (!tags) return prompt;
+  const own = splitTags(prompt);
+  const seen = new Set<string>();
+  for (const tag of own) {
+    // Split on BREAK / <break> when indexing seen tags so `BREAK masterpiece`
+    // without a comma still prevents prepending a duplicate `masterpiece`.
+    for (const part of tag.replace(/<break>/gi, " BREAK ").split(/\bBREAK\b/)) {
+      const key = part.trim().toLowerCase();
+      if (key) seen.add(key);
+    }
+  }
+  const fresh: string[] = [];
+  for (const tag of splitTags(tags)) {
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    fresh.push(tag);
+  }
+  if (fresh.length === 0) return prompt;
+  return (where === "before" ? [...fresh, ...own] : [...own, ...fresh]).join(", ");
+}
+
+/** Tags split on commas, trimmed, empties dropped. */
+function splitTags(text: string): string[] {
+  return text
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }

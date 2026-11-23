@@ -15,12 +15,16 @@ export interface QueuedPrompt {
   workerId?: number;
   /** Generation tab that was active when the prompt was queued. */
   tabId?: string;
+  /** Adopted from a server queue update rather than submitted by this page:
+   *  another client (or this page before a reload) queued it, so its params
+   *  are unknown here. */
+  restored?: boolean;
 }
 
 type ModeOutputs = Record<GenerationMode, string | null>;
 
 function emptyModeOutputs(): ModeOutputs {
-  return { txt2img: null, img2img: null, inpainting: null, image_edit: null, video: null };
+  return { txt2img: null, img2img: null, inpainting: null, outpainting: null, image_edit: null, video: null };
 }
 
 class ProgressStore {
@@ -231,7 +235,7 @@ class ProgressStore {
   }
 
   get displayImage() {
-    return this.previewImage ?? this.lastOutputImage;
+    return (this.isGenerating ? this.previewImage : null) ?? this.lastOutputImage;
   }
 
   /** Non-empty while a regional inpaint chain is between ComfyUI steps. */
@@ -502,7 +506,7 @@ class ProgressStore {
 
     this.pendingPrompts = this.pendingPrompts.filter((p) => p.promptId !== promptId);
 
-    if (this.activePromptId === promptId) {
+    if (this.activePromptId === promptId || this.pendingPrompts.length === 0) {
       this.activePromptId = null;
       this.currentStep = 0;
       this.totalSteps = 0;
@@ -519,6 +523,27 @@ class ProgressStore {
     }
 
     return item;
+  }
+
+  /**
+   * Prompt ids that ended in an execution error. Kept so a caller waiting on a
+   * prompt (continuous generation) can tell a failure from a finished image
+   * once the prompt leaves the queue. Not reactive: nothing renders from it.
+   */
+  private failedPromptIds = new Set<string>();
+
+  markFailed(promptId: string) {
+    this.failedPromptIds.add(promptId);
+    // Nobody may ever ask about most of these, so keep the set small.
+    if (this.failedPromptIds.size > 100) {
+      const oldest = this.failedPromptIds.values().next().value;
+      if (oldest !== undefined) this.failedPromptIds.delete(oldest);
+    }
+  }
+
+  /** True once if `promptId` failed, and forgets it. */
+  takeFailed(promptId: string): boolean {
+    return this.failedPromptIds.delete(promptId);
   }
 
   /** Remove a specific prompt from the queue (e.g. on error). */
@@ -674,6 +699,7 @@ class ProgressStore {
             // Stamp enqueuedAt so the reconciler's 30s activity guard has a
             // baseline for prompts restored from an SSE snapshot.
             enqueuedAt: now,
+            restored: true,
           },
         ];
       }

@@ -147,6 +147,14 @@ function mergeWithList(primary: unknown, secondary: unknown, listKey: string): u
   return { ...secondary, ...primary, [listKey]: mergeList(primary[listKey], secondary[listKey]) };
 }
 
+/** Cards by id, and the sample characters either side has had (see `sampleCharacters.ts`). */
+function mergeCharacters(primary: unknown, secondary: unknown): unknown {
+  const merged = mergeWithList(primary, secondary, "characters");
+  if (!isObj(merged) || !isObj(primary) || !isObj(secondary)) return merged;
+  const seen = [primary.samples, secondary.samples].flatMap((s) => (Array.isArray(s) ? s : []));
+  return seen.length > 0 ? { ...merged, samples: [...new Set(seen)] } : merged;
+}
+
 function mergeArtistFavourites(primary: unknown, secondary: unknown): unknown {
   if (!isObj(primary)) return secondary ?? primary;
   if (!isObj(secondary)) return primary;
@@ -210,6 +218,16 @@ function mergeGallery(primary: unknown, secondary: unknown): unknown {
   };
 }
 
+function mergeLoraPresets(primary: unknown, secondary: unknown): unknown {
+  const merged = mergeWithList(primary, secondary, "presets");
+  if (!isObj(merged) || !isObj(primary) || !isObj(secondary)) return merged;
+  if (!isObj(primary.triggers) && !isObj(secondary.triggers)) return merged;
+  return {
+    ...merged,
+    triggers: mergeRecord(primary.triggers, secondary.triggers),
+  };
+}
+
 function mergeEnhancerSessions(primary: unknown, secondary: unknown): unknown {
   if (!isObj(primary)) return secondary ?? primary;
   if (!isObj(secondary)) return primary;
@@ -236,6 +254,16 @@ function mergeStyleCreator(primary: unknown, secondary: unknown): unknown {
   return { ...secondary, ...primary, history: history.slice(-MERGED_STYLE_HISTORY_MAX) };
 }
 
+function mergeShortcuts(primary: unknown, secondary: unknown): unknown {
+  if (!isObj(primary)) return secondary ?? primary;
+  if (!isObj(secondary)) return primary;
+  return {
+    ...secondary,
+    ...primary,
+    customBindings: mergeRecord(primary.customBindings, secondary.customBindings),
+  };
+}
+
 /**
  * Merge two snapshots of the same user's data (see the module docs). Either
  * side may be missing categories; the result has every category either had.
@@ -257,20 +285,21 @@ export function mergeUserPrefs(primary: UserPrefsData, secondary: UserPrefsData)
     prompt_history: pick("prompt_history", mergePromptHistory),
     prompt_presets: pick("prompt_presets", (a, b) => mergeWithList(a, b, "presets")),
     styles: pick("styles", (a, b) => mergeWithList(a, b, "styles")),
-    lora_presets: pick("lora_presets", (a, b) => mergeWithList(a, b, "presets")),
+    lora_presets: pick("lora_presets", mergeLoraPresets),
     profiles: pick("profiles", (a, b) => mergeWithList(a, b, "profiles")),
     artist_favourites: pick("artist_favourites", mergeArtistFavourites),
     gallery_boards: pick("gallery_boards", mergeGallery),
     autocomplete: pick("autocomplete", fill),
     accessibility: pick("accessibility", fill),
     notes: pick("notes", mergeNotes),
-    characters: pick("characters", (a, b) => mergeWithList(a, b, "characters")),
+    characters: pick("characters", mergeCharacters),
     video_timeline: pick("video_timeline", fill),
     locale: pick("locale", (a) => a),
     artist_local_previews: pick("artist_local_previews", mergeArtistLocalPreviews),
     enhancer_sessions: pick("enhancer_sessions", mergeEnhancerSessions),
     style_creator: pick("style_creator", mergeStyleCreator),
     anime_scene: pick("anime_scene", fill),
+    shortcuts: pick("shortcuts", mergeShortcuts),
   };
   for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
   return merged as UserPrefsData;

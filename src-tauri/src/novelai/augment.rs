@@ -199,6 +199,12 @@ pub async fn run(
 ) -> Result<(), AppError> {
     match run_inner(&state, &sink, &prompt_id, &prepared, &credential).await {
         Ok(()) => Ok(()),
+        // Cancelled while it waited for the account: nothing to report.
+        Err(err) if state.prompt_queue.is_cancelled(&prompt_id) => {
+            log::info!("NovelAI Director Tools {prompt_id} cancelled ({err})");
+            state.prompt_queue.cleanup_alias(&prompt_id);
+            Ok(())
+        }
         Err(err) => {
             sink.emit(
                 "comfyui:execution_error",
@@ -229,7 +235,8 @@ async fn run_inner(
     } = prepared;
     let (tool, width, height) = (*tool, *width, *height);
 
-    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?
+        .cancel_when(|| state.prompt_queue.is_cancelled(prompt_id));
     let body = build_request(tool, &params.image, width, height, params);
 
     // The endpoint does not stream, so there is no real progress to report.
@@ -251,6 +258,7 @@ async fn run_inner(
     );
 
     let images = client.augment_image(&body).await?;
+    client.release();
 
     // Cancelling cannot recall a request that is already paid for, so a
     // cancelled run still delivers nothing rather than half a result set: the

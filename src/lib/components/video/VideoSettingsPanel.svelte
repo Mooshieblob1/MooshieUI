@@ -63,6 +63,7 @@
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import VideoLoraStack from "./VideoLoraStack.svelte";
   import { uploadForVideo, videoReferenceSlotsFree } from "../../utils/galleryActions.js";
 
 
@@ -259,6 +260,13 @@
   const loraPresetSelected = $derived(turboPreset.id !== "larryvrh");
   let loraPresetNodesReady = $state(false);
   const turboLoraName = $derived(installedName(turboPreset.file));
+  /**
+   * A LightX2V/PDD preset fixes its own adapter file, so the custom picker shows
+   * that file read-only - but only while Turbo is on. The preset select is
+   * hidden with Turbo off, so locking the picker then left it grey with no
+   * visible reason and no way back.
+   */
+  const turboLoraLocked = $derived(generation.videoTurboEnabled && loraPresetSelected);
   $effect(() => { generation.videoPresetLora = loraPresetSelected ? turboLoraName : null; });
   /** Whether a LoRA filename (any basename) is present in the LoRA list. */
   function loraInstalled(filename: string): boolean {
@@ -1592,6 +1600,9 @@
     {/if}
   </div>
 
+  <!-- The user's own H3 LoRAs, chained before the acceleration adapter. -->
+  <VideoLoraStack />
+
   <!-- One exclusive sampling mode. Existing Turbo preferences are preserved. -->
   <div class="space-y-2">
     <label class="flex min-h-11 items-center gap-2 text-xs text-neutral-300">
@@ -1952,8 +1963,9 @@
           </label>
           <select
             id="custom-turbo-lora"
-            disabled={loraPresetSelected}
-            value={loraPresetSelected ? turboLoraName ?? turboPreset.file.filename : generation.videoTurboLora}
+            disabled={turboLoraLocked}
+            aria-describedby={turboLoraLocked ? "custom-turbo-lora-locked" : undefined}
+            value={turboLoraLocked ? turboLoraName ?? turboPreset.file.filename : generation.videoTurboLora}
             onchange={(e) => {
               generation.videoTurboLora = (e.currentTarget as HTMLSelectElement).value;
               generation.saveSettings();
@@ -1964,6 +1976,11 @@
               <option value={m}>{m}</option>
             {/each}
           </select>
+          {#if turboLoraLocked}
+            <p id="custom-turbo-lora-locked" class="mt-1 text-[11px] text-neutral-400">
+              {locale.t("generation.video.custom_turbo_lora_locked", { preset: turboPreset.label, larryvrh: H3_TURBO_PRESETS[0].label })}
+            </p>
+          {/if}
         </div>
 
         <!-- Sampler -->

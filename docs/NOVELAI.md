@@ -30,10 +30,10 @@ For setup and everyday use, see the [NovelAI wiki guide](https://github.com/Moos
 9. An Enhance button in the gallery lightbox, and a matching gallery
    context menu entry. It redraws an existing image at up to 3MP, using the
    prompt already in the generation panel.
-10. An Enhance for V5 button that rewrites a prompt into the V5 format through
-    the configured LLM, staged behind a review diff. Up to four reference
-    images can be attached to that rewrite, so a look the user cannot word can
-    be shown instead of described.
+10. An Enhance for V5 button that opens a chat with the configured LLM, which
+    writes prompts in the V5 format and applies them in one click or through
+    a per-field review diff. Up to four reference images can be attached to a
+    message, so a look the user cannot word can be shown instead of described.
 11. Personal encrypted API keys for hosted users and moderators. Desktop and
     admin accounts use the owner's config key; named accounts never fall back
     to it. See section 5.
@@ -520,12 +520,14 @@ Two details make it work:
   names a NovelAI model that ComfyUI cannot load, so the request carries a
   separate `local_checkpoint` (plus its architecture and v-pred flag). Without
   one, the pass is skipped and the image is delivered untouched.
-- **The prompt does not need swapping.** The NovelAI syntax rewrite happens in
-  Rust while the request body is built and never mutates `params`, so the
-  top-level prompt stays in ComfyUI syntax and is what the local pass uses. The
+- **The prompt is translated, not swapped.** The top-level prompt reaches Rust
+  in the syntax the user wrote, NovelAI weights included (see section 4).
+  `upscale_standalone::build_params` runs it through
+  `prompt_syntax::from_novelai` so the local pass gets ComfyUI syntax. The
   request also carries optional `local_positive_prompt` and
-  `local_negative_prompt` overrides, for a caller that wants the local pass to
-  run on different text; when they are null the top-level prompt is used.
+  `local_negative_prompt` overrides, already in ComfyUI syntax, for a caller
+  that wants the local pass to run on different text; when they are null the
+  translated top-level prompt is used.
 
 All stages report as one generation. With NovelAI face detailing enabled, the
 local refiner uses a private ComfyUI websocket connected before submission. It
@@ -671,10 +673,29 @@ information, as does copying the saved PNG to the clipboard.
 
 ## 4. Prompt syntax
 
-Outside NovelAI mode the app translates NovelAI weight syntax (`1.1::tag::`)
-into ComfyUI syntax (`(tag:1.1)`). In NovelAI mode that reverses: what the user
-types in A1111 or ComfyUI syntax is converted to NovelAI syntax on the way out.
-Behaviour outside NovelAI mode is unchanged.
+The prompt box holds whatever the user typed or imported, in any of the
+supported weight syntaxes, and nothing rewrites it there. It is translated only
+when a request is built, and only as far as the backend needs
+(`src/lib/utils/promptWeightSyntax.ts`):
+
+- **Outside NovelAI mode** NovelAI weight syntax (`1.1::tag::`, `{tag}`,
+  `[tag]`) is translated into ComfyUI syntax (`(tag:1.1)`).
+- **In NovelAI mode** NovelAI syntax goes out exactly as written. A1111 or
+  ComfyUI weights (`(tag:1.2)`) are converted to NovelAI syntax in Rust
+  (`prompt_syntax::to_novelai`), which leaves text already in NovelAI syntax
+  alone.
+- **A prompt imported from a NovelAI image** keeps the syntax NovelAI wrote,
+  in the base prompt, the undesired content and every character box.
+- **The weight buttons** edit a weighted tag in the syntax it already has. A
+  plain selection is wrapped as `(tag:1.05)`, or as `1.05::tag::` while a
+  NovelAI model is selected.
+
+Until 2026-11-13 a NovelAI prompt was converted to ComfyUI syntax in the
+frontend and back to NovelAI syntax in Rust. That round trip changed the text
+NovelAI received: `1.2::a, b::` became one span per tag, weights were rounded
+to two decimals, and `-1::hat::` lost its sign and went out as `-hat`. Imports
+were converted to ComfyUI syntax as well, so a prompt copied off novelai.net
+never looked the way it was written.
 
 The `@` sigil is also mode-dependent. In ComfyUI mode artist tags are inserted as
 `@tag`. In NovelAI mode they are inserted bare, because there `@` is the
@@ -3637,3 +3658,179 @@ these files).
 
 **Do not skip:** 1, 3, 6.
 **Low-risk, skip if short on time:** 4, 8, 9.
+
+### 2026-11-13 - NovelAI weight syntax is kept as written
+
+**Reported as.** A prompt imported from a NovelAI image showed `(tag:1.2)`
+where the image said `1.2::tag::`, and the request for a way to keep the
+NovelAI format, or at least send it to NovelAI correctly.
+
+**What was happening.** Two conversions, both on by default.
+
+- Import: `novelai::metadata` (desktop) and `novelaiPngMetadata.ts` (browser
+  mode) rewrote every imported prompt into ComfyUI syntax.
+- Send: `toParams()` translated NovelAI syntax into ComfyUI syntax for every
+  backend, and `prompt_syntax::to_novelai` translated it back for NovelAI. The
+  request did reach NovelAI in NovelAI syntax, but not the same text:
+  `1.2::rain, night::` went out as `1.2::rain::, 1.2::night::`, `1.05::tag::`
+  as `{tag}`, `1.234::tag::` as `1.23::tag::`, and `-1::hat::` as `-hat`,
+  because the frontend pattern did not read the minus sign. That last one
+  silently dropped every negative weight in the base prompt and undesired
+  content, including the `-1::trait::` spans Enhance for V5 writes. Character
+  boxes were never translated, so they were unaffected.
+
+**What changed.**
+
+- Imports keep the syntax NovelAI wrote, in every prompt field.
+- In NovelAI mode `toParams()` sends the base prompt and undesired content as
+  written. `to_novelai` still converts A1111 and InvokeAI weights, and leaves
+  NovelAI syntax alone. The translators moved out of the generation store into
+  `src/lib/utils/promptWeightSyntax.ts`.
+- The two places a NovelAI request's prompt is read as ComfyUI syntax now
+  translate it themselves with `prompt_syntax::from_novelai`: the local refine
+  pass (`upscale_standalone::build_params`) and the face-detail tag extraction
+  (`face_detail.rs`).
+- Negative weights survive the NovelAI to ComfyUI translation in both copies
+  (`-1::hat::` becomes `(hat:-1.00)`), and are highlighted and stepped as one
+  weighted tag in the prompt box.
+- The weight buttons wrap a plain selection as `1.05::tag::` while a NovelAI
+  model is selected, with the comma guard when the text ends in a digit.
+- Gallery artist detection strips NovelAI weight markers, since saved prompts
+  of NovelAI images now carry them.
+
+No toggle: nothing converts the text in the box any more, so there is nothing
+to switch off. Image metadata saved for a NovelAI generation now holds the
+prompt in the syntax it was typed in, which reverses the note under
+"Style fragment weights in NovelAI mode" above.
+
+**MCP:** no change. `setups::apply` writes the agent's prompt into
+`positive_prompt`, which takes the same two Rust translations.
+
+**Testing required: yes.** `cargo test` (6 new tests) and
+`scripts/tests/promptWeightSyntax.test.ts` (13 tests, run by Guardrails) cover
+the translation, the import and the buttons. The requests themselves need a
+NovelAI account.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Import an image from novelai.net whose prompt has `1.2::tag::`, `{tag}` and `-1::tag::` | The prompt, undesired content and character boxes show that syntax unchanged |
+| 2 | Generate it on the same NovelAI model, then open the result's metadata on novelai.net or re-import it | The prompt matches what was in the box, span for span |
+| 3 | NovelAI model, type `(blue hair:1.3)`, generate | The image is weighted; NovelAI's metadata shows `1.3::blue hair::` |
+| 4 | NovelAI model with local post-process on, prompt containing `1.2::tag::`, generate | The local pass runs and the result is not visibly affected by literal `::` text |
+| 5 | NovelAI model, select a plain tag, press the weight up button | It becomes `1.05::tag::`; pressing down returns the bare tag |
+| 6 | Local model, paste the NovelAI prompt from step 1, generate | Generates as before, weights applied |
+
+**Do not skip:** 1, 2.
+
+### 2026-11-17 - Enhance is a chat
+
+**Requested by:** the user: "let's overhaul Enhance V5 and all the other
+enhances to just be a straight up chat with the LLM of choosing. What I mean by
+this is, instead of opening up a modal where you enter your prompt, a chat with
+the LLM opens up and handles all the applying of prompts for you. Workflow is
+still the same where it spits out a prompt in the format of the model you
+enhanced for (i.e. Anima, NAI, etc) but you can give it feedback or ask it
+questions and actually see responses".
+
+**What changed.** The Enhance modal (Enhance for V5, the general Enhance and
+Enhance for H3) is replaced by a chat panel docked on the right of the app.
+It is not a modal: the prompt box and Generate stay usable while it is open,
+and closing it keeps the conversation and any answer still on its way.
+
+- Each flow has its own conversation, which is the persistent Enhance session
+  that already existed, so what the panel shows is exactly what goes back to
+  the model as history. New chat clears it.
+- The model may now talk back. Every Enhance system prompt ends with chat
+  rules (`CHAT_CLAUSE` in `utils/enhanceChat.ts`, mirrored as
+  `grounding::CHAT_RULES` in Rust for the general Enhance): an answer can start
+  with one `<reply>...</reply>` block for the user, and a message that only asks
+  a question gets a reply alone with no prompt. The reply is split off before
+  the prompt is parsed, validated, retried or tag-repaired, so none of that
+  machinery sees prose. A tag upsampler model never gets the rules.
+- Every answer joins the conversation as it arrives, not only when applied, so
+  feedback on an answer ("make her hair longer") revises the answer the user is
+  looking at. Undo no longer takes the exchange out of the session.
+- General and H3 answers apply with Replace (and Append for the general one
+  when the prompt box has text). V5 answers apply every field with Apply, or
+  open the same per-field review as before with Review: checkboxes per field,
+  removal rows, overlap chips, Isolate outfits, the opposite-outfit UC and the
+  token budget. The panel widens for the review.
+- Everything the modal had is in the composer or under Options: reference
+  images (upload, paste, gallery, or paste an image into the box) with labels,
+  Edit current prompt, Copy existing prompt, Isolate outfits on the current
+  prompt, the V5 language, Curate it, Keep artists and minors rule, the general
+  Enhance's length and artist tags, and Use memory notes. V5 notes, validator
+  problems, canon differences (Keep saved / Use canon redo the answer), the H3
+  format warning and idle note show on the answer. The newest answer has Retry.
+- Enter sends, Shift+Enter starts a new line, Ctrl+Enter sends without
+  generating. Escape closes the panel (or leaves the review). The left edge
+  drags to resize, remembered per browser.
+
+The comic page's per-panel Enhance and its V5 drafts stay one-click actions on
+the comic page; they write panels in place and were never the modal.
+
+**MCP:** no change. The MCP server has no Enhance tool and never reads the
+Enhance sessions.
+
+**Testing required: yes.** `cargo test` (8 new tests in `grounding`) and
+`scripts/tests/enhanceChat.test.ts` (6 tests, run by Guardrails) cover the
+reply split. The conversation needs a real LLM.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Any image model, press Enhance, type a scene, Enter | The panel opens on the right; a prompt card arrives, usually with a short reply above it |
+| 2 | Type "make it night", Enter | The new prompt revises the last one rather than starting over |
+| 3 | Ask "why did you add rim lighting?" | A reply arrives with no prompt card |
+| 4 | Press Replace on a prompt card | The prompt box changes, Undo appears under it, the card shows Applied |
+| 5 | V5 model with two character boxes, ask for a scene, press Review | The per-field review opens in a wider panel; Apply selected writes the ticked rows |
+| 6 | V5, press Apply on an answer | Base, UC and character boxes all change; Undo restores all of them |
+| 7 | Switch the model from V5 to a local checkpoint with the panel open | The panel switches to the general conversation; switching back shows the V5 one |
+| 8 | Video mode, Enhance, ask for a shot | An H3 format prompt arrives; Replace writes it |
+| 9 | Restart the app, open Enhance | The conversation is still there and its answers still apply |
+
+**Do not skip:** 1, 3, 5.
+
+### 2026-11-17 - Enhance chat back in a modal
+
+**Requested by:** the user: "this new enhance is hugely laggy, even when
+nothing is on the enhance menu, fix that and restore it back to the modal as a
+chat window pls".
+
+**What changed.** The Enhance chat is a modal chat window again
+(`EnhanceChatModal.svelte`, was `EnhanceChatPanel.svelte`) instead of a panel
+docked over the right of the app. Everything inside it is the same chat.
+
+- The window is centred over a dimmed app, full screen on a phone. The V5
+  review widens it to the old modal's width. Escape or a click beside it closes
+  it (a click beside the review does not), and the conversation stays.
+- Applying an answer (Replace, Append, Apply, or Apply selected in the review)
+  closes the window, the way the old modal did, and Undo appears under the
+  prompt box. Enhance opens the window again on the same conversation.
+- The panel's drag-to-resize, its remembered width, and the switch of
+  conversation when the model changed while it was open are gone: the window
+  covers the model picker, and each opening picks the conversation from the
+  model.
+- A session keeps up to 50 exchanges, each a full prompt. The window now
+  renders the newest 12 and a "Show earlier messages" button for the rest, so
+  opening a long chat stays light.
+- The gallery picker for reference images mounts only while picking.
+- The chat rules tell the model it is in a chat window opened from the prompt
+  box (`CHAT_CLAUSE` and `grounding::CHAT_RULES` changed together).
+
+The lag itself did not reproduce in a browser with a faked backend: opening,
+typing and idling cost the same with the panel open as closed. The panel was
+the one Enhance surface that stayed on screen over the live app; the modal
+shell is the one the old Enhance used without complaints.
+
+**MCP:** no change.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Press Enhance, type a scene, Enter | A centred chat window opens; the answer arrives in it |
+| 2 | Press Replace (or Apply on V5) | The window closes, the prompt box changes, Undo shows |
+| 3 | Press Enhance again | The same conversation, newest answer at the bottom, marked Applied |
+| 4 | V5 answer, Review | The window widens to the two column review; Apply selected closes it |
+| 5 | A chat with more than 12 exchanges | "Show earlier messages" at the top loads 12 more per press |
+| 6 | Use the app with the chat open and closed | No stutter typing, scrolling or switching |
+
+**Do not skip:** 1, 2, 6.

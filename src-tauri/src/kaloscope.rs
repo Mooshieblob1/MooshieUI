@@ -124,9 +124,12 @@ impl ArtistDetector {
         self.labels = Vec::new();
     }
 
-    /// Load the session and labels from `root_dir/kaloscope-3`. The caller must
-    /// have initialised ONNX Runtime first (`InterrogatorState::init_ort`).
-    pub fn load(&mut self, root_dir: &Path) -> Result<(), AppError> {
+    /// Load the session and labels from `root_dir/kaloscope-3` using `env`.
+    pub fn load(
+        &mut self,
+        root_dir: &Path,
+        env: &ort::environment::Environment,
+    ) -> Result<(), AppError> {
         if self.session.is_some() {
             return Ok(());
         }
@@ -141,7 +144,7 @@ impl ArtistDetector {
         let thread_count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4);
-        let session = Session::builder()
+        let session = Session::builder(env)
             .map_err(|e| {
                 AppError::InterrogatorError(format!("Failed to create session builder: {}", e))
             })?
@@ -162,13 +165,10 @@ impl ArtistDetector {
         Ok(())
     }
 
-    /// Score `img` and return up to `MAX_ARTISTS` artists whose softmax score
-    /// is at least `threshold`, highest first.
-    pub fn detect(
-        &mut self,
-        img: &image::DynamicImage,
-        threshold: f32,
-    ) -> Result<Vec<TagResult>, AppError> {
+    /// Score `img` and return its `MAX_ARTISTS` best artists, highest first,
+    /// whatever their score. Callers split them at the user's threshold, so the
+    /// near misses can still be offered when nothing clears it.
+    pub fn detect(&mut self, img: &image::DynamicImage) -> Result<Vec<TagResult>, AppError> {
         let session = self
             .session
             .as_mut()
@@ -189,8 +189,6 @@ impl ArtistDetector {
         let logits = outputs
             .get("logits")
             .ok_or_else(|| AppError::InterrogatorError("Kaloscope output 'logits' missing".into()))?
-            .downcast_ref::<ort::value::DynTensorValueType>()
-            .map_err(|e| AppError::InterrogatorError(format!("Output is not a tensor: {}", e)))?
             .try_extract_tensor::<f32>()
             .map_err(|e| AppError::InterrogatorError(format!("Failed to extract logits: {}", e)))?
             .1
@@ -208,7 +206,7 @@ impl ArtistDetector {
         Ok(top_artists(
             &softmax(&logits),
             &self.labels,
-            threshold,
+            0.0,
             MAX_ARTISTS,
         ))
     }

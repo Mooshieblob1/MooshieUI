@@ -20,6 +20,13 @@ pub async fn get_config(state: State<'_, Arc<AppState>>) -> Result<serde_json::V
     Ok(config_to_client_json(&config, true)?)
 }
 
+/// The Linux package manager that owns this install (`apt`, `dnf`, `zypper`,
+/// `pacman`), or `None` when the in-app updater should handle updates.
+#[tauri::command]
+pub fn app_package_manager() -> Result<Option<&'static str>, AppError> {
+    Ok(crate::package_manager::detect())
+}
+
 /// Which owner key fields read from an environment variable, and whether
 /// each variable is set. Names only, never values.
 #[tauri::command]
@@ -49,16 +56,25 @@ pub async fn update_config(
     mut config: AppConfig,
 ) -> Result<(), AppError> {
     normalize_config_fields(&mut config);
+    crate::config::validate_civitai_proxy(config.civitai_proxy.as_deref())
+        .map_err(AppError::Other)?;
     // Held across the save so a concurrent provider write cannot land between
     // the read that carries the key forward and the write that replaces config.
     let mut current = state.config.write().await;
     preserve_secrets(&mut config, &current);
+    crate::config::validate_civitai_proxy(config.civitai_proxy.as_deref())
+        .map_err(AppError::Other)?;
     save_config(&config).map_err(AppError::Other)?;
     state.trust_localhost.store(
         crate::config::local_trust_enabled(config.trust_localhost),
         std::sync::atomic::Ordering::SeqCst,
     );
+    let upnp_enabled = config.upnp_enabled;
     *current = config;
+    drop(current);
+    // The router toggle lives in the desktop window too (LAN access in app
+    // mode); a no-op unless the web server is on the LAN.
+    crate::lan_upnp::sync(upnp_enabled);
     Ok(())
 }
 
@@ -112,6 +128,25 @@ pub async fn set_gallery_path(
     };
 
     Ok(resolved)
+}
+
+/// The LAN settings (addresses, firewall, accounts) for the desktop window.
+/// `action` names the browser endpoint it stands in for (`accounts`,
+/// `register`, ...); the reply carries that endpoint's status and JSON body,
+/// so the settings page handles both modes the same way.
+#[tauri::command]
+pub async fn lan_admin(
+    state: State<'_, Arc<AppState>>,
+    action: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, AppError> {
+    let (status, data) = webserver::desktop_lan_admin(
+        state.inner().clone(),
+        &action,
+        body.unwrap_or(serde_json::Value::Null),
+    )
+    .await;
+    Ok(serde_json::json!({ "status": status, "data": data }))
 }
 
 /// Switch to browser mode at runtime: save config, start the web server,
@@ -168,6 +203,10 @@ pub async fn switch_to_browser_mode(
             );
         }
         port = actual_port;
+    } else if let Some(endpoint) = crate::lan_discovery::snapshot().0 {
+        // Started earlier (app mode with LAN access on), possibly on a
+        // fallback port.
+        port = endpoint.port;
     }
 
     // Start a new heartbeat watchdog — the previous one exits when

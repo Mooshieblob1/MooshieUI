@@ -1,11 +1,20 @@
-//! Style reference injection: Flux Redux (core nodes) and IP-Adapter+ (SD1.5/SDXL).
+//! Style reference injection: Flux Redux (core nodes), IP-Adapter+ (SD1.5/SDXL)
+//! and Anima references (Reference Adapter or SnapRef for a character, or the
+//! art style method for a picture's palette and texture).
 //!
 //! Flux Redux: StyleModelLoader + CLIPVisionLoader + CLIPVisionEncode + StyleModelApply
 //! IP-Adapter: IPAdapterUnifiedLoader + IPAdapter (IPAdapterAdvanced)
-//! Both insert into txt2img, img2img, and inpainting workflows (not video, not image_edit).
+//! Anima: LoadImage (+ a second LoadImage and ImageStitch for two characters) +
+//!   AnimaRefAdapter (ComfyUI-Anima-Ref-Adapter, auto-installed with the
+//!   style-transfer packs), which patches the model for the existing KSampler.
+//!   SnapRefSimple works the same way with up to eight pictures, and
+//!   MooshieAnimaArtStyle (bundled in mooshie-nodes) takes one picture's art
+//!   style without its subject.
+//! All insert into txt2img, img2img, and inpainting workflows (not video, not image_edit).
 
 use serde_json::json;
 
+use crate::comfyui::nodes::ANIMA_REF_ADAPTER_LORA_FILENAME;
 use crate::comfyui::types::GenerationParams;
 
 use super::WorkflowResult;
@@ -23,9 +32,174 @@ fn is_sdxl_family(arch: &str) -> bool {
     matches!(arch, "sdxl" | "illustrious" | "pony")
 }
 
+fn is_anima_family(arch: &str) -> bool {
+    arch == "anima"
+}
+
 /// True when the current model family supports style reference.
 pub fn family_supports_style_ref(arch: &str) -> bool {
-    is_flux1_family(arch) || is_sd15_family(arch) || is_sdxl_family(arch)
+    is_flux1_family(arch) || is_sd15_family(arch) || is_sdxl_family(arch) || is_anima_family(arch)
+}
+
+/// True when this request runs the Anima character reference, which patches
+/// the model itself (callers keep other model patches such as TeaCache off).
+pub fn anima_ref_active(params: &GenerationParams) -> bool {
+    params.style_ref_enabled
+        && params.mode != "video"
+        && params.mode != "image_edit"
+        && is_anima_family(&params.model_architecture)
+}
+
+pub fn snapref_active(params: &GenerationParams) -> bool {
+    anima_ref_active(params) && params.anima_ref_method == "snapref"
+}
+
+/// True when this request runs the Anima art style method (MooshieAnimaArtStyle).
+pub fn anima_art_style_active(params: &GenerationParams) -> bool {
+    anima_ref_active(params) && params.anima_ref_method == "art_style"
+}
+
+/// Validate the Anima art style inputs (the picture itself is checked with
+/// the other `style_ref_image` users).
+pub fn validate_anima_art_style(params: &GenerationParams) -> Result<(), String> {
+    if !anima_art_style_active(params) {
+        return Ok(());
+    }
+    let matched = params.anima_art_style_match;
+    let megapixels = params.anima_art_style_megapixels;
+    if !matched.is_finite()
+        || !(0.0..=1.0).contains(&matched)
+        || !megapixels.is_finite()
+        || !(0.5..=4.0).contains(&megapixels)
+    {
+        return Err("Art style match must be 0 to 1 and picture size 0.5 to 4 megapixels.".into());
+    }
+    Ok(())
+}
+
+pub fn validate_snapref(params: &GenerationParams) -> Result<(), String> {
+    if !["", "anima_ref_adapter", "snapref", "art_style"]
+        .contains(&params.anima_ref_method.as_str())
+    {
+        return Err("Unknown Anima reference method.".into());
+    }
+    if !snapref_active(params) {
+        return Ok(());
+    }
+    if trimmed_image(params.snapref_adapter.as_deref()).is_none() {
+        return Err("Select or download SnapRef adapter weights before generating.".into());
+    }
+    if !["Character & Style", "Character"].contains(&params.snapref_mode.as_str()) {
+        return Err("Unknown SnapRef mode.".into());
+    }
+    if params.snapref_references.len() > 8
+        || !params
+            .snapref_references
+            .iter()
+            .any(|r| trimmed_image(r.image.as_deref()).is_some())
+    {
+        return Err(
+            "SnapRef requires between one and eight reference images of the same character.".into(),
+        );
+    }
+    if !params.snapref_fidelity.is_finite()
+        || !(0.0..=1.0).contains(&params.snapref_fidelity)
+        || params
+            .snapref_references
+            .iter()
+            .any(|r| !r.strength.is_finite() || !(0.0..=2.0).contains(&r.strength))
+    {
+        return Err("SnapRef strength must be 0–2 and fidelity must be 0–1.".into());
+    }
+    Ok(())
+}
+
+pub fn inject_snapref(result: &mut WorkflowResult, params: &GenerationParams) {
+    let id = result.next_id.to_string();
+    let mut inputs = json!({
+        "model": [result.model_source.0, result.model_source.1],
+        "clip": [result.clip_source.0, result.clip_source.1],
+        "vae": [result.vae_source.0, result.vae_source.1],
+        "adapter": params.snapref_adapter.as_deref().unwrap_or("").trim(),
+        "mode": params.snapref_mode,
+        "fidelity": params.snapref_fidelity,
+    });
+    for (i, (image, strength)) in params
+        .snapref_references
+        .iter()
+        .filter_map(|r| trimmed_image(r.image.as_deref()).map(|image| (image, r.strength)))
+        .enumerate()
+    {
+        let suffix = if i == 0 {
+            String::new()
+        } else {
+            format!("_{}", i + 1)
+        };
+        inputs[format!("reference{suffix}")] = json!(image);
+        inputs[format!("strength{suffix}")] = json!(strength);
+    }
+    result.workflow.insert(
+        id.clone(),
+        json!({"class_type": "SnapRefSimple", "inputs": inputs}),
+    );
+    result.model_source = (id.clone(), 0);
+    result.next_id += 1;
+    if let Some(sampler) = result.workflow.get_mut(&result.sampler_id) {
+        sampler["inputs"]["model"] = json!([id, 0]);
+    }
+}
+
+/// Inject the Anima art style method: the picture's per-block channel
+/// statistics steer the image's, so its palette, tonality and texture carry
+/// over without its subject. The node shrinks the picture itself.
+pub fn inject_anima_art_style(result: &mut WorkflowResult, params: &GenerationParams) {
+    let image = trimmed_image(params.style_ref_image.as_deref()).unwrap_or("");
+    let load_image_id = result.next_id.to_string();
+    result.workflow.insert(
+        load_image_id.clone(),
+        json!({
+            "class_type": "LoadImage",
+            "inputs": {
+                "image": image
+            }
+        }),
+    );
+    let style_id = (result.next_id + 1).to_string();
+    result.workflow.insert(
+        style_id.clone(),
+        json!({
+            "class_type": "MooshieAnimaArtStyle",
+            "inputs": {
+                "model": [result.model_source.0.clone(), result.model_source.1],
+                "clip": [result.clip_source.0.clone(), result.clip_source.1],
+                "vae": [result.vae_source.0.clone(), result.vae_source.1],
+                "image": [load_image_id, 0],
+                "stats_match": params.anima_art_style_match.clamp(0.0, 1.0),
+                "restyle": params.anima_art_style_restyle,
+                "reference_megapixels": params.anima_art_style_megapixels.clamp(0.5, 4.0)
+            }
+        }),
+    );
+    result.next_id += 2;
+    result.model_source = (style_id.clone(), 0);
+    if let Some(sampler) = result.workflow.get_mut(&result.sampler_id) {
+        sampler["inputs"]["model"] = json!([style_id, 0]);
+    }
+}
+
+/// `AnimaRefAdapter.correction` choices.
+const ANIMA_REF_CORRECTIONS: &[&str] = &["apg", "rescale", "none"];
+
+fn anima_ref_correction(correction: &str) -> &str {
+    if ANIMA_REF_CORRECTIONS.contains(&correction) {
+        correction
+    } else {
+        "apg"
+    }
+}
+
+fn trimmed_image(image: Option<&str>) -> Option<&str> {
+    image.map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// `StyleModelApply.strength_type` choices in ComfyUI core.
@@ -260,6 +434,89 @@ pub fn inject_ipadapter(result: &mut WorkflowResult, params: &GenerationParams) 
     let _ = arch;
 }
 
+/// Inject the Anima Reference Adapter: the reference image (or two, side by
+/// side) patches the model, and the existing sampler keeps sampling as usual.
+pub fn inject_anima_ref_adapter(result: &mut WorkflowResult, params: &GenerationParams) {
+    let image = trimmed_image(params.style_ref_image.as_deref()).unwrap_or("");
+    let mut next_id = result.next_id;
+
+    let load_image_id = next_id.to_string();
+    result.workflow.insert(
+        load_image_id.clone(),
+        json!({
+            "class_type": "LoadImage",
+            "inputs": {
+                "image": image
+            }
+        }),
+    );
+    next_id += 1;
+    let mut reference = (load_image_id, 0);
+
+    // Two characters: the second reference goes to the right of the first, as
+    // in the adapter's own two-character workflow.
+    if let Some(second) = trimmed_image(params.style_ref_image_2.as_deref()) {
+        let second_id = next_id.to_string();
+        result.workflow.insert(
+            second_id.clone(),
+            json!({
+                "class_type": "LoadImage",
+                "inputs": {
+                    "image": second
+                }
+            }),
+        );
+        next_id += 1;
+
+        let stitch_id = next_id.to_string();
+        result.workflow.insert(
+            stitch_id.clone(),
+            json!({
+                "class_type": "ImageStitch",
+                "inputs": {
+                    "image1": [reference.0, reference.1],
+                    "image2": [second_id, 0],
+                    "direction": "right",
+                    "match_image_size": true,
+                    "spacing_width": 0,
+                    "spacing_color": "white"
+                }
+            }),
+        );
+        next_id += 1;
+        reference = (stitch_id, 0);
+    }
+
+    let adapter_id = next_id.to_string();
+    result.workflow.insert(
+        adapter_id.clone(),
+        json!({
+            "class_type": "AnimaRefAdapter",
+            "inputs": {
+                "model": [result.model_source.0.clone(), result.model_source.1],
+                "vae": [result.vae_source.0.clone(), result.vae_source.1],
+                "image": [reference.0, reference.1],
+                "lora_name": ANIMA_REF_ADAPTER_LORA_FILENAME,
+                "ref_guidance": params.anima_ref_guidance.clamp(0.0, 20.0),
+                "correction": anima_ref_correction(&params.anima_ref_correction),
+                "strength": 1.0,
+                "ref_end": params.style_ref_end.clamp(0.0, 1.0),
+                "ref_megapixels": 1.0
+            }
+        }),
+    );
+    next_id += 1;
+
+    result.model_source = (adapter_id, 0);
+    result.next_id = next_id;
+
+    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+        if let Some(inputs) = sampler_node.get_mut("inputs") {
+            inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+        }
+    }
+}
+
 /// Main entry point: dispatch to the correct injector based on model family.
 /// Returns Ok(()) if injected, Err(msg) if the family is unsupported.
 pub fn inject_style_ref(result: &mut WorkflowResult, params: &GenerationParams) {
@@ -268,6 +525,14 @@ pub fn inject_style_ref(result: &mut WorkflowResult, params: &GenerationParams) 
         inject_flux_redux(result, params);
     } else if is_sd15_family(arch) || is_sdxl_family(arch) {
         inject_ipadapter(result, params);
+    } else if is_anima_family(arch) {
+        if snapref_active(params) {
+            inject_snapref(result, params);
+        } else if anima_art_style_active(params) {
+            inject_anima_art_style(result, params);
+        } else {
+            inject_anima_ref_adapter(result, params);
+        }
     }
     // Unsupported families are caught by validate_params before reaching here.
 }
@@ -442,8 +707,8 @@ mod tests {
 
     #[test]
     fn test_unsupported_family_rejected_by_family_check() {
-        // Unsupported families: flux2, qwen, anima, sd3, etc.
-        for arch in &["flux2d", "qwen", "sd3", "anima", "wan", "chroma"] {
+        // Unsupported families: flux2, qwen, sd3, etc.
+        for arch in &["flux2d", "qwen", "sd3", "wan", "chroma"] {
             assert!(
                 !family_supports_style_ref(arch),
                 "family {} should be unsupported for style_ref",
@@ -459,12 +724,317 @@ mod tests {
             "sdxl",
             "illustrious",
             "pony",
+            "anima",
         ] {
             assert!(
                 family_supports_style_ref(arch),
                 "family {} should be supported for style_ref",
                 arch
             );
+        }
+    }
+
+    fn node<'a>(result: &'a WorkflowResult, class_type: &str) -> &'a serde_json::Value {
+        result
+            .workflow
+            .values()
+            .find(|v| v["class_type"] == class_type)
+            .unwrap_or_else(|| panic!("missing {class_type}"))
+    }
+
+    fn anima_params() -> GenerationParams {
+        let mut p = style_ref_params("anima");
+        p.mode = "txt2img".to_string();
+        p.anima_ref_guidance = 4.5;
+        p.anima_ref_correction = "apg".to_string();
+        p
+    }
+
+    #[test]
+    fn anima_ref_adapter_patches_the_sampler_model() {
+        let mut result = base_result();
+        inject_style_ref(&mut result, &anima_params());
+
+        let adapter = node(&result, "AnimaRefAdapter");
+        let inputs = &adapter["inputs"];
+        assert_eq!(inputs["model"], json!(["0", 0]));
+        assert_eq!(inputs["vae"], json!(["0", 2]));
+        assert_eq!(inputs["lora_name"], ANIMA_REF_ADAPTER_LORA_FILENAME);
+        assert_eq!(inputs["ref_guidance"], 4.5);
+        assert_eq!(inputs["correction"], "apg");
+        assert_eq!(inputs["ref_end"], 1.0);
+
+        let reference = &result.workflow[inputs["image"][0].as_str().unwrap()];
+        assert_eq!(reference["class_type"], "LoadImage");
+        assert_eq!(reference["inputs"]["image"], "style_ref.png");
+
+        assert_eq!(
+            result.workflow[&result.model_source.0]["class_type"],
+            "AnimaRefAdapter"
+        );
+        assert_eq!(
+            result.workflow["1"]["inputs"]["model"],
+            json!([result.model_source.0, 0])
+        );
+        // The conditioning is left alone.
+        assert_eq!(result.positive_source, ("2".to_string(), 0));
+        assert!(!result
+            .workflow
+            .values()
+            .any(|v| v["class_type"] == "ImageStitch"));
+    }
+
+    #[test]
+    fn anima_two_characters_stitch_the_second_reference_on_the_right() {
+        let mut result = base_result();
+        let mut params = anima_params();
+        params.style_ref_image_2 = Some("second.png".to_string());
+        inject_style_ref(&mut result, &params);
+
+        let adapter = node(&result, "AnimaRefAdapter");
+        let stitch = &result.workflow[adapter["inputs"]["image"][0].as_str().unwrap()];
+        assert_eq!(stitch["class_type"], "ImageStitch");
+        assert_eq!(stitch["inputs"]["direction"], "right");
+        let left = &result.workflow[stitch["inputs"]["image1"][0].as_str().unwrap()];
+        let right = &result.workflow[stitch["inputs"]["image2"][0].as_str().unwrap()];
+        assert_eq!(left["inputs"]["image"], "style_ref.png");
+        assert_eq!(right["inputs"]["image"], "second.png");
+    }
+
+    #[test]
+    fn anima_blank_second_reference_is_ignored() {
+        let mut result = base_result();
+        let mut params = anima_params();
+        params.style_ref_image_2 = Some("  ".to_string());
+        inject_style_ref(&mut result, &params);
+        assert!(!result
+            .workflow
+            .values()
+            .any(|v| v["class_type"] == "ImageStitch"));
+    }
+
+    #[test]
+    fn anima_ref_inputs_stay_inside_what_the_node_accepts() {
+        let mut result = base_result();
+        let mut params = anima_params();
+        params.anima_ref_guidance = 99.0;
+        params.anima_ref_correction = "linear".to_string();
+        params.style_ref_end = 3.0;
+        inject_anima_ref_adapter(&mut result, &params);
+
+        let inputs = &node(&result, "AnimaRefAdapter")["inputs"];
+        assert_eq!(inputs["ref_guidance"], 20.0);
+        assert_eq!(inputs["correction"], "apg");
+        assert_eq!(inputs["ref_end"], 1.0);
+    }
+
+    #[test]
+    fn anima_ref_active_only_for_anima_image_modes() {
+        let mut params = anima_params();
+        assert!(anima_ref_active(&params));
+        params.mode = "image_edit".to_string();
+        assert!(!anima_ref_active(&params));
+        params.mode = "txt2img".to_string();
+        params.style_ref_enabled = false;
+        assert!(!anima_ref_active(&params));
+        assert!(!anima_ref_active(&style_ref_params("sdxl")));
+    }
+    #[test]
+    fn older_requests_keep_the_existing_adapter_and_snapref_defaults() {
+        let mut value = serde_json::to_value(anima_params()).unwrap();
+        for key in [
+            "anima_ref_method",
+            "snapref_adapter",
+            "snapref_mode",
+            "snapref_fidelity",
+            "snapref_references",
+        ] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        let params: GenerationParams = serde_json::from_value(value).unwrap();
+        assert!(!snapref_active(&params));
+        assert_eq!(params.snapref_mode, "Character & Style");
+        assert_eq!(params.snapref_fidelity, 1.0);
+        let mut result = base_result();
+        inject_style_ref(&mut result, &params);
+        assert_eq!(
+            node(&result, "AnimaRefAdapter")["class_type"],
+            "AnimaRefAdapter"
+        );
+    }
+
+    #[test]
+    fn anima_art_style_patches_the_sampler_model_with_clip_and_vae() {
+        let mut p = anima_params();
+        p.anima_ref_method = "art_style".into();
+        p.style_ref_image_2 = Some("ignored.png".into());
+        p.anima_art_style_match = 0.4;
+        p.anima_art_style_restyle = false;
+        p.anima_art_style_megapixels = 2.0;
+        let mut result = base_result();
+        inject_style_ref(&mut result, &p);
+        let style = node(&result, "MooshieAnimaArtStyle");
+        let inputs = &style["inputs"];
+        assert_eq!(inputs["model"], json!(["0", 0]));
+        assert_eq!(inputs["clip"], json!(["0", 1]));
+        assert_eq!(inputs["vae"], json!(["0", 2]));
+        let picture = inputs["image"][0].as_str().unwrap();
+        assert_eq!(result.workflow[picture]["inputs"]["image"], "style_ref.png");
+        assert!((inputs["stats_match"].as_f64().unwrap() - 0.4).abs() < 1e-6);
+        assert_eq!(inputs["restyle"], false);
+        assert_eq!(inputs["reference_megapixels"], 2.0);
+        assert_eq!(
+            result.workflow["1"]["inputs"]["model"],
+            json!([result.model_source.0, 0])
+        );
+        assert_eq!(
+            result.workflow[&result.model_source.0]["class_type"],
+            "MooshieAnimaArtStyle"
+        );
+        assert!(!result
+            .workflow
+            .values()
+            .any(|n| n["class_type"] == "AnimaRefAdapter"
+                || n["class_type"] == "ImageStitch"
+                || n["class_type"] == "SnapRefSimple"));
+    }
+
+    #[test]
+    fn anima_art_style_defaults_and_ranges() {
+        let mut value = serde_json::to_value(anima_params()).unwrap();
+        for key in [
+            "anima_art_style_match",
+            "anima_art_style_restyle",
+            "anima_art_style_megapixels",
+        ] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        let mut p: GenerationParams = serde_json::from_value(value).unwrap();
+        assert_eq!(p.anima_art_style_match, 0.6);
+        assert!(p.anima_art_style_restyle);
+        assert_eq!(p.anima_art_style_megapixels, 1.0);
+        assert!(!anima_art_style_active(&p));
+        p.anima_ref_method = "art_style".into();
+        assert!(anima_art_style_active(&p));
+        assert!(validate_snapref(&p).is_ok());
+        assert!(validate_anima_art_style(&p).is_ok());
+        for (matched, megapixels) in [(1.1, 1.0), (-0.1, 1.0), (0.6, 0.4), (0.6, 4.5)] {
+            p.anima_art_style_match = matched;
+            p.anima_art_style_megapixels = megapixels;
+            assert!(
+                validate_anima_art_style(&p).is_err(),
+                "{matched} {megapixels}"
+            );
+        }
+        p.anima_ref_method = "nonsense".into();
+        assert!(validate_snapref(&p).is_err());
+        for mode in ["image_edit", "video"] {
+            let mut inactive = anima_params();
+            inactive.anima_ref_method = "art_style".into();
+            inactive.mode = mode.into();
+            assert!(!anima_art_style_active(&inactive));
+        }
+    }
+
+    fn snapref_params() -> GenerationParams {
+        let mut p = anima_params();
+        p.anima_ref_method = "snapref".into();
+        p.snapref_adapter = Some("subfolder/snapref_v2a.safetensors".into());
+        p.snapref_mode = "Character & Style".into();
+        p.snapref_fidelity = 1.0;
+        p.style_ref_image = None;
+        p.snapref_references = vec![crate::comfyui::types::SnapRefReference {
+            image: Some("character.png".into()),
+            strength: 1.0,
+        }];
+        p
+    }
+
+    #[test]
+    fn snapref_uses_the_existing_sampler_in_all_image_modes() {
+        for mode in ["txt2img", "img2img", "inpainting"] {
+            for adapter in [
+                "snapref_v1a.safetensors",
+                "subfolder/snapref_v2a_fp8.safetensors",
+            ] {
+                let mut p = snapref_params();
+                p.mode = mode.into();
+                p.snapref_adapter = Some(adapter.into());
+                assert!(validate_snapref(&p).is_ok());
+                let mut result = base_result();
+                inject_style_ref(&mut result, &p);
+                let inputs = &node(&result, "SnapRefSimple")["inputs"];
+                assert_eq!(inputs["adapter"], adapter);
+                assert_eq!(inputs["model"], json!(["0", 0]));
+                assert_eq!(inputs["clip"], json!(["0", 1]));
+                assert_eq!(inputs["vae"], json!(["0", 2]));
+                assert_eq!(inputs["reference"], "character.png");
+                assert_eq!(
+                    result.workflow["1"]["inputs"]["model"],
+                    json!([result.model_source.0, 0])
+                );
+                assert_eq!(result.positive_source, ("2".into(), 0));
+                assert!(!result
+                    .workflow
+                    .values()
+                    .any(|n| n["class_type"] == "AnimaRefAdapter"
+                        || n["class_type"] == "ImageStitch"));
+            }
+        }
+    }
+
+    #[test]
+    fn snapref_preserves_eight_weights_and_compacts_empty_slots() {
+        let mut p = snapref_params();
+        p.snapref_references = (0..8)
+            .map(|i| crate::comfyui::types::SnapRefReference {
+                image: Some(format!("ref_{i}.png")),
+                strength: i as f32 / 4.0,
+            })
+            .collect();
+        let mut result = base_result();
+        inject_style_ref(&mut result, &p);
+        let inputs = &node(&result, "SnapRefSimple")["inputs"];
+        assert_eq!(inputs["strength"], 0.0);
+        assert_eq!(inputs["reference_8"], "ref_7.png");
+        assert_eq!(inputs["strength_8"], 1.75);
+        p.snapref_references[0].image = Some("  ".into());
+        let mut result = base_result();
+        inject_style_ref(&mut result, &p);
+        let inputs = &node(&result, "SnapRefSimple")["inputs"];
+        assert_eq!(inputs["reference"], "ref_1.png");
+        assert_eq!(inputs["strength"], 0.25);
+        assert!(inputs.get("reference_8").is_none());
+    }
+
+    #[test]
+    fn snapref_validation_rejects_missing_inputs_and_invalid_ranges() {
+        let p = snapref_params();
+        let mut invalid = p.clone();
+        invalid.snapref_references.clear();
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_adapter = None;
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_mode = "cs".into();
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_references = vec![p.snapref_references[0].clone(); 9];
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_fidelity = 1.1;
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_references[0].strength = -0.1;
+        assert!(validate_snapref(&invalid).is_err());
+        let mut zero = p.clone();
+        zero.snapref_references[0].strength = 0.0;
+        assert!(validate_snapref(&zero).is_ok());
+        for mode in ["image_edit", "video"] {
+            let mut inactive = p.clone();
+            inactive.mode = mode.into();
+            assert!(!snapref_active(&inactive));
         }
     }
 }

@@ -1,3 +1,5 @@
+import { findFamily } from "../utils/architectures.js";
+
 /**
  * ComfyUI models subdirectory a ControlNet weight belongs in. Anima LLLite
  * weights load through core's `ModelPatchLoader`, which only lists
@@ -233,8 +235,9 @@ export function getPresetModel(
   const preset = getPreset(presetId);
   if (!preset) return null;
 
-  // Map architectures to their ControlNet compatibility
-  switch (arch) {
+  // Map architectures to their ControlNet compatibility. A registered family
+  // maps through its architecture id (SD3.5 Large Turbo uses the SD3 entries).
+  switch (findFamily(arch)?.arch.id ?? arch) {
     case "anima":
       return preset.models.anima ?? null;
     case "flux":
@@ -245,12 +248,11 @@ export function getPresetModel(
       return preset.models.illustrious ?? preset.models.sdxl ?? null;
     case "sdxl":
     case "pony":
-    case "kolors":
       return preset.models.sdxl ?? null;
     case "sd15":
       return preset.models.sd15 ?? null;
     default:
-      // Unknown or unsupported (auraflow, pixart, hunyuandit, cascade) — try best match
+      // Unknown or unsupported (auraflow, pixart, pixartalpha, hunyuandit, cascade) — try best match
       return preset.models.illustrious ?? preset.models.sdxl ?? preset.models.sd15 ?? null;
   }
 }

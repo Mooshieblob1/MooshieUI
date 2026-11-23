@@ -26,6 +26,8 @@
   import { showError } from "../../stores/errorModal.svelte.js";
   import { portal } from "../../utils/portal.js";
   import { sortCivitaiModels } from "../../utils/civitaiSort.js";
+  import { KREA2_EDIT_LORAS } from "../../utils/krea2Edit.js";
+  import { civitaiModelPageUrl, isCivitaiPageHost, isMatureCivitaiModel } from "../../utils/civitaiUrl.js";
 
   const CIVITAI_API_KEY_KEY = "mooshieui.civitai.apiKey.v1";
   const CIVITAI_COLUMNS_KEY = "mooshieui.civitai.columns.v1";
@@ -98,7 +100,15 @@
     { value: "text_encoders", label: locale.t("modelhub.filter.text_encoder") },
   ]);
 
-  const hfQuickLinks = [
+  interface HfQuickLink {
+    label: string;
+    url: string;
+    filename: string;
+    category: string;
+    sha256?: string;
+  }
+
+  const hfQuickLinks: readonly HfQuickLink[] = [
     {
       label: "SDXL Base 1.0",
       url: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
@@ -118,6 +128,37 @@
       category: "upscale_models",
     },
     {
+      label: "Flux.2 Klein 4B FP8",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
+      filename: "flux-2-klein-4b-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Flux.2 Klein 4B Base FP8",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4b-fp8/resolve/main/flux-2-klein-base-4b-fp8.safetensors",
+      filename: "flux-2-klein-base-4b-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      // Gated: needs an HF_TOKEN that has accepted the FLUX Non-Commercial License.
+      label: "Flux.2 Klein 9B FP8 (HF access)",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors",
+      filename: "flux-2-klein-9b-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Flux.2 Klein 9B KV FP8 (HF access)",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-kv-fp8/resolve/main/flux-2-klein-9b-kv-fp8.safetensors",
+      filename: "flux-2-klein-9b-kv-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Qwen3 8B FP8 (Flux.2 Klein 9B)",
+      url: "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors",
+      filename: "qwen_3_8b_fp8mixed.safetensors",
+      category: "text_encoders",
+    },
+    {
       // Gated: needs an HF_TOKEN that has accepted the FLUX Kommunity License.
       label: "FLUX 3 Klein INT8 (HF access)",
       url: "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-int8-convrot.safetensors",
@@ -130,11 +171,132 @@
       filename: "flux3-image-klein-base-int8-convrot.safetensors",
       category: "diffusion_models",
     },
+    // Stable Cascade: pick stage C as the model; the model panel pairs it with
+    // stage B on its own (the full checkpoint, or Lite stage B + stage A).
+    {
+      label: "Stable Cascade Stage C",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/comfyui_checkpoints/stable_cascade_stage_c.safetensors",
+      filename: "stable_cascade_stage_c.safetensors",
+      category: "checkpoints",
+    },
+    {
+      label: "Stable Cascade Stage B",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/comfyui_checkpoints/stable_cascade_stage_b.safetensors",
+      filename: "stable_cascade_stage_b.safetensors",
+      category: "checkpoints",
+    },
+    {
+      label: "Stable Cascade Lite Stage C",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/stage_c_lite_bf16.safetensors",
+      filename: "stable_cascade_stage_c_lite_bf16.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Stable Cascade Lite Stage B",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/stage_b_lite_bf16.safetensors",
+      filename: "stable_cascade_stage_b_lite_bf16.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Stable Cascade Stage A (VAE)",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/stage_a.safetensors",
+      filename: "stage_a.safetensors",
+      category: "vae",
+    },
+    {
+      label: "MOSS-Image INT8",
+      url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_sft_int8_convrot.safetensors",
+      filename: "moss_image_sft_int8_convrot.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "MOSS-Image Base INT8",
+      url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_base_int8_convrot.safetensors",
+      filename: "moss_image_base_int8_convrot.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Qwen3.5 9B W4A8 (MOSS-Image)",
+      url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+      filename: "qwen3.5_9b_w4a8_gptq.safetensors",
+      category: "text_encoders",
+    },
     {
       label: "Qwen3-VL 4B FP8 (Krea 2, FLUX 3 Klein)",
       url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
       filename: "qwen3vl_4b_fp8_scaled.safetensors",
       category: "text_encoders",
+    },
+    // SD3 / SD3.5 split files. city96's GGUFs are ungated diffusion models;
+    // Stability's own files need an HF_TOKEN that accepted their license. The
+    // three encoders are Comfy-Org's ungated copies (TripleCLIPLoader).
+    {
+      label: "SD3.5 Large Turbo Q8 GGUF",
+      url: "https://huggingface.co/city96/stable-diffusion-3.5-large-turbo-gguf/resolve/main/sd3.5_large_turbo-Q8_0.gguf",
+      filename: "sd3.5_large_turbo-Q8_0.gguf",
+      category: "diffusion_models",
+    },
+    {
+      // Holds its own VAE, so it needs only the three encoders below.
+      label: "SD3.5 Large Turbo (HF access)",
+      url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-large-turbo/resolve/main/sd3.5_large_turbo.safetensors",
+      filename: "sd3.5_large_turbo.safetensors",
+      category: "checkpoints",
+    },
+    {
+      label: "SD3.5 Large Q8 GGUF",
+      url: "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf/resolve/main/sd3.5_large-Q8_0.gguf",
+      filename: "sd3.5_large-Q8_0.gguf",
+      category: "diffusion_models",
+    },
+    {
+      label: "SD3.5 Medium Q8 GGUF",
+      url: "https://huggingface.co/city96/stable-diffusion-3.5-medium-gguf/resolve/main/sd3.5_medium-Q8_0.gguf",
+      filename: "sd3.5_medium-Q8_0.gguf",
+      category: "diffusion_models",
+    },
+    {
+      label: "CLIP-L (SD3)",
+      url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/clip_l.safetensors",
+      filename: "clip_l.safetensors",
+      category: "text_encoders",
+    },
+    {
+      label: "CLIP-G (SD3)",
+      url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/clip_g.safetensors",
+      filename: "clip_g.safetensors",
+      category: "text_encoders",
+    },
+    {
+      label: "T5-XXL FP8 (SD3)",
+      url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+      filename: "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      category: "text_encoders",
+    },
+    {
+      // Needed by the GGUFs above, which carry no VAE.
+      label: "SD3.5 VAE (HF access)",
+      url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-large/resolve/main/vae/diffusion_pytorch_model.safetensors",
+      filename: "sd3.5_vae.safetensors",
+      category: "vae",
+    },
+    {
+      label: "Krea 2 - Identity Edit V2 LoRA r128 (Image Edit)",
+      url: KREA2_EDIT_LORAS.identity.url,
+      filename: KREA2_EDIT_LORAS.identity.filename,
+      category: "loras",
+    },
+    {
+      label: "Krea 2 - General Edit V2 LoRA r128 (Image Edit)",
+      url: KREA2_EDIT_LORAS.general.url,
+      filename: KREA2_EDIT_LORAS.general.filename,
+      category: "loras",
+    },
+    {
+      label: "Krea 2 - Style Reference LoRA (Image Edit)",
+      url: KREA2_EDIT_LORAS.style.url,
+      filename: KREA2_EDIT_LORAS.style.filename,
+      category: "loras",
     },
     {
       label: "Krea 2 - Wulver v0.5 FP8 (Turbo)",
@@ -142,7 +304,14 @@
       filename: "Wulver_v0.5_fp8_e4m3fn.safetensors",
       category: "diffusion_models",
     },
-  ] as const;
+    {
+      label: "MiniMax-H3-Image - pDMD 2-step LoRA",
+      url: "https://huggingface.co/akhaliq/minimax-h3-image-pdmd-2step/resolve/main/minimax_h3_pdmd_2nfe_comfyui.safetensors",
+      filename: "minimax_h3_pdmd_2nfe_comfyui.safetensors",
+      category: "loras",
+      sha256: "5feaeef13df31f98f36364a95e7ce9e8ff0afd71570d1c53d7c3be599e3a0f22",
+    },
+  ];
 
   let source = $state<"civitai" | "direct">("civitai");
   let civitaiColumns = $state(5);
@@ -971,9 +1140,13 @@
     const installDir = await pickInstallDir(directCategory);
     if (!installDir) return; // user cancelled
 
+    const expectedSha256 = hfQuickLinks.find(
+      (item) => item.sha256 && item.url === trimmedUrl && item.filename === finalFilename,
+    )?.sha256;
+
     directInstalling = true;
     try {
-      await downloadModel(trimmedUrl, directCategory, finalFilename, installDir);
+      await downloadModel(trimmedUrl, directCategory, finalFilename, installDir, expectedSha256);
       await models.refresh();
       directStatus = locale.t("modelhub.direct.installed");
     } catch (e) {
@@ -1022,7 +1195,7 @@
     } catch {
       return null;
     }
-    if (parsed.hostname !== "civitai.com" && !parsed.hostname.endsWith(".civitai.com")) {
+    if (!isCivitaiPageHost(parsed.hostname)) {
       return null;
     }
     const match = parsed.pathname.match(/^\/models\/(\d+)/);
@@ -1138,7 +1311,7 @@
   }
 
   function modelUrl(model: CivitaiModel): string {
-    return `https://civitai.com/models/${model.id}`;
+    return civitaiModelPageUrl(model.id, isMatureCivitaiModel(model));
   }
 
   function isCardExpanded(modelId: number): boolean {

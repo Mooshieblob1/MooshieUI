@@ -4,18 +4,20 @@
 
 - **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance anywhere in git or GitHub output.
 
+> [`AGENTS.md`](../AGENTS.md) is the maintained cross-agent entry point, with full conventions in [`.github/instructions/mooshieui.instructions.md`](instructions/mooshieui.instructions.md). Where this overview and those files differ, they win. The directory tree below is a simplified sketch, not a full listing.
+
 ## Project Overview
 
-MooshieUI is a desktop frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) built with **Svelte 5** + **Tauri v2** (Rust). It hides ComfyUI's node-graph complexity behind a clean UI for text-to-image, image-to-image, inpainting, and upscaling workflows.
+MooshieUI is a frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) built with **Svelte 5** + **Tauri v2** (Rust). It runs as a desktop app and as a browser app served by an embedded axum server, and hides ComfyUI's node-graph complexity behind a clean UI for image, video, music and image-to-3D generation, with an optional NovelAI image backend.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Svelte 5, TypeScript 5, Tailwind CSS 4 |
-| Desktop | Tauri v2 (Rust) |
+| Frontend | Svelte 5, TypeScript 6, Tailwind CSS 4 |
+| Runtime | Tauri v2 desktop app + axum web server (Rust) |
 | State | Svelte 5 runes (`$state`, `$derived`) — NOT Svelte stores |
-| Persistence | `@tauri-apps/plugin-store` (JSON) |
+| Persistence | `@tauri-apps/plugin-store` (JSON), SQLite (`rusqlite`) |
 | Backend API | ComfyUI REST + WebSocket (proxied via Rust) |
 | Build | Vite 6 + `@sveltejs/vite-plugin-svelte` |
 
@@ -31,14 +33,16 @@ cargo fmt                # Format Rust code (run inside src-tauri/)
 cargo clippy             # Lint Rust code (run inside src-tauri/)
 ```
 
-> **No frontend test framework.** There are no test scripts and no vitest/jest. Rust does have tests: ~920 tests (`#[test]` + `#[tokio::test]`) in `#[cfg(test)]` modules over pure logic, run with `cargo test --manifest-path src-tauri/Cargo.toml`. The suite is green; treat any failure as a real regression.
+> **No frontend test framework.** The frontend has no vitest/jest; a few pure-logic `node:test` files live in `scripts/tests/` and the Guardrails workflow bundles them with esbuild and runs them. Rust does have tests: about 1,300 tests (`#[test]` + `#[tokio::test]`) in `#[cfg(test)]` modules over pure logic, run with `cargo test --manifest-path src-tauri/Cargo.toml`. The suite is green; treat any failure as a real regression.
 
 ## Architecture
 
 ```
-Frontend (Svelte 5)  →  invoke()  →  Tauri Commands (Rust)  →  HTTP/WS  →  ComfyUI Server
-                     ←  listen()  ←  Tauri Events (Rust)    ←  WebSocket ←
+Frontend (Svelte 5)  →  ipcInvoke()  →  Commands (Rust)  →  HTTP/WS  →  ComfyUI Server
+                     ←  ipcListen()  ←  Events (Rust)    ←  WebSocket ←
 ```
+
+`ipcInvoke()`/`ipcListen()` (`src/lib/utils/ipc.ts`) use Tauri IPC on desktop and REST POST + SSE in browser mode. Never call raw `invoke()`/`listen()` from `@tauri-apps/api`: it works on desktop and breaks silently in the browser.
 
 - **Frontend** (`src/`): UI only — generation params, progress display, gallery. No ComfyUI logic.
 - **Tauri Backend** (`src-tauri/`): Command handlers, ComfyUI process management, WebSocket bridge, setup wizard.
@@ -61,7 +65,8 @@ src/
     ├── stores/                      # Svelte 5 rune-based state (*.svelte.ts)
     ├── types/                       # TypeScript interfaces (GenerationParams, OutputImage, etc.)
     └── utils/
-        └── api.ts                   # Tauri invoke() wrappers
+        ├── ipc.ts                   # ipcInvoke()/ipcListen() (Tauri IPC or REST + SSE)
+        └── api.ts                   # Typed ipcInvoke() wrappers
 
 src-tauri/src/
 ├── main.rs                          # Windows subsystem entry, delegates to lib.rs
@@ -92,9 +97,9 @@ src-tauri/src/
 ### Frontend (Svelte/TypeScript)
 
 - **State management**: Use Svelte 5 runes (`$state`, `$derived`) in class-based singleton stores (`*.svelte.ts`). Do NOT use legacy Svelte stores (`writable`, `readable`).
-- **Styling**: Tailwind CSS utility classes only. No `<style>` blocks in components. Dark mode is the only theme.
-- **Color palette**: Neutral grays (`neutral-950` through `neutral-50`) + indigo accent. Custom CSS variable `--accent` defined in `app.css`.
-- **Tauri IPC**: All `invoke()` calls go through `src/lib/utils/api.ts`. Don't call `invoke()` directly from components.
+- **Styling**: Tailwind CSS utility classes only. No `<style>` blocks in components. Dark and light modes, palettes and custom themes are driven by CSS variables.
+- **Color palette**: Neutral grays (`neutral-950` through `neutral-50`) with accents through the `--theme-accent-*` variables in `app.css`.
+- **IPC**: All backend calls go through `ipcInvoke()`/`ipcListen()` (`src/lib/utils/ipc.ts`), with typed wrappers in `src/lib/utils/api.ts`. Never call raw `invoke()`/`listen()`.
 - **Tauri events**: Listen in `App.svelte` and update stores. Components read stores, not events.
 - **Naming**: camelCase for TypeScript, kebab-case for CSS classes.
 - **File naming**: `PascalCase.svelte` for components, `lowercase.svelte.ts` for stores, `lowercase.ts` for utilities.
@@ -114,7 +119,7 @@ Frontend → Backend:
 ```typescript
 // In src/lib/utils/api.ts
 export async function myCommand(arg: string): Promise<Result> {
-  return invoke("my_command", { arg });
+  return ipcInvoke("my_command", { arg });
 }
 ```
 
@@ -126,15 +131,15 @@ app.emit("event_name", payload)?;
 
 ```typescript
 // In App.svelte
-listen("event_name", (event) => { store.update(event.payload); });
+ipcListen("event_name", (event) => { store.update(event.payload); });
 ```
 
 ## Pitfalls & Important Notes
 
 1. **Svelte 5 runes are new** — `$state` and `$derived` replace the old store API. Stores are class instances, not Svelte Store objects.
 2. **Manual persistence** — `GenerationStore.saveSettings()` must be called explicitly after mutations. It does NOT auto-save.
-3. **No test infrastructure** — Changes ship without automated tests. Be extra careful with logic changes.
-4. **CSP is disabled** — `tauri.conf.json` has `"csp": null`. Security-sensitive changes should consider this.
+3. **Limited frontend tests** — Rust has a unit test suite, but only a few frontend utilities have `node:test` coverage. Be extra careful with frontend logic changes.
+4. **CSP applies in production builds only** — `tauri.conf.json` sets a CSP with no `devCsp`. A new remote image/fetch origin or custom URI scheme must be added to it, or it fails only in release builds.
 5. **Hardcoded defaults** — Some default model names are hardcoded in `generation.svelte.ts` (e.g., checkpoint, VAE names).
 6. **WebSocket bridge** — Rust receives ComfyUI WebSocket messages and re-emits them as Tauri events. The frontend never connects to ComfyUI directly.
 7. **Template-based workflows** — Workflow JSON is built in Rust templates (`src-tauri/src/templates/`), not from a visual editor.
@@ -142,7 +147,7 @@ listen("event_name", (event) => { store.update(event.payload); });
 
 ## Development Prerequisites
 
-- Node.js 18+
+- Node.js 22.12+ or 24+
 - Rust (latest stable via rustup)
 - Tauri v2 system dependencies ([see docs](https://v2.tauri.app/start/prerequisites/))
 - `npm run tauri dev` starts both the frontend dev server and the Tauri app with hot-reload

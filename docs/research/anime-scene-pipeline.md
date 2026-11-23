@@ -1,6 +1,6 @@
 # Anime scene pipeline: NovelAI character to voiced, animated scene
 
-Research date: 2026-10-11. Status: **proposal, not implemented.** A working prototype of the full pipeline was built and run outside the app (standalone Python scripts against the same APIs) on 2026-10-10/11. Every cost, failure and workaround below comes from that run unless marked otherwise.
+Research date: 2026-10-11. Status: **implemented.** The Scenes page shipped in v2.3.20 with ElevenLabs voices and fal.ai Seedance 2.5 video; see the [Anime Scenes wiki page](https://github.com/Mooshieblob1/MooshieUI/wiki/Anime-Scenes) for what the app does today. This document is kept as the original proposal, so the plan sections below describe intent at the time rather than shipped behavior (for example, Segmind was not wired). A working prototype of the full pipeline was built and run outside the app (standalone Python scripts against the same APIs) on 2026-10-10/11. Every cost, failure and workaround below comes from that run unless marked otherwise.
 
 Audience: the agents and maintainer who implement MooshieUI. Read `CLAUDE.md`, `AGENTS.md` and `docs/SCOPE.md` first; nothing here overrides them.
 

@@ -13,7 +13,9 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
-  import { novelAiMaxCharacters } from "../../utils/novelaiModels.js";
+  import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
+  import { naiV5Variant, novelAiMaxCharacters } from "../../utils/novelaiModels.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import NovelAiCharacterPrompt from "./NovelAiCharacterPrompt.svelte";
 
@@ -23,6 +25,21 @@
 
   /** Nothing to place until at least one character is enabled. */
   const hasEnabledCharacter = $derived(characters.some((character) => character.enabled));
+
+  /**
+   * Isolate outfits needs two filled boxes, and opens the V5 Enhance review in the chat panel,
+   * so it is offered on V5 models only.
+   */
+  const canIsolate = $derived(
+    !!naiV5Variant(generation.checkpoint) &&
+      characters.filter((character) => character.prompt.trim()).length >= 2,
+  );
+
+  function isolateOutfits() {
+    if (!enhanceChat.openIsolateReview()) {
+      gallery.showToast(locale.t("prompt_assistant.nai_isolate_nothing"), "info");
+    }
+  }
 </script>
 
 <div class="space-y-3">
@@ -31,13 +48,24 @@
       {locale.t("generation.novelai.characters.title")}
       <InfoTip text={locale.t("generation.novelai.characters.tip")} />
     </label>
-    <button
-      class="px-2 py-1 text-[11px] rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
-      onclick={() => generation.addNovelAiCharacter()}
-      disabled={atLimit}
-    >
-      {locale.t("generation.novelai.characters.add")}
-    </button>
+    <div class="flex items-center gap-1.5">
+      {#if canIsolate}
+        <button
+          class="px-2 py-1 text-[11px] rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-200"
+          title={locale.t("prompt_assistant.nai_isolate_outfits_tip")}
+          onclick={isolateOutfits}
+        >
+          {locale.t("prompt_assistant.nai_isolate_outfits")}
+        </button>
+      {/if}
+      <button
+        class="px-2 py-1 text-[11px] rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        onclick={() => generation.addNovelAiCharacter()}
+        disabled={atLimit}
+      >
+        {locale.t("generation.novelai.characters.add")}
+      </button>
+    </div>
   </div>
 
   {#if !generation.supportsNovelAiCharacters}
@@ -95,7 +123,7 @@
 
     <div class="space-y-1.5">
       <span class="text-[11px] text-neutral-500">
-        {locale.t("generation.novelai.characters.position")}
+        {locale.t("generation.novelai.characters.position")}<InfoTip text={locale.t("generation.novelai.characters.use_coords_desc")} />
       </span>
       <div class="flex items-center gap-2">
         <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
@@ -128,9 +156,6 @@
           </button>
         {/if}
       </div>
-      <p class="text-[11px] text-neutral-500">
-        {locale.t("generation.novelai.characters.use_coords_desc")}
-      </p>
     </div>
 
     {#if atLimit}

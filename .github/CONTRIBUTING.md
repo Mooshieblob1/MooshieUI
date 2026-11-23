@@ -9,7 +9,7 @@ staying in scope.
 Use Node.js 22.12+ or 24+, stable Rust, and the Tauri v2 prerequisites for your
 platform. The locked Svelte Vite plugin requires Node `^20.19 || ^22.12 || >=24`;
 Node 18 is not supported by the current frontend toolchain. Installation and
-experimental Mac scope are covered in the [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation)
+Mac support are covered in the [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation)
 and [Mac guide](../docs/MACOS.md).
 
 ```bash
@@ -29,7 +29,9 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml
 ```
 
-There is no frontend test framework. For documentation-only changes, review the
+There is no vitest/jest suite. A few pure-logic `node:test` files live in
+`scripts/tests/`; CI bundles them with esbuild and runs them in the Guardrails
+job. For documentation-only changes, review the
 documented behavior against the code and validate links; a native build is not
 needed unless executable code or build configuration also changes.
 
@@ -44,7 +46,8 @@ npm run check
 This runs, in order:
 1. `npm run build` (must pass),
 2. `npm run check:i18n` (i18n parity, must pass),
-3. `npm run check:types` (svelte-check, must pass with no errors).
+3. `npm run check:portals` (every `fixed inset-0` overlay uses `use:portal`, must pass),
+4. `npm run check:types` (svelte-check, must pass with no errors).
 
 Note on `check:types`: main has no svelte-check errors, so any error fails both
 `npm run check` and CI. Warnings (including a11y) are reported but don't fail;
@@ -102,7 +105,9 @@ changes are declined regardless of quality.
 | GlassWorm Infection Audit | Yes | Security/steganography scan | Remove flagged content; see the check log |
 | Guardrails: build | Yes | `npm run build` failed | Run `npm run build` locally and fix the error |
 | Guardrails: i18n | Yes | Missing key/placeholder in a locale | Run `npm run check:i18n`; add the key to all locales |
+| Guardrails: portals | Yes | A `fixed inset-0` overlay without `use:portal` | Run `npm run check:portals`; add `use:portal` to the overlay's outermost element |
 | Guardrails: types | Yes | Any svelte-check error, in any file | Run `npm run check:types`; fix the errors it lists |
+| Guardrails: script tests | Yes | A `scripts/tests/*.test.ts` file failed | Bundle the failing file with esbuild and run it with `node --test`, as the workflow does |
 | Rust checks | Yes | `cargo fmt`, `cargo test` or `cargo clippy` failed on Linux, or the server build broke | Run the commands from the check log locally (see CLAUDE.md, Build & Run) |
 | a11y advisory | No | a11y warnings in changed files | See the job summary; fix what you can |
 

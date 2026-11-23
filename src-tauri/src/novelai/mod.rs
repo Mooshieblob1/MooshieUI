@@ -11,6 +11,7 @@ pub mod client;
 pub mod detect;
 pub mod face_detail;
 pub mod face_pass;
+pub mod gate;
 mod local_refine;
 pub mod metadata;
 pub mod models;
@@ -208,6 +209,15 @@ fn local_pass_failure_reason(err: &AppError) -> &'static str {
     } else {
         "run_failed"
     }
+}
+
+/// True when the NovelAI face pass is on, which repaints faces with more
+/// NovelAI requests after the base image (and after any local pass).
+fn novelai_face_pass_requested(params: &GenerationParams) -> bool {
+    params
+        .novelai
+        .as_ref()
+        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine())
 }
 
 /// Pick the model a request runs against.
@@ -680,6 +690,114 @@ fn encode_upload_for_novelai(
     Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
+/// Build a padded RGBA image and feathered grayscale mask matching ComfyUI's
+/// `ImagePadForOutpaint`, fitted to NovelAI's snapped 64-px output canvas.
+fn build_outpaint_for_novelai(
+    bytes: &[u8],
+    top: u32,
+    bottom: u32,
+    left: u32,
+    right: u32,
+    feather: u32,
+) -> Result<(String, String, u32, u32), AppError> {
+    use image::{DynamicImage, ImageFormat, Luma, RgbaImage};
+    let src = image::load_from_memory(bytes)
+        .map_err(|e| AppError::Other(format!("could not decode the image: {e}")))?
+        .to_rgba8();
+    let (src_w, src_h) = src.dimensions();
+    let out_w = src_w.saturating_add(left).saturating_add(right);
+    let out_h = src_h.saturating_add(top).saturating_add(bottom);
+    let (snapped_w, snapped_h) = request_dimensions(out_w, out_h)?;
+
+    let mut padded = RgbaImage::from_pixel(out_w, out_h, image::Rgba([128, 128, 128, 255]));
+    for y in 0..out_h {
+        let sy = y.saturating_sub(top).min(src_h.saturating_sub(1));
+        for x in 0..out_w {
+            let sx = x.saturating_sub(left).min(src_w.saturating_sub(1));
+            padded.put_pixel(x, y, *src.get_pixel(sx, sy));
+        }
+    }
+
+    let mut mask = image::GrayImage::new(out_w, out_h);
+    for y in 0..out_h {
+        for x in 0..out_w {
+            let in_pad = x < left || x >= left + src_w || y < top || y >= top + src_h;
+            let val: u8 = if in_pad {
+                255
+            } else if feather == 0 {
+                0
+            } else {
+                let mut keep = 1.0_f32;
+                if left > 0 {
+                    let d = (x - left) as f32;
+                    if d < feather as f32 {
+                        keep = keep.min(d / feather as f32);
+                    }
+                }
+                if right > 0 {
+                    let d = (left + src_w - 1 - x) as f32;
+                    if d < feather as f32 {
+                        keep = keep.min(d / feather as f32);
+                    }
+                }
+                if top > 0 {
+                    let d = (y - top) as f32;
+                    if d < feather as f32 {
+                        keep = keep.min(d / feather as f32);
+                    }
+                }
+                if bottom > 0 {
+                    let d = (top + src_h - 1 - y) as f32;
+                    if d < feather as f32 {
+                        keep = keep.min(d / feather as f32);
+                    }
+                }
+                ((1.0 - keep) * 255.0).round().clamp(0.0, 255.0) as u8
+            };
+            mask.put_pixel(x, y, Luma([val]));
+        }
+    }
+
+    let padded_dyn = if out_w != snapped_w || out_h != snapped_h {
+        DynamicImage::ImageRgba8(padded).resize_exact(
+            snapped_w,
+            snapped_h,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        DynamicImage::ImageRgba8(padded)
+    };
+    let mask_dyn = if out_w != snapped_w || out_h != snapped_h {
+        DynamicImage::ImageLuma8(mask).resize_exact(
+            snapped_w,
+            snapped_h,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        DynamicImage::ImageLuma8(mask)
+    };
+
+    let mut img_buf = Vec::new();
+    padded_dyn
+        .to_rgba8()
+        .write_to(&mut std::io::Cursor::new(&mut img_buf), ImageFormat::Png)
+        .map_err(|e| AppError::Other(format!("could not encode outpaint image: {e}")))?;
+
+    let mut mask_buf = Vec::new();
+    mask_dyn
+        .to_rgb8()
+        .write_to(&mut std::io::Cursor::new(&mut mask_buf), ImageFormat::Png)
+        .map_err(|e| AppError::Other(format!("could not encode outpaint mask: {e}")))?;
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    Ok((
+        engine.encode(&img_buf),
+        engine.encode(&mask_buf),
+        snapped_w,
+        snapped_h,
+    ))
+}
+
 /// Replace upload names in `input_image` / `mask_image` with the base64 PNGs
 /// NovelAI expects.
 ///
@@ -690,6 +808,56 @@ async fn resolve_upload_images(
     state: &Arc<AppState>,
     params: &GenerationParams,
 ) -> Result<Option<GenerationParams>, AppError> {
+    if params.mode == "outpainting" {
+        let Some(raw_input) = params
+            .input_image
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return Err(AppError::InvalidWorkflow(
+                "Outpainting mode requires an input image.".into(),
+            ));
+        };
+        let bytes = if looks_like_upload_name(raw_input) {
+            state
+                .get_input_image_bytes(raw_input, "")
+                .await
+                .map_err(|e| {
+                    AppError::Other(format!(
+                        "NovelAI could not load the image '{raw_input}' from ComfyUI: {e}"
+                    ))
+                })?
+        } else {
+            let b64 = raw_input
+                .split_once(',')
+                .map(|(_, rest)| rest)
+                .unwrap_or(raw_input);
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| AppError::Other(format!("invalid outpaint input image: {e}")))?
+        };
+        let top = params.outpaint_top;
+        let bottom = params.outpaint_bottom;
+        let left = params.outpaint_left;
+        let right = params.outpaint_right;
+        let feather = params.outpaint_feather;
+        let (padded_b64, mask_b64, snapped_w, snapped_h) = tokio::task::spawn_blocking(move || {
+            build_outpaint_for_novelai(&bytes, top, bottom, left, right, feather)
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("outpaint encoding task failed: {e}")))??;
+        let mut target = params.clone();
+        target.width = snapped_w;
+        target.height = snapped_h;
+        target.input_image = Some(padded_b64);
+        target.mask_image = Some(mask_b64);
+        if let Some(nai) = target.novelai.as_mut() {
+            nai.action = "infill".into();
+        }
+        return Ok(Some(target));
+    }
+
     let (width, height) = request_dimensions(params.width, params.height)?;
     let mut resolved: Option<GenerationParams> = None;
     let fields = [
@@ -766,6 +934,14 @@ pub async fn run(
 ) -> Result<RunOutcome, AppError> {
     match run_inner(&state, &sink, &prompt_id, &params, &credential).await {
         Ok(outcome) => Ok(outcome),
+        // Cancelled while it waited for the account, or mid-request. The
+        // frontend already dropped the prompt, so an error event would only
+        // put a failure toast on something the user stopped on purpose.
+        Err(err) if state.prompt_queue.is_cancelled(&prompt_id) => {
+            log::info!("NovelAI {prompt_id} cancelled ({err})");
+            state.prompt_queue.cleanup_alias(&prompt_id);
+            Ok(RunOutcome::Completed)
+        }
         Err(err) => {
             sink.emit(
                 "comfyui:execution_error",
@@ -788,7 +964,10 @@ async fn run_inner(
     params: &GenerationParams,
     credential: &NaiCredential,
 ) -> Result<RunOutcome, AppError> {
-    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
+    // Queued behind any other generation on this account, and dropped from the
+    // line if the user cancels while it waits.
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?
+        .cancel_when(|| state.prompt_queue.is_cancelled(prompt_id));
 
     // Checked before anything else touches the payload. An upscale has no
     // prompt to encode, no vibes to pay for and no steps to report against, so
@@ -862,6 +1041,15 @@ async fn run_inner(
         })
         .await?;
 
+    // A NovelAI face pass sends more requests after the local pass, so the
+    // account stays with this job until then. Otherwise NovelAI is done with
+    // it, and the next queued generation can start while this one finishes
+    // locally.
+    let face_pass = novelai_face_pass_requested(params);
+    if !face_pass {
+        client.release();
+    }
+
     if state.prompt_queue.is_cancelled(prompt_id) {
         state.prompt_queue.cleanup_alias(prompt_id);
         return Ok(RunOutcome::Completed);
@@ -911,11 +1099,7 @@ async fn run_inner(
     }
 
     // Detail the final local result, so refinement cannot repaint the finished faces.
-    if params
-        .novelai
-        .as_ref()
-        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine())
-    {
+    if face_pass {
         if transparency_requested(params) {
             // The crop path decodes to RGBA and re-encodes the composite, and
             // the seam feather would blend the repainted face against black
@@ -945,6 +1129,7 @@ async fn run_inner(
             );
             face_detail::notify(sink, prompt_id, "skipped", "batch");
         }
+        client.release();
     }
 
     if state.prompt_queue.is_cancelled(prompt_id) {
@@ -989,6 +1174,7 @@ async fn run_upscale(
     );
 
     let images = client.upscale(&input.image).await?;
+    client.release();
 
     if state.prompt_queue.is_cancelled(prompt_id) {
         state.prompt_queue.cleanup_alias(prompt_id);
@@ -1139,10 +1325,7 @@ async fn run_local_post_process(
         derived.facefix_steps,
         derived.facefix_denoise,
     );
-    let collect = params
-        .novelai
-        .as_ref()
-        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine());
+    let collect = novelai_face_pass_requested(params);
     if collect {
         // NAI accepts PNG. Keep the intermediate lossless and avoid JXL/WebP
         // conversion followed immediately by another decode for face crops.
@@ -1625,5 +1808,28 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Local post-process model not found"));
+    }
+
+    #[test]
+    fn novelai_outpaint_builds_padded_image_and_feathered_mask() {
+        use image::{DynamicImage, GenericImageView, ImageFormat, RgbaImage};
+        let mut src = std::io::Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+            256,
+            256,
+            image::Rgba([20, 40, 60, 255]),
+        ))
+        .write_to(&mut src, ImageFormat::Png)
+        .unwrap();
+        let (padded_b64, mask_b64, w, h) =
+            build_outpaint_for_novelai(&src.into_inner(), 0, 0, 128, 128, 32).unwrap();
+        assert_eq!((w, h), (512, 256));
+        let engine = base64::engine::general_purpose::STANDARD;
+        let padded = image::load_from_memory(&engine.decode(padded_b64).unwrap()).unwrap();
+        let mask = image::load_from_memory(&engine.decode(mask_b64).unwrap()).unwrap();
+        assert_eq!(padded.dimensions(), (512, 256));
+        assert_eq!(mask.dimensions(), (512, 256));
+        assert_eq!(mask.get_pixel(10, 128)[0], 255);
+        assert_eq!(mask.get_pixel(256, 128)[0], 0);
     }
 }

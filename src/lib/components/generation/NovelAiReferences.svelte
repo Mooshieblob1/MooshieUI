@@ -56,6 +56,14 @@
       busy = false;
     }
   }
+
+  // Vibe Transfer and Precise Reference exclude each other; both tips say so
+  // when the model offers both.
+  function withExclusive(tip: string): string {
+    const both =
+      generation.supportsNovelAiVibeTransfer && generation.supportsNovelAiPreciseReference;
+    return both ? `${tip}\n\n${locale.t("generation.novelai.references.exclusive")}` : tip;
+  }
 </script>
 
 <div class="space-y-4">
@@ -67,16 +75,12 @@
       </p>
     </div>
   {:else}
-    <p class="text-[11px] text-neutral-500">
-      {locale.t("generation.novelai.references.exclusive")}
-    </p>
-
     {#if generation.supportsNovelAiPreciseReference}
       <div class="space-y-2 {vibes.length > 0 ? 'opacity-50' : ''}">
         <div class="flex items-center justify-between">
           <span class="text-xs text-neutral-400">
             {locale.t("generation.novelai.reference.title")}
-            <InfoTip text={locale.t("generation.novelai.reference.tip")} />
+            <InfoTip text={withExclusive(locale.t("generation.novelai.reference.tip"))} />
           </span>
           <label
             class="px-2 py-1 text-[11px] rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-200 cursor-pointer {referenceFull
@@ -168,7 +172,7 @@
         <div class="flex items-center justify-between">
           <span class="text-xs text-neutral-400">
             {locale.t("generation.novelai.vibe.title")}
-            <InfoTip text={locale.t("generation.novelai.vibe.tip")} />
+            <InfoTip text={withExclusive(locale.t("generation.novelai.vibe.tip"))} />
           </span>
           <label
             class="px-2 py-1 text-[11px] rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-200 cursor-pointer {vibeFull

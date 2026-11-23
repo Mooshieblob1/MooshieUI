@@ -1,11 +1,38 @@
 import { triggerSync } from "../utils/syncTrigger.js";
 import { userScopedKey } from "../utils/ipc.js";
-import { MODEL_FAMILY_LABELS, type ModelFamily } from "../utils/modelFamily.js";
+import { MODEL_FAMILY_LABELS, familyUsesTagPrompts, modelFamilyLabel } from "../utils/modelFamily.js";
+import { registeredFamilies } from "../utils/architectures.js";
 import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { CharacterPromptStyle } from "../utils/characterExtract.js";
+import {
+  addLearnedFact,
+  cloneMemory,
+  matchLearnedCard,
+  mergeMemory,
+  sanitizeMemory,
+  usualExpression,
+  withUsualExpression,
+  type CharacterMemoryFile,
+  type LearnedMemory,
+} from "../utils/characterMemory.js";
+import { sanitizeSeen, withSamples, type SamplePictures } from "../utils/sampleCharacters.js";
+import yueThumbnail from "../assets/characters/yue-thumbnail.webp?inline";
+import yueReference from "../assets/characters/yue-reference.webp?inline";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
 
 const STORAGE_KEY = "mooshieui.savedCharacters.v1";
+/** Per-device view setting, kept out of the synced cards. */
+const CARD_SIZE_KEY = "mooshieui.savedCharacters.cardSize";
+
+/** Card picture size range for the Characters tab's size slider, in pixels. */
+export const CARD_SIZE_MIN = 48;
+export const CARD_SIZE_MAX = 192;
+export const CARD_SIZE_DEFAULT = 48;
+
+const SAMPLE_PICTURES: Record<string, SamplePictures> = {
+  yue: { thumbnail: yueThumbnail, reference: yueReference },
+  "yue-natural": { thumbnail: yueThumbnail, reference: null },
+};
 
 /** Every NovelAI model shares one architecture bucket; their tags carry over. */
 export const NOVELAI_ARCHITECTURE = "novelai";
@@ -37,6 +64,17 @@ export interface SavedCharacter {
    * variants do not nest.
    */
   parentId: string | null;
+  /**
+   * Memory files: notes on who the character is beyond their look, read by
+   * the prompt assistant. A variant shares its parent's (see `memoryOf`), so
+   * only top-level cards normally carry any.
+   */
+  memory: CharacterMemoryFile[];
+  /**
+   * The facial expression the last portrait was drawn with, so the next one
+   * starts from it instead of asking the prompt assistant again.
+   */
+  expression?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -54,23 +92,24 @@ function joinPrompt(current: string, text: string): string {
   return base ? `${base}, ${text}` : text;
 }
 
-/** Architectures whose prompts are written as Danbooru-style tags. */
-const TAG_ARCHITECTURES = new Set<string>([NOVELAI_ARCHITECTURE, "sdxl", "illustrious", "pony", "sd15", "anima"]);
-
 /** How a character is written for `architecture`: tags, or natural language. */
 export function architecturePromptStyle(architecture: string): CharacterPromptStyle {
-  return TAG_ARCHITECTURES.has(architecture) ? "tags" : "natural";
+  return architecture === NOVELAI_ARCHITECTURE || familyUsesTagPrompts(architecture) ? "tags" : "natural";
 }
 
 /** Every architecture a card can be copied to, NovelAI first. */
 export function characterArchitectures(): string[] {
-  return [NOVELAI_ARCHITECTURE, ...Object.keys(MODEL_FAMILY_LABELS)];
+  return [NOVELAI_ARCHITECTURE, ...Object.keys(MODEL_FAMILY_LABELS), ...registeredFamilies()];
 }
 
 /** Display name of an architecture bucket. */
 export function architectureLabel(architecture: string): string {
   if (architecture === NOVELAI_ARCHITECTURE) return "NovelAI";
-  return MODEL_FAMILY_LABELS[architecture as ModelFamily] ?? architecture;
+  return modelFamilyLabel(architecture) ?? architecture;
+}
+
+function clampCardSize(size: number): number {
+  return Math.max(CARD_SIZE_MIN, Math.min(CARD_SIZE_MAX, Math.round(size)));
 }
 
 function sanitize(raw: unknown): SavedCharacter | null {
@@ -90,6 +129,8 @@ function sanitize(raw: unknown): SavedCharacter | null {
     thumbnail: typeof c.thumbnail === "string" && c.thumbnail.startsWith("data:image/") ? c.thumbnail : null,
     reference: typeof c.reference === "string" && c.reference.startsWith("data:image/") ? c.reference : null,
     parentId: typeof c.parentId === "string" && c.parentId ? c.parentId : null,
+    memory: sanitizeMemory(c.memory),
+    ...(typeof c.expression === "string" && c.expression.trim() ? { expression: c.expression.trim().slice(0, 200) } : {}),
     createdAt: typeof c.createdAt === "number" ? c.createdAt : now,
     updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : now,
   };
@@ -117,13 +158,56 @@ export interface NewCharacter {
   thumbnail?: string | null;
   reference?: string | null;
   parentId?: string | null;
+  memory?: CharacterMemoryFile[];
 }
 
 class SavedCharactersStore {
   characters = $state<SavedCharacter[]>([]);
+  /**
+   * Portraits being generated: prompt id to the card the picture is for.
+   * Kept in memory only, like other generation claims: a queued job does not
+   * outlive the app.
+   */
+  portraitClaims = $state<Record<string, string>>({});
+  /** Side of a card's picture in the Characters tab, in pixels. */
+  cardSize = $state(CARD_SIZE_DEFAULT);
+  /**
+   * Sample characters already added for this user (see `sampleCharacters.ts`),
+   * so one deleted stays deleted. Saved and synced with the cards.
+   */
+  private seenSamples: string[] = [];
 
   constructor() {
     this.loadSettings();
+    this.loadCardSize();
+  }
+
+  /** Add the sample characters this user has not had yet. True when any were. */
+  private addSamples(): boolean {
+    const result = withSamples(this.characters, this.seenSamples, SAMPLE_PICTURES, Date.now());
+    if (!result.changed) return false;
+    this.seenSamples = result.seen;
+    this.characters = sanitizeList(result.characters);
+    return true;
+  }
+
+  private loadCardSize(): void {
+    try {
+      const raw = Number(localStorage.getItem(userScopedKey(CARD_SIZE_KEY)));
+      if (Number.isFinite(raw) && raw > 0) this.cardSize = clampCardSize(raw);
+    } catch {
+      // Storage unavailable: keep the default.
+    }
+  }
+
+  /** Set and keep the card picture size. */
+  setCardSize(size: number): void {
+    this.cardSize = clampCardSize(size);
+    try {
+      localStorage.setItem(userScopedKey(CARD_SIZE_KEY), String(this.cardSize));
+    } catch {
+      // Storage unavailable: the size lasts for this session.
+    }
   }
 
   /**
@@ -172,6 +256,7 @@ class SavedCharactersStore {
         thumbnail: item.thumbnail ?? null,
         reference: item.reference ?? null,
         parentId: item.parentId ?? null,
+        memory: item.memory ? cloneMemory(item.memory) : [],
         createdAt: now,
         updatedAt: now,
       });
@@ -207,6 +292,32 @@ class SavedCharactersStore {
    * Set a card's thumbnail and its reference-sized copy, or clear both (null).
    * Changes nothing else about it.
    */
+  /** Remember the expression a portrait of card `id` was drawn with ("" forgets it). */
+  setExpression(id: string, expression: string): void {
+    const clean = expression.trim().slice(0, 200);
+    const card = this.characters.find((c) => c.id === id);
+    if (!card || (card.expression ?? "") === clean) return;
+    this.characters = this.characters.map((c) => {
+      if (c.id !== id) return c;
+      const next: SavedCharacter = { ...c, expression: clean };
+      if (!clean) delete next.expression;
+      return next;
+    });
+    this.saveSettings();
+  }
+
+  /**
+   * Keep a portrait's expression in the character's memory as their usual
+   * expression, so Enhance draws the same face. A variant only fills it in
+   * when its parent has none, since the notes are the parent's.
+   */
+  rememberExpression(card: SavedCharacter, expression: string): void {
+    const owner = this.memoryOwner(card);
+    if (owner.id !== card.id && usualExpression(owner.memory)) return;
+    const next = withUsualExpression(owner.memory, expression);
+    if (next) this.setMemory(owner.id, next);
+  }
+
   setThumbnail(id: string, thumbnail: string | null, reference: string | null = null): void {
     this.characters = this.characters.map((c) =>
       c.id === id ? { ...c, thumbnail, reference: thumbnail ? reference : null } : c,
@@ -214,11 +325,113 @@ class SavedCharactersStore {
     this.saveSettings();
   }
 
-  /** Delete a card. Its variants stay, as characters of their own. */
+  /**
+   * The card whose memory files `card` uses: its parent for a variant (the
+   * same character in another look), otherwise the card itself.
+   */
+  memoryOwner(card: SavedCharacter): SavedCharacter {
+    if (!card.parentId) return card;
+    return this.characters.find((c) => c.id === card.parentId) ?? card;
+  }
+
+  /** The memory files `card` uses. */
+  memoryOf(card: SavedCharacter): CharacterMemoryFile[] {
+    return this.memoryOwner(card).memory;
+  }
+
+  /** `cards` with the memory each one uses and whose it is, for `memoryForRequest`. */
+  withMemory(cards: readonly SavedCharacter[]): (SavedCharacter & { ownerId: string })[] {
+    return cards.map((c) => {
+      const owner = this.memoryOwner(c);
+      return { ...c, ownerId: owner.id, memory: owner.memory };
+    });
+  }
+
+  /**
+   * Replace card `id`'s memory files. Leaves `updatedAt` alone so notes do
+   * not move the card to the front of the list.
+   */
+  setMemory(id: string, memory: CharacterMemoryFile[]): void {
+    const clean = sanitizeMemory(memory);
+    this.characters = this.characters.map((c) => (c.id === id ? { ...c, memory: clean } : c));
+    this.saveSettings();
+  }
+
+  /**
+   * Save the facts Enhance worked out into the memory of the characters they
+   * name, so the next prompt reads them instead of working them out again.
+   * Only `cards` (the ones the request referred to) can be written. Returns
+   * what was saved, as "Name (file.md)", and an undo; null when nothing was.
+   */
+  learnMemory(
+    learned: readonly LearnedMemory[],
+    cards: readonly SavedCharacter[],
+  ): { saved: string[]; undo: () => void } | null {
+    const before = new Map<string, CharacterMemoryFile[]>();
+    const saved = new Set<string>();
+    let next = this.characters;
+    for (const item of learned) {
+      const card = matchLearnedCard(item.name, cards);
+      if (!card) continue;
+      const ownerId = this.memoryOwner(card).id;
+      const owner = next.find((c) => c.id === ownerId);
+      const files = owner ? addLearnedFact(owner.memory, item.file, item.fact) : null;
+      if (!owner || !files) continue;
+      if (!before.has(ownerId)) before.set(ownerId, owner.memory);
+      next = next.map((c) => (c.id === ownerId ? { ...c, memory: files } : c));
+      saved.add(`${owner.name} (${item.file})`);
+    }
+    if (saved.size === 0) return null;
+    this.characters = next;
+    this.saveSettings();
+    return {
+      saved: [...saved],
+      undo: () => {
+        this.characters = this.characters.map((c) => (before.has(c.id) ? { ...c, memory: before.get(c.id)! } : c));
+        this.saveSettings();
+      },
+    };
+  }
+
+  /** Route the generation `promptId` back to card `id` as its picture when it lands. */
+  claimPortrait(promptId: string, id: string): void {
+    this.portraitClaims = { ...this.portraitClaims, [promptId]: id };
+  }
+
+  /** The card a finished or failed generation was a portrait for, consuming the claim. */
+  resolvePortrait(promptId: string): string | null {
+    const id = this.portraitClaims[promptId];
+    if (id === undefined) return null;
+    const { [promptId]: _, ...rest } = this.portraitClaims;
+    this.portraitClaims = rest;
+    return id;
+  }
+
+  /** Forget every portrait claim (the queue was cleared). */
+  dropPortraitClaims(): void {
+    if (Object.keys(this.portraitClaims).length > 0) this.portraitClaims = {};
+  }
+
+  /** Prompt ids of the portraits being made for card `id`. */
+  portraitPromptIds(id: string): string[] {
+    return Object.entries(this.portraitClaims)
+      .filter(([, card]) => card === id)
+      .map(([promptId]) => promptId);
+  }
+
+  /**
+   * Delete a card. Its variants stay, as characters of their own, each with a
+   * copy of the memory they were sharing.
+   */
   remove(id: string): void {
+    const memory = this.characters.find((c) => c.id === id)?.memory ?? [];
     this.characters = this.characters
       .filter((c) => c.id !== id)
-      .map((c) => (c.parentId === id ? { ...c, parentId: null } : c));
+      .map((c) =>
+        c.parentId === id
+          ? { ...c, parentId: null, memory: c.memory.length > 0 ? c.memory : cloneMemory(memory) }
+          : c,
+      );
     this.saveSettings();
   }
 
@@ -262,9 +475,17 @@ class SavedCharactersStore {
   setParent(id: string, parentId: string | null): void {
     const parent = parentId ? this.characters.find((c) => c.id === parentId) : null;
     const target = parent?.parentId ?? parent?.id ?? null;
-    if (target === id) return;
+    const card = this.characters.find((c) => c.id === id);
+    if (!card || target === id) return;
+    // Memory follows the character: a card filed under another brings its
+    // notes into the shared ones, and a variant set free keeps a copy.
+    const moved = target && !card.parentId ? card.memory : [];
+    const freed = !target && card.parentId && card.memory.length === 0 ? cloneMemory(this.memoryOf(card)) : null;
     this.characters = this.characters.map((c) => {
-      if (c.id === id) return { ...c, parentId: target };
+      if (c.id === id) {
+        return { ...c, parentId: target, memory: target ? (card.parentId ? c.memory : []) : (freed ?? c.memory) };
+      }
+      if (target && c.id === target && moved.length > 0) return { ...c, memory: mergeMemory(c.memory, moved) };
       if (target && c.parentId === id) return { ...c, parentId: target };
       return c;
     });
@@ -309,12 +530,15 @@ class SavedCharactersStore {
     // whether it was added or was already here.
     const idMap = new Map<string, string>();
     const added: SavedCharacter[] = [];
+    // Memory files on a card that is already saved, to add to the saved one.
+    const memoryFor = new Map<string, SavedCharacter["memory"]>();
     let skipped = 0;
     const now = Date.now();
     for (const c of incoming) {
       const match = existing.get(key(c));
       if (match) {
         idMap.set(c.id, match);
+        if (c.memory.length > 0) memoryFor.set(match, c.memory);
         skipped++;
         continue;
       }
@@ -324,9 +548,13 @@ class SavedCharactersStore {
       existing.set(key(c), id);
       added.push({ ...c, id, updatedAt: now });
     }
-    if (added.length > 0) {
+    if (added.length > 0 || memoryFor.size > 0) {
       const remapped = added.map((c) => ({ ...c, parentId: c.parentId ? (idMap.get(c.parentId) ?? null) : null }));
-      this.characters = sanitizeList([...this.characters, ...remapped]);
+      const current = this.characters.map((c) => {
+        const extra = memoryFor.get(c.id);
+        return extra ? { ...c, memory: mergeMemory(c.memory, extra) } : c;
+      });
+      this.characters = sanitizeList([...current, ...remapped]);
       this.saveSettings();
     }
     return { added: added.length, skipped };
@@ -428,18 +656,21 @@ class SavedCharactersStore {
   loadSettings(): void {
     try {
       const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
-      if (!raw) return;
-      this.characters = sanitizeList(JSON.parse(raw)?.characters);
+      const parsed = raw ? JSON.parse(raw) : null;
+      this.characters = sanitizeList(parsed?.characters);
+      this.seenSamples = sanitizeSeen(parsed?.samples);
     } catch (e) {
       console.error("Failed to load saved characters:", e);
+      return;
     }
+    if (this.addSamples()) this.saveSettings();
   }
 
   saveSettings(): void {
     try {
       localStorage.setItem(
         userScopedKey(STORAGE_KEY),
-        JSON.stringify({ characters: this.characters }),
+        JSON.stringify({ characters: this.characters, samples: this.seenSamples }),
       );
       triggerSync();
     } catch (e) {
@@ -448,16 +679,19 @@ class SavedCharactersStore {
   }
 
   collectPrefs(): unknown {
-    return { characters: this.characters };
+    return { characters: this.characters, samples: this.seenSamples };
   }
 
   applyServerPrefs(data: any): void {
     try {
       if (!Array.isArray(data?.characters)) return;
       this.characters = sanitizeList(data.characters);
+      // A copy saved before samples existed gets them now, once.
+      this.seenSamples = sanitizeSeen(data.samples);
+      this.addSamples();
       localStorage.setItem(
         userScopedKey(STORAGE_KEY),
-        JSON.stringify({ characters: this.characters }),
+        JSON.stringify({ characters: this.characters, samples: this.seenSamples }),
       );
     } catch (e) {
       console.error("Failed to apply server prefs (characters):", e);

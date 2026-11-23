@@ -1,5 +1,5 @@
 ---
-description: Full release: version bump, changelog, PR, bot triage, tag, CI
+description: Full release: version bump, changelog, PR gated on full CI, tag, watch Build & Release
 argument-hint: "Version number (e.g. 0.4.3) and a brief summary of changes"
 ---
 

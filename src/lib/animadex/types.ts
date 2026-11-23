@@ -22,9 +22,11 @@ export type CharacterFacetName = "character" | CharacterFilterFacetName;
 export type CharacterSort = "count" | "az" | "random";
 
 export interface AnimadexLora {
-  id: number;
+  /** Older API responses only; current ones send name, url and thumb. */
+  id?: number;
   name: string;
   url: string;
+  thumb?: string;
 }
 
 export interface AnimadexCharacter {
