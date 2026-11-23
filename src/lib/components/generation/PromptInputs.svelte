@@ -9,6 +9,7 @@
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import ExtraPromptBoxList from "./ExtraPromptBoxList.svelte";
+  import AnimaCameraControls from "./AnimaCameraControls.svelte";
   import PromptChunkPicker from "./PromptChunkPicker.svelte";
   import NovelAiTokenBar from "./NovelAiTokenBar.svelte";
   import NovelAiCharacters from "./NovelAiCharacters.svelte";
@@ -478,6 +479,10 @@
 
   {#if !combinedMode}
     {@render negativeFields()}
+  {/if}
+
+  {#if generation.supportsAnimaCamera}
+    <AnimaCameraControls />
   {/if}
 
   {#if hasAnySchedule}
