@@ -133,6 +133,8 @@ pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
     p.style_ref_enabled = false;
     p.style_ref_image = None;
     p.style_ref_image_2 = None;
+    p.guide_image_enabled = false;
+    p.guide_image = None;
     p.snapref_references.clear();
     p.edit_reference_images.clear();
     p.resume_edit_image = None;
@@ -637,6 +639,16 @@ mod tests {
         assert!(mm.face_prompt.is_empty());
         assert!(mm.area_prompt.is_empty());
         assert!(!mm.area_detail);
+    }
+
+    #[test]
+    fn guide_image_belongs_to_one_image() {
+        let mut p = base();
+        p.guide_image_enabled = true;
+        p.guide_image = Some("guide.png".into());
+        let snap = snapshot(&p).unwrap();
+        assert!(!snap.guide_image_enabled);
+        assert!(snap.guide_image.is_none());
     }
 
     #[test]
