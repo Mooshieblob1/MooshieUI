@@ -4052,6 +4052,8 @@ const pl: Record<string, string> = {
   "comic.cast_name": "Imię",
   "comic.cast_tags": "Wygląd",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "Negatyw",
+  "comic.cast_negative_placeholder": "Negatyw dla tej postaci",
   "comic.remove_cast": "Usuń postać",
   "comic.story": "Fabuła i ciągłość",
   "comic.check_continuity": "Sprawdzaj każdy gotowy kadr taggerem i oznaczaj zmieniony wygląd lub scenerię",

@@ -629,6 +629,8 @@ export interface CastMember {
   name: string;
   /** Appearance tags: hair, eyes, outfit. Added to every panel they are in. */
   tags: string;
+  /** Negative tags to avoid when this character is in a panel. Added to the panel's negative prompt. */
+  negative?: string;
   savedCharacterId?: string | null;
   referenceImage?: string | null;
 }
@@ -829,6 +831,15 @@ export function panelPrompt(
   );
   const body = [line, prose].filter(Boolean).join("\n\n");
   return body ? body + textBlock(lines) : "";
+}
+
+/**
+ * Negative prompt for a panel: the panel's own negative plus the negative tags
+ * of every cast member assigned to it.
+ */
+export function panelNegative(panel: ComicPanel, cast: CastMember[]): string {
+  const members = cast.filter((c) => panel.cast.includes(c.id));
+  return joinTags(panel.negative, ...members.map((c) => c.negative ?? ""));
 }
 
 /** Character prompt for one panel of a one-image NovelAI page. */

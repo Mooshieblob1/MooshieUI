@@ -41,6 +41,7 @@ import {
   panelBorderPolygon,
   panelCornerRadius,
   panelGenerationSize,
+  panelNegative,
   panelPixelRect,
   panelPrompt,
   panelRects,
@@ -164,7 +165,7 @@ function panelParams(panel: ComicPanel, page: ComicPageState, book: ComicBook): 
   // NovelAI letters the panel's dialogue from a Text: block; other models get none.
   const positive = panelPrompt(panel, { style: book.style, setting, cast: book.cast }, generation.isNovelAi);
   if (!positive) throw new Error(locale.t("comic.error_empty_prompt"));
-  const params = baseParams(positive, panel.negative.trim(), size.width, size.height);
+  const params = baseParams(positive, panelNegative(panel, book.cast), size.width, size.height);
   if (params.novelai) {
     params.novelai = { ...params.novelai, characters: [], use_coords: false, vibes: [], director_references: [] };
   }
@@ -516,7 +517,7 @@ export async function generateOneImage(): Promise<void> {
     director_references: [],
     characters: panels.map((p) => ({
       prompt: oneShotPanelPrompt(p, comic.numberOf(p.id), { setting: effectiveSetting, cast: book.cast }),
-      negative_prompt: p.negative.trim(),
+      negative_prompt: panelNegative(p, book.cast),
       center: oneShotCentre(comic.rects.get(p.id)!),
       enabled: true,
     })),
