@@ -37,6 +37,8 @@
   import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
   import { requestGeneration, trackGeneration, submitGeneration } from "../../utils/generationSubmit.js";
+  import { applyActiveRecipesToParams } from "../../utils/recipeGenerateApply.js";
+  import { enhanceRecipes } from "../../stores/enhanceRecipes.svelte.js";
   import { beginPausedEdit, uploadPausedEditImage } from "../../utils/pausedEdit.js";
   import { queue } from "../../stores/queue.svelte.js";
   import QueuePanel from "../ui/QueuePanel.svelte";
@@ -239,7 +241,7 @@
       // apply here.
       if (generation.resumeAppliesToMode && generation.isPaused && generation.mode === "txt2img") {
         generation.saveCurrentPromptToHistory();
-        await submitGeneration(generation.toParams());
+        await submitGeneration(await applyActiveRecipesToParams(generation.toParams()));
         generation.saveSettings();
         return;
       }
@@ -267,13 +269,15 @@
         }
         generation.saveCurrentPromptToHistory();
         await submitGeneration(
-          generation.toParams({
-            overrides: {
-              mode: "txt2img",
-              resume_edit_image: editImage,
-              resume_edit_mask: generation.maskImage,
-            },
-          }),
+          await applyActiveRecipesToParams(
+            generation.toParams({
+              overrides: {
+                mode: "txt2img",
+                resume_edit_image: editImage,
+                resume_edit_mask: generation.maskImage,
+              },
+            }),
+          ),
         );
         generation.saveSettings();
         // Back to the text-to-image view; the paused run stays until discarded.
@@ -494,7 +498,7 @@
       } else if (repeatActive) {
         await runRepeat();
       } else {
-        const params = generation.toParams();
+        const params = await applyActiveRecipesToParams(generation.toParams());
         const sentRegions = params.positive_regions?.length ?? 0;
         if (sentRegions > 0) {
           console.log("[regional] Sending", sentRegions, "region(s) via conditioning");
@@ -569,7 +573,8 @@
         let outcome: "done" | "failed" | "stopped";
         try {
           // Fresh params each run, so random seeds and wildcards reroll.
-          const promptId = await submitGeneration(generation.toParams());
+          const params = await applyActiveRecipesToParams(generation.toParams());
+          const promptId = await submitGeneration(params);
           outcome = await waitForPrompt(promptId, stopped);
         } catch (e) {
           if (stopped()) break;
@@ -617,7 +622,7 @@
       if (orderedRunCancelRequested || runToken !== orderedRunToken) break;
       const choiceIndex = (run.nextIndex + i) % choices.length;
       const fixedPresetChoices = new Map([[run.presetId, choices[choiceIndex]]]);
-      const params = generation.toParams({ fixedPresetChoices });
+      const params = await applyActiveRecipesToParams(generation.toParams({ fixedPresetChoices }));
       console.log(
         "[generate] ordered_wildcard:",
         `${i + 1}/${count}`,
@@ -733,7 +738,7 @@
     for (const { cell, index } of cellOrder) {
       compare.applyToGeneration(cell);
 
-      const params = generation.toParams();
+      const params = await applyActiveRecipesToParams(generation.toParams());
 
       // Anima models produce poor results below 1024 — clamp to 1024² area
       // preserving aspect ratio. The single-image path does this on the store;
@@ -977,14 +982,16 @@
 
   <button
     onclick={handleGenerate}
-    disabled={!canGenerate}
+    disabled={!canGenerate || enhanceRecipes.isApplyingAtGenerate}
     title={generateButtonTitle}
     class="min-w-0 flex-1 rounded-xl transition-colors {compact ? 'py-3 px-2 truncate font-semibold text-sm' : 'h-11 px-3 font-bold text-[15px]'}
-      {canGenerate
+      {canGenerate && !enhanceRecipes.isApplyingAtGenerate
         ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'
         : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'}"
   >
-    {#if repeatRunning}
+    {#if enhanceRecipes.isApplyingAtGenerate}
+      {locale.t('prompt_assistant.recipe_applying')}
+    {:else if repeatRunning}
       {locale.t('generation.repeat.running', {
         current: String(Math.min(repeatDone + 1, repeatTotal || Infinity)),
         total: repeatTotal === 0 ? "∞" : String(repeatTotal),

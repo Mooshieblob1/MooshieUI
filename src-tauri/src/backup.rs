@@ -65,6 +65,7 @@ pub struct BackupBundleInput {
 pub struct BackupCounts {
     pub characters: usize,
     pub prompt_presets: usize,
+    pub enhance_recipes: usize,
     pub styles: usize,
     pub lora_presets: usize,
     pub lora_triggers: usize,
@@ -181,6 +182,7 @@ pub fn compute_counts(
     BackupCounts {
         characters: array_len(user_prefs, &["characters", "characters"]),
         prompt_presets: array_len(user_prefs, &["prompt_presets", "presets"]),
+        enhance_recipes: array_len(user_prefs, &["enhance_recipes", "recipes"]),
         styles: array_len(user_prefs, &["styles", "styles"]),
         lora_presets: array_len(user_prefs, &["lora_presets", "presets"]),
         lora_triggers: object_len(user_prefs, &["lora_presets", "triggers"]),
@@ -615,6 +617,7 @@ mod tests {
             user_prefs: serde_json::json!({
                 "characters": { "characters": [{ "id": "c1", "name": "Hana" }], "samples": [] },
                 "prompt_presets": { "presets": [{ "id": "p1", "name": "Lighting" }] },
+                "enhance_recipes": { "recipes": [{ "id": "r1", "name": "Linea Alba" }] },
                 "styles": { "styles": [{ "id": "s1", "name": "Painterly" }] },
                 "lora_presets": {
                     "presets": [{ "id": "lp1", "name": "Outfit" }],
@@ -655,6 +658,7 @@ mod tests {
         assert_eq!(manifest.schema_version, SCHEMA_VERSION);
         assert!(manifest.includes_config);
         assert_eq!(manifest.counts.characters, 1);
+        assert_eq!(manifest.counts.enhance_recipes, 1);
         assert_eq!(manifest.counts.lora_triggers, 1);
         assert_eq!(manifest.counts.comic_books, 1);
         assert_eq!(manifest.counts.wildcards, 1);

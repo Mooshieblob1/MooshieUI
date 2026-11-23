@@ -566,10 +566,10 @@ export function naiRewriteSystemPromptParts(ctx: NaiPromptContext): { cached: st
     .filter((block) => block !== "")
     .join("\n\n");
   const dynamic = [
-    ctx.recipes ?? "",
     ctx.savedCharacters ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
     sessionDirective(ctx.inSession, ctx.existing !== null),
+    ctx.recipes ?? "",
     naiKeptArtistsDirective(ctx.keptArtists),
     referenceDirective(ctx.references),
     naiLanguageDirective(ctx.language),

@@ -63,6 +63,8 @@ pub struct UserPrefs {
     pub artist_local_previews: Option<serde_json::Value>,
     /// Prompt enhancer conversations, one per enhancer flow.
     pub enhancer_sessions: Option<serde_json::Value>,
+    /// User-defined Enhance concept recipes.
+    pub enhance_recipes: Option<serde_json::Value>,
     /// Style Creator settings, anchor and drawn-combination history.
     pub style_creator: Option<serde_json::Value>,
     /// Anime scene draft (character, voice, lines, shots, clips).
