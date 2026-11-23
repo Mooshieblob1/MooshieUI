@@ -42,6 +42,7 @@ import { notes } from "./notes.svelte.js";
 import { savedCharacters } from "./savedCharacters.svelte.js";
 import { artistLocalPreviews } from "./artistLocalPreviews.svelte.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
+import { enhanceRecipes } from "./enhanceRecipes.svelte.js";
 import { styleCreator } from "./styleCreator.svelte.js";
 import { animeScene } from "./animeScene.svelte.js";
 import { shortcuts } from "./shortcuts.svelte.js";
@@ -73,6 +74,7 @@ const CATEGORIES = [
   "locale",
   "artist_local_previews",
   "enhancer_sessions",
+  "enhance_recipes",
   "style_creator",
   "anime_scene",
   "shortcuts",
@@ -170,6 +172,7 @@ class PrefsSyncStore {
       locale: locale.current,
       artist_local_previews: artistLocalPreviews.collectPrefs(),
       enhancer_sessions: enhancerSessions.collectPrefs(),
+      enhance_recipes: enhanceRecipes.collectPrefs(),
       style_creator: styleCreator.collectPrefs(),
       anime_scene: animeScene.collectPrefs(),
       shortcuts: shortcuts.collectPrefs(),
@@ -203,6 +206,7 @@ class PrefsSyncStore {
         return;
       case "artist_local_previews": return artistLocalPreviews.applyServerPrefs(data);
       case "enhancer_sessions": return enhancerSessions.applyServerPrefs(data);
+      case "enhance_recipes": return enhanceRecipes.applyServerPrefs(data);
       case "style_creator": return styleCreator.applyServerPrefs(data);
       case "anime_scene": return animeScene.applyServerPrefs(data);
       case "shortcuts": return shortcuts.applyServerPrefs(data);

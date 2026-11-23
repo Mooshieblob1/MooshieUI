@@ -2,6 +2,7 @@ pub mod cascade;
 pub mod controlnet;
 pub mod face_detect;
 pub mod facefix;
+pub mod guide_image;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
@@ -1230,6 +1231,15 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
         if style_ref::family_supports_style_ref(&params.model_architecture) {
             style_ref::inject_style_ref(&mut result, params);
         }
+    }
+
+    // Guide image (txt2img). After every model patch above, so it wraps the
+    // final model and its schedule percentages read the final sampling shift.
+    // Skipped on Moody Moss 4K HD: its main sampler runs on a 1.5x upscaled
+    // latent, so a base-sized guide latent would mismatch its dimensions and
+    // sync_moody_moss_first_pass would also mirror the main sampler's model.
+    if !txt2img::moody_moss_hd_active(params) {
+        guide_image::inject_guide_image(&mut result, params);
     }
 
     // Resumed stage extras (sigma tail, painted edit). Last, because they
@@ -3008,6 +3018,24 @@ mod tests {
         let workflow = build_workflow(&paused, 42, false);
         assert!(
             nodes_of(&workflow, "LatentUpscaleBy").is_empty(),
+            "{workflow}"
+        );
+    }
+
+    #[test]
+    fn moody_moss_hd_skips_guide_image() {
+        let mut params = moody_moss_params(25);
+        params.guide_image_enabled = true;
+        params.guide_image = Some("guide.png".to_string());
+        params.guide_strength = 0.6;
+        params.guide_end_percent = 0.35;
+        let workflow = build_workflow(&params, 42, false);
+        assert!(
+            nodes_of(&workflow, "LatentApplyOperationCFG").is_empty(),
+            "guide image must not attach to Moody Moss 4K HD's upscaled pass: {workflow}"
+        );
+        assert!(
+            nodes_of(&workflow, "LatentOperationBlend").is_empty(),
             "{workflow}"
         );
     }

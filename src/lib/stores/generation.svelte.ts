@@ -936,6 +936,13 @@ class GenerationStore {
   styleRefEnd = $state(1.0);
   styleRefReduxModel = $state<string | null>(null);
   styleRefClipVision = $state<string | null>(null);
+  /** txt2img guide image: steers the early steps toward this image's layout and colours (any family). */
+  guideImageEnabled = $state(false);
+  guideImage = $state<string | null>(null);
+  /** 0 leaves each step alone, 1 replaces its prediction with the guide. */
+  guideStrength = $state(0.6);
+  /** Fraction of the schedule the guide runs for, from the start. */
+  guideEndPercent = $state(0.35);
   /** Anima character reference: optional second character (right side). */
   styleRefImage2 = $state<string | null>(null);
   animaRefMethod = $state<"anima_ref_adapter" | "snapref" | "art_style">("anima_ref_adapter");
@@ -3360,6 +3367,10 @@ class GenerationStore {
     if (saved.styleRefEnd !== undefined) this.styleRefEnd = saved.styleRefEnd;
     if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
     if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
+    if (saved.guideImageEnabled !== undefined) this.guideImageEnabled = !!saved.guideImageEnabled;
+    if (saved.guideImage !== undefined) this.guideImage = saved.guideImage;
+    if (saved.guideStrength !== undefined) this.guideStrength = saved.guideStrength;
+    if (saved.guideEndPercent !== undefined) this.guideEndPercent = saved.guideEndPercent;
     if (saved.styleRefImage2 !== undefined) this.styleRefImage2 = saved.styleRefImage2;
     this.animaRefMethod =
       saved.animaRefMethod === "snapref" || saved.animaRefMethod === "art_style"
@@ -3574,6 +3585,10 @@ class GenerationStore {
         styleRefEnd: this.styleRefEnd,
         styleRefReduxModel: this.styleRefReduxModel,
         styleRefClipVision: this.styleRefClipVision,
+        guideImageEnabled: this.guideImageEnabled,
+        guideImage: this.guideImage,
+        guideStrength: this.guideStrength,
+        guideEndPercent: this.guideEndPercent,
         styleRefImage2: this.styleRefImage2,
         animaRefMethod: this.animaRefMethod,
         animaArtStyleMatch: this.animaArtStyleMatch,
@@ -3775,6 +3790,10 @@ class GenerationStore {
       styleRefEnd: this.styleRefEnd,
       styleRefReduxModel: this.styleRefReduxModel,
       styleRefClipVision: this.styleRefClipVision,
+      guideImageEnabled: this.guideImageEnabled,
+      guideImage: this.guideImage,
+      guideStrength: this.guideStrength,
+      guideEndPercent: this.guideEndPercent,
       styleRefImage2: this.styleRefImage2,
       animaRefMethod: this.animaRefMethod,
       animaArtStyleMatch: this.animaArtStyleMatch,
@@ -4652,6 +4671,10 @@ class GenerationStore {
       style_ref_end: this.styleRefEnd,
       style_ref_redux_model: this.styleRefReduxModel,
       style_ref_clip_vision: this.styleRefClipVision,
+      guide_image_enabled: this.guideImageEnabled && this._mode === "txt2img" && !!this.guideImage,
+      guide_image: this.guideImage,
+      guide_strength: this.guideStrength,
+      guide_end_percent: this.guideEndPercent,
       style_ref_image_2: this.styleRefImage2,
       anima_ref_method: this.animaRefMethod,
       anima_art_style_match: this.animaArtStyleMatch,

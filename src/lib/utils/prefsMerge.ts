@@ -297,6 +297,7 @@ export function mergeUserPrefs(primary: UserPrefsData, secondary: UserPrefsData)
     locale: pick("locale", (a) => a),
     artist_local_previews: pick("artist_local_previews", mergeArtistLocalPreviews),
     enhancer_sessions: pick("enhancer_sessions", mergeEnhancerSessions),
+    enhance_recipes: pick("enhance_recipes", (a, b) => mergeWithList(a, b, "recipes")),
     style_creator: pick("style_creator", mergeStyleCreator),
     anime_scene: pick("anime_scene", fill),
     shortcuts: pick("shortcuts", mergeShortcuts),

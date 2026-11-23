@@ -447,6 +447,17 @@ const CHARACTER_NOTES_LIMIT: usize = 24_000;
 /// Tighter caps for bundled local models sharing the 16k `-c` context window.
 const CHARACTER_NOTES_LOCAL_LARGE_LIMIT: usize = 8_000;
 const CHARACTER_NOTES_LOCAL_SMALL_LIMIT: usize = 4_000;
+const RECIPES_LIMIT: usize = 6_000;
+
+/// User-defined Enhance concept recipes appended to the General Enhance system prompt.
+pub fn recipes_block(recipes: &str) -> String {
+    let trimmed = recipes.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let capped: String = trimmed.chars().take(RECIPES_LIMIT).collect();
+    format!("\n\nACTIVE USER CONCEPT RECIPES (apply as directed):\n{capped}")
+}
 
 /// Maximum character-notes length for the active backend and model.
 pub fn character_notes_budget(ext_enabled: bool, model_id: Option<&str>) -> usize {
@@ -1690,5 +1701,18 @@ tags: 1girl, red dress, hair bun";
             "conflicting eye colour dropped: {out}"
         );
         assert!(out.contains("smile"), "supporting tag kept: {out}");
+    }
+
+    #[test]
+    fn recipes_block_formats_and_caps() {
+        assert!(recipes_block("").is_empty());
+        assert!(recipes_block("   \n\t ").is_empty());
+        let block = recipes_block("USER CONCEPT RECIPE: LINEA ALBA\nTarget: subtle vertical line");
+        assert!(block.starts_with("\n\nACTIVE USER CONCEPT RECIPES (apply as directed):\n"));
+        assert!(block.contains("LINEA ALBA"));
+
+        let oversized = "x".repeat(RECIPES_LIMIT + 500);
+        let capped = recipes_block(&oversized);
+        assert!(capped.len() < RECIPES_LIMIT + 100);
     }
 }

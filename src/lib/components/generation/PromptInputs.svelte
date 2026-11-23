@@ -23,6 +23,7 @@
   import H3PromptGuide from "../video/H3PromptGuide.svelte";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
+  import { enhanceRecipes } from "../../stores/enhanceRecipes.svelte.js";
 
   interface Props {
     showHistory?: boolean;
@@ -252,6 +253,25 @@
           {/if}
         </button>
       {/each}
+      {#if !isVideoMode}
+        {#each enhanceRecipes.activeRecipes as recipe (recipe.id)}
+          {@const modeLabel = locale.t(recipe.applyMode === 'ai' ? 'prompt_assistant.recipe_mode_ai' : 'prompt_assistant.recipe_mode_tags')}
+          <button
+            type="button"
+            onclick={() => enhanceRecipes.toggleActive(recipe.id)}
+            class="shrink-0 inline-flex items-center gap-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
+            title={locale.t('prompt_assistant.recipe_deactivate_tip', { mode: modeLabel })}
+            aria-label={recipe.name}
+          >
+            <span class="leading-none">⚗</span>
+            <span class="max-w-28 truncate">{recipe.name}</span>
+            <span class="font-mono text-[9px] text-indigo-300/80">{modeLabel}</span>
+            {#if recipe.avoid.trim()}
+              <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: recipe.avoid.trim() })}>{locale.t("prompt_uc.label")}</span>
+            {/if}
+          </button>
+        {/each}
+      {/if}
       {#each detectedArtists as hit (hit.slug)}
         {@const isFav = artistFavourites.isFavourite(hit.slug)}
         {@const favCat = artistFavourites.categoryOf(hit.slug)}
@@ -321,6 +341,16 @@
       </div>
       <div class="flex items-center gap-1.5">
         {#if !isVideoMode}
+          <button
+            type="button"
+            class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors {enhanceRecipes.activeIds.length > 0
+              ? 'border-indigo-500/70 bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25'
+              : 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-indigo-500 hover:text-indigo-200'}"
+            title={locale.t("prompt_assistant.recipe_manage_tip")}
+            onclick={() => enhanceChat.openRecipesWindow()}
+          >
+            ⚗ {locale.t("prompt_assistant.recipe_button")}{#if enhanceRecipes.activeIds.length > 0} ({enhanceRecipes.activeIds.length}){/if}
+          </button>
           <PromptChunkPicker />
         {/if}
         <!-- NovelAI has no regional conditioning at all, so the button is gone

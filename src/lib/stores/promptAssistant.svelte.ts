@@ -67,6 +67,22 @@ import {
 } from "../utils/naiPrompt.js";
 import type { NaiPromptContext, NaiVariant } from "../utils/naiPrompt.js";
 import { naiRecipeDirective } from "../utils/naiRecipes.js";
+import {
+  RECIPE_AUTHOR_MAX_TOKENS,
+  RECIPE_SILENT_ADAPT_MAX_TOKENS,
+  generalSilentRecipeAdaptSystemPrompt,
+  generalSilentRecipeAdaptUserPrompt,
+  naiSilentRecipeAdaptSystemPrompt,
+  naiSilentRecipeAdaptUserPrompt,
+  parseGeneralAdaptedPrompt,
+  parseRecipeDraft,
+  recipeCreateUserPrompt,
+  recipeDistillSystemPrompt,
+  recipeRefineSystemPrompt,
+  recipeRefineUserPrompt,
+  type EnhanceRecipe,
+  type EnhanceRecipeDraft,
+} from "../utils/enhanceRecipes.js";
 import { assertAllowedRequest, naiRequestTexts, promptRequestTexts } from "../utils/contentSafety.js";
 import {
   naiRetryInstruction,
@@ -912,7 +928,10 @@ class PromptAssistantStore {
       const history = this.sessionHistory(
         "enhance",
         {
-          systemTokens: RUST_SYSTEM_RESERVE_TOKENS + estimateTokens(req.opts.character_notes ?? ""),
+          systemTokens:
+            RUST_SYSTEM_RESERVE_TOKENS +
+            estimateTokens(req.opts.character_notes ?? "") +
+            estimateTokens(req.opts.recipes ?? ""),
           userText: existing ? `${existing}\n${text}` : text,
           maxOutputTokens: req.chat ? 640 : 384,
         },
@@ -1265,11 +1284,13 @@ class PromptAssistantStore {
     try {
       return await this.withStageListener(async () => {
         const skill = await this.ensureNaiSkill(ctx, signal);
+        const combineRecipes = (texts: string[]) =>
+          [naiRecipeDirective(texts), ctx.recipes].filter(Boolean).join("\n\n");
         // Budgeted against every recorded turn, the most the session can send.
         const sessionCtx = {
           ...ctx,
           inSession: true,
-          recipes: naiRecipeDirective([
+          recipes: combineRecipes([
             prompt,
             ...pastUsers,
           ]),
@@ -1305,7 +1326,7 @@ class PromptAssistantStore {
             : naiRewriteSystemPromptParts({
                 ...ctx,
                 inSession: false,
-                recipes: naiRecipeDirective([prompt]),
+                recipes: combineRecipes([prompt]),
               });
         const system =
           history.sentTurns > 0
@@ -1379,6 +1400,139 @@ class PromptAssistantStore {
         return second.base.trim() && recheck.length <= problems.length
           ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser, reply }
           : { parsed: first, problems, raw: firstRaw, sessionUser, reply };
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /** Author or distill a Concept Recipe from a plain-English description, chat, and/or reference images. */
+  async createEnhanceRecipe(
+    instruction: string,
+    exchanges: { user: string; reply: string; prompt: string }[] = [],
+    signal?: AbortSignal,
+    referenceData: string[] = [],
+  ): Promise<Partial<EnhanceRecipeDraft> | null> {
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        const raw = await callExternalLlm(
+          recipeDistillSystemPrompt(),
+          recipeCreateUserPrompt(instruction, exchanges),
+          RECIPE_AUTHOR_MAX_TOKENS,
+          null,
+          referenceData.length > 0 ? referenceData : null,
+          [],
+          signal,
+        );
+        return parseRecipeDraft(raw);
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /** Distill an Enhance chat sequence into a reusable Concept Recipe draft. */
+  async distillEnhanceRecipe(
+    exchanges: { user: string; reply: string; prompt: string }[],
+    signal?: AbortSignal,
+  ): Promise<Partial<EnhanceRecipeDraft> | null> {
+    return this.createEnhanceRecipe("", exchanges, signal);
+  }
+
+  /** Refine an existing Concept Recipe based on user feedback about drift or failure. */
+  async refineEnhanceRecipe(
+    recipe: EnhanceRecipe,
+    feedback: string,
+    signal?: AbortSignal,
+    referenceData: string[] = [],
+  ): Promise<Partial<EnhanceRecipeDraft> | null> {
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        const raw = await callExternalLlm(
+          recipeRefineSystemPrompt(),
+          recipeRefineUserPrompt(recipe, feedback),
+          RECIPE_AUTHOR_MAX_TOKENS,
+          null,
+          referenceData.length > 0 ? referenceData : null,
+          [],
+          signal,
+        );
+        return parseRecipeDraft(raw);
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Silently adapt an outgoing NovelAI V5 prompt to active Concept Recipes at
+   * Generate time (without Enhance Chat history).
+   */
+  async adaptNaiWithRecipes(
+    fields: { base: string; uc: string; characters: string[]; characterUcs: string[] },
+    variant: NaiVariant,
+    recipes: EnhanceRecipe[],
+    signal?: AbortSignal,
+  ): Promise<{ base: string; uc: string; characters: string[]; characterUcs: (string | null)[] } | null> {
+    assertAllowedRequest(naiRequestTexts("", { base: fields.base, characters: fields.characters }, []));
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        const raw = await callExternalLlm(
+          naiSilentRecipeAdaptSystemPrompt(recipes, variant),
+          naiSilentRecipeAdaptUserPrompt(fields),
+          RECIPE_SILENT_ADAPT_MAX_TOKENS,
+          null,
+          null,
+          [],
+          signal,
+        );
+        const parsed = normalizeNaiResponse(parseNaiResponse(raw));
+        if (!parsed.base.trim()) return null;
+        let base = parsed.base;
+        const textMatch = fields.base.match(/\n[ \t]*Text:\s*[\s\S]*$/i);
+        if (textMatch && !/^\s*Text:/im.test(base)) {
+          base = `${base.trimEnd()}\n${textMatch[0]}`;
+        }
+        return {
+          base,
+          uc: parsed.uc,
+          characters: parsed.characters,
+          characterUcs: parsed.characterUcs,
+        };
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Silently adapt an outgoing General (non-V5) prompt to active Concept
+   * Recipes at Generate time (without Enhance Chat history).
+   */
+  async adaptGeneralWithRecipes(
+    positive: string,
+    negative: string,
+    family: string,
+    recipes: EnhanceRecipe[],
+    signal?: AbortSignal,
+  ): Promise<{ positive: string; negative: string } | null> {
+    assertAllowedRequest(promptRequestTexts(positive, null, []));
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        const raw = await callExternalLlm(
+          generalSilentRecipeAdaptSystemPrompt(recipes, family),
+          generalSilentRecipeAdaptUserPrompt(positive, negative),
+          RECIPE_SILENT_ADAPT_MAX_TOKENS,
+          null,
+          null,
+          [],
+          signal,
+        );
+        return parseGeneralAdaptedPrompt(raw);
       });
     } finally {
       this.isGenerating = false;

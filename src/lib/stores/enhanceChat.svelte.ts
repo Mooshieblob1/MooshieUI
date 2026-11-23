@@ -1,5 +1,7 @@
 import { generation } from "./generation.svelte.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
+import { enhanceRecipes } from "./enhanceRecipes.svelte.js";
+import { recipePromptFingerprint } from "../utils/enhanceRecipes.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
 import { naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
@@ -46,8 +48,8 @@ import type { PendingLearnedFact } from "../utils/characterMemory.js";
  * state over the conversation and the review.
  */
 
-/** Which part of the window is showing: the conversation, a V5 answer's per-field review, or learned memory review. */
-export type EnhanceChatView = "chat" | "review" | "memory";
+/** Which part of the window is showing: the conversation, a V5 answer's per-field review, learned memory review, or concept recipes. */
+export type EnhanceChatView = "chat" | "review" | "memory" | "recipes";
 
 export type EnhanceFlow = "nai" | "general" | "h3";
 
@@ -237,6 +239,12 @@ export interface ChatAnswerMeta {
   onSaveMemory?: (kept: PendingLearnedFact[]) => void;
   /** The request, for Retry and the canon redo. */
   request?: ChatRequest;
+  /** ID of a Concept Recipe created directly from this chat reply. */
+  createdRecipeId?: string;
+  /** ID of a Concept Recipe updated directly from this chat reply. */
+  updatedRecipeId?: string;
+  /** Active/triggered Concept Recipes included when generating this answer. */
+  appliedRecipes?: { id: string; name: string; slug: string }[];
   applied?: boolean;
 }
 
@@ -281,6 +289,8 @@ class EnhanceChatStore {
   meta = $state<Record<number, ChatAnswerMeta>>({});
   pending = $state<NaiEnhancePending | null>(null);
   memoryReview = $state<{ at: number; flow: EnhanceFlow; items: PendingLearnedFact[] } | null>(null);
+  recipeDraftSeed = $state<{ exchanges: { user: string; reply: string; prompt: string }[] } | null>(null);
+  editingRecipeId = $state<string | null>(null);
   showUndo = $state(false);
   /** Which flow the undo pill belongs to, for its label. */
   undoFlow = $state<EnhanceFlow>("nai");
@@ -354,6 +364,8 @@ class EnhanceChatStore {
       this.view = "chat";
       this.pending = null;
       this.memoryReview = null;
+      this.recipeDraftSeed = null;
+      this.editingRecipeId = null;
       this.curate = false;
       this.canonPriority = "saved";
       this.useMemory = true;
@@ -388,12 +400,59 @@ class EnhanceChatStore {
     this.view = "chat";
     this.pending = null;
     this.memoryReview = null;
+    this.recipeDraftSeed = null;
+    this.editingRecipeId = null;
   }
 
   backToChat(): void {
     this.view = "chat";
     this.pending = null;
     this.memoryReview = null;
+    this.recipeDraftSeed = null;
+    this.editingRecipeId = null;
+  }
+
+  openRecipes(): void {
+    this.pending = null;
+    this.memoryReview = null;
+    this.recipeDraftSeed = null;
+    this.editingRecipeId = null;
+    this.view = "recipes";
+  }
+
+  /** Open the Enhance modal directly on the Recipes tab from the Generate page. */
+  openRecipesWindow(): void {
+    this.flow = currentEnhanceFlow();
+    this.pending = null;
+    this.memoryReview = null;
+    this.recipeDraftSeed = null;
+    this.editingRecipeId = null;
+    this.view = "recipes";
+    this.open = true;
+  }
+
+  openSaveRecipeFromChat(exchanges: { user: string; reply: string; prompt: string }[]): void {
+    this.pending = null;
+    this.memoryReview = null;
+    this.editingRecipeId = null;
+    this.recipeDraftSeed = { exchanges: exchanges.slice(-6) };
+    this.view = "recipes";
+  }
+
+  openEditRecipe(id: string): void {
+    this.pending = null;
+    this.memoryReview = null;
+    this.recipeDraftSeed = null;
+    this.editingRecipeId = id;
+    this.view = "recipes";
+  }
+
+  clearRecipeDraftSeed(): void {
+    this.recipeDraftSeed = null;
+  }
+
+  clearEditingRecipeId(): void {
+    this.editingRecipeId = null;
   }
 
   /**
@@ -642,8 +701,24 @@ class EnhanceChatStore {
     const current = generation.positivePrompt?.trim();
     generation.positivePrompt = how === "append" && current ? `${current}, ${prompt}` : prompt;
     generation.saveSettings();
-    this.markApplied(at);
     const flow: EnhanceFlow = this.flow === "h3" ? "h3" : "general";
+    if (flow === "general") {
+      const appliedIds = new Set((this.meta[at]?.appliedRecipes ?? []).map((r) => r.id));
+      const active = enhanceRecipes.activeRecipes;
+      if (active.length > 0 && active.every((r) => appliedIds.has(r.id))) {
+        enhanceRecipes.recordEnhancedFingerprint(
+          recipePromptFingerprint(
+            {
+              flow: `general:${generation.modelFamily}`,
+              positive: generation.positivePrompt,
+              negative: generation.negativePrompt,
+            },
+            active,
+          ),
+        );
+      }
+    }
+    this.markApplied(at);
     if (this.openMemoryReview(at, flow)) return;
     this.finishApply(flow);
   }
@@ -918,6 +993,25 @@ class EnhanceChatStore {
     // wrote rather than being overwritten by it.
     if (this.curate) generation.applyNovelAiCurate();
     generation.saveSettings();
+
+    if (p.answerAt !== undefined && p.base.selected && p.uc.selected && p.characters.every((c) => c.selected)) {
+      const appliedIds = new Set((this.meta[p.answerAt]?.appliedRecipes ?? []).map((r) => r.id));
+      const active = enhanceRecipes.activeRecipes;
+      const resolvedVariant = naiV5Variant(generation.checkpoint);
+      if (resolvedVariant && active.length > 0 && active.every((r) => appliedIds.has(r.id))) {
+        enhanceRecipes.recordEnhancedFingerprint(
+          recipePromptFingerprint(
+            {
+              flow: `nai-${resolvedVariant}`,
+              positive: generation.positivePrompt,
+              negative: generation.negativePrompt,
+              characters: generation.novelaiSettings.characters,
+            },
+            active,
+          ),
+        );
+      }
+    }
 
     this.markApplied(p.answerAt);
     if (p.answerAt !== undefined && this.openMemoryReview(p.answerAt, "nai")) return;

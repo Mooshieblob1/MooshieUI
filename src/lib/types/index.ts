@@ -473,6 +473,10 @@ export interface GenerationParams {
   style_ref_end?: number;
   style_ref_redux_model?: string | null;
   style_ref_clip_vision?: string | null;
+  guide_image_enabled?: boolean;
+  guide_image?: string | null;
+  guide_strength?: number;
+  guide_end_percent?: number;
   /** Anima character reference: second character, stitched right of style_ref_image. */
   style_ref_image_2?: string | null;
   /** Anima Style Reference method (Reference Adapter, SnapRef or art style). */
@@ -1024,6 +1028,8 @@ export interface PromptAssistantOpts {
    * (`characterNotesBlock`). Only an external provider is sent it.
    */
   character_notes?: string;
+  /** User-defined Enhance concept recipes rendered for the system prompt. */
+  recipes?: string;
   /** From the Enhance chat: the answer may start with a `<reply>` block for the user. */
   chat?: boolean;
 }
