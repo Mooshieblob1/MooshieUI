@@ -71,3 +71,13 @@ test("Anima stays independent of Qwen shot vocabulary and its LoRA trigger", () 
   assert.equal(multiAngleLoraToApply(false, [MULTI_ANGLE_LORA.filename], []), null);
   assert.equal(multiAngleLoraToApply(true, [MULTI_ANGLE_LORA.filename], []), MULTI_ANGLE_LORA.filename);
 });
+
+test("front-quarter intermediate blends do not duplicate facing tags", () => {
+  const rightMid = animaCameraPrompt(normalizeAnimaCamera({ horizontal_angle: 67.5 }));
+  assert.equal(rightMid.match(/facing left/g)?.length, 1);
+  assert.equal(rightMid, "(three-quarter view:5.00), (facing left:10.00), (from side:5.00), (eye-level view:1.00), (upper body:1.00)");
+
+  const leftMid = animaCameraPrompt(normalizeAnimaCamera({ horizontal_angle: 292.5 }));
+  assert.equal(leftMid.match(/facing right/g)?.length, 1);
+  assert.equal(leftMid, "(from side:5.00), (facing right:10.00), (three-quarter view:5.00), (eye-level view:1.00), (upper body:1.00)");
+});

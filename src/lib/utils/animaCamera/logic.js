@@ -1,5 +1,4 @@
-/** Reused from Aitha camera v1.0.1 (MIT); see public/licenses/anima-camera-LICENSE.txt. */
-/** Pure prompt logic. Keep in parity with camera_core.py. */
+/** Adapted from Aitha camera v1.0.1 (MIT) with front-quarter three-quarter view support; see public/licenses/anima-camera-LICENSE.txt. */
 export function createCameraLogic(data) {
   const groupKeys = data.extra_groups.map((group) => group.key);
   const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -106,14 +105,42 @@ export function createCameraLogic(data) {
     const xy = config.xy_mult_enabled ? config.xy_mult : null, maximum = xy !== null ? Math.max(max, xy) : max;
     const azimuth = config.azimuth;
     if (azimuth.enabled && !extras.extreme) {
-      const angle = camera.horizontal_angle * Math.PI / 180;
-      const ratios = { front: Math.max(0, Math.cos(angle)), back: Math.max(0, -Math.cos(angle)), left: Math.max(0, -Math.sin(angle)), right: Math.max(0, Math.sin(angle)) };
+      const h = camera.horizontal_angle;
+      let ratios;
+      if (h > 0 && h < 90) {
+        if (h <= 45) {
+          const a = h * 2 * Math.PI / 180;
+          ratios = { front: Math.max(0, Math.cos(a)), front_right: Math.max(0, Math.sin(a)) };
+        } else {
+          const a = (h - 45) * 2 * Math.PI / 180;
+          ratios = { front_right: Math.max(0, Math.cos(a)), right: Math.max(0, Math.sin(a)) };
+        }
+      } else if (h > 270 && h < 360) {
+        if (h < 315) {
+          const a = (h - 270) * 2 * Math.PI / 180;
+          ratios = { left: Math.max(0, Math.cos(a)), front_left: Math.max(0, Math.sin(a)) };
+        } else {
+          const a = (h - 315) * 2 * Math.PI / 180;
+          ratios = { front_left: Math.max(0, Math.cos(a)), front: Math.max(0, Math.sin(a)) };
+        }
+      } else {
+        const angle = h * Math.PI / 180;
+        ratios = { front: Math.max(0, Math.cos(angle)), back: Math.max(0, -Math.cos(angle)), left: Math.max(0, -Math.sin(angle)), right: Math.max(0, Math.sin(angle)) };
+      }
       const total = Object.values(ratios).reduce((a, b) => a + b, 0);
       const budget = (xy !== null ? xy : azimuth.weight) + azimuth.extra * master;
       const cap = maximum + Math.max(0, azimuth.extra * master);
+      const tagWeights = new Map();
       for (const [direction, ratio] of Object.entries(ratios)) {
         const weight = ratio / total * budget;
-        if (ratio > 1e-12 && weight >= azimuth.deadzone_ratio) parts.push(...weightedTags(azimuth.directions[direction].tag, Math.min(cap, Math.max(min, weight))));
+        if (ratio > 1e-12 && weight >= azimuth.deadzone_ratio) {
+          for (const tag of azimuth.directions[direction].tag.split(",").map((s) => s.trim()).filter(Boolean)) {
+            tagWeights.set(tag, (tagWeights.get(tag) ?? 0) + weight);
+          }
+        }
+      }
+      for (const [tag, weight] of tagWeights) {
+        parts.push(...weightedTags(tag, Math.min(cap, Math.max(min, weight))));
       }
     }
     const elevation = config.elevation;

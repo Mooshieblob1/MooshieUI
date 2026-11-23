@@ -52,6 +52,12 @@
         "front": {
           "tag": "straight-on"
         },
+        "front_left": {
+          "tag": "three-quarter view, facing right"
+        },
+        "front_right": {
+          "tag": "three-quarter view, facing left"
+        },
         "back": {
           "tag": "from behind"
         },

@@ -1,16 +1,16 @@
 [
 {"name":"default","position":[0,0,4,0],"values":{},"expected":"(straight-on:10.00), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"horizontal 0","position":[0,0,4,0],"values":{},"expected":"(straight-on:10.00), (eye-level view:1.00), (upper body:1.00)"},
-{"name":"horizontal 1","position":[1,0,4,0],"values":{},"expected":"(straight-on:9.83), (from side:0.17), (facing left:0.17), (eye-level view:1.00), (upper body:1.00)"},
-{"name":"horizontal 22","position":[22,0,4,0],"values":{},"expected":"(straight-on:7.12), (from side:2.88), (facing left:2.88), (eye-level view:1.00), (upper body:1.00)"},
-{"name":"horizontal 45","position":[45,0,4,0],"values":{},"expected":"(straight-on:5.00), (from side:5.00), (facing left:5.00), (eye-level view:1.00), (upper body:1.00)"},
+{"name":"horizontal 1","position":[1,0,4,0],"values":{},"expected":"(straight-on:9.66), (three-quarter view:0.34), (facing left:0.34), (eye-level view:1.00), (upper body:1.00)"},
+{"name":"horizontal 22","position":[22,0,4,0],"values":{},"expected":"(straight-on:5.09), (three-quarter view:4.91), (facing left:4.91), (eye-level view:1.00), (upper body:1.00)"},
+{"name":"horizontal 45","position":[45,0,4,0],"values":{},"expected":"(three-quarter view:10.00), (facing left:10.00), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"horizontal 90","position":[90,0,4,0],"values":{},"expected":"(from side:10.00), (facing left:10.00), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"horizontal 135","position":[135,0,4,0],"values":{},"expected":"(from behind:5.00), (from side:5.00), (facing left:5.00), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"horizontal 180","position":[180,0,4,0],"values":{},"expected":"(from behind:10.00), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"horizontal 225","position":[225,0,4,0],"values":{},"expected":"(from behind:5.00), (from side:5.00), (facing right:5.00), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"horizontal 270","position":[270,0,4,0],"values":{},"expected":"(from side:10.00), (facing right:10.00), (eye-level view:1.00), (upper body:1.00)"},
-{"name":"horizontal 315","position":[315,0,4,0],"values":{},"expected":"(straight-on:5.00), (from side:5.00), (facing right:5.00), (eye-level view:1.00), (upper body:1.00)"},
-{"name":"horizontal 359","position":[359,0,4,0],"values":{},"expected":"(straight-on:9.83), (from side:0.17), (facing right:0.17), (eye-level view:1.00), (upper body:1.00)"},
+{"name":"horizontal 315","position":[315,0,4,0],"values":{},"expected":"(three-quarter view:10.00), (facing right:10.00), (eye-level view:1.00), (upper body:1.00)"},
+{"name":"horizontal 359","position":[359,0,4,0],"values":{},"expected":"(three-quarter view:0.34), (facing right:0.34), (straight-on:9.66), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"horizontal 360","position":[360,0,4,0],"values":{},"expected":"(straight-on:10.00), (eye-level view:1.00), (upper body:1.00)"},
 {"name":"elevation -30","position":[0,-30,4,0],"values":{},"expected":"(straight-on:10.00), (from below:3.33), (upper body:1.00)"},
 {"name":"elevation -15.01","position":[0,-15.01,4,0],"values":{},"expected":"(straight-on:10.00), (from below:1.67), (upper body:1.00)"},
@@ -178,5 +178,5 @@
 {"name":"Directly underneath [Description]0.1","position":[135,60,8,1],"values":{"extreme_type":"Directly underneath [Description]","extreme_weight":0.1},"expected":"(close-up:1.00), (dutch angle:1.00), (The camera looks straight up at the subject from directly underneath.:0.10)"},
 {"name":"Directly underneath [Description]1","position":[135,60,8,1],"values":{"extreme_type":"Directly underneath [Description]","extreme_weight":1},"expected":"(close-up:1.00), (dutch angle:1.00), The camera looks straight up at the subject from directly underneath."},
 {"name":"Directly underneath [Description]50","position":[135,60,8,1],"values":{"extreme_type":"Directly underneath [Description]","extreme_weight":50},"expected":"(close-up:1.00), (dutch angle:1.00), (The camera looks straight up at the subject from directly underneath.:50.00)"},
-{"name":"all groups","position":[45,-30,2.5,1],"values":{"lens_preset":"Fisheye distortion [Tag]","lens_weight":1.25,"dof_preset":"Depth of field [Tag]","dof_weight":1.25,"movement_preset":"Motion blur [Tag]","movement_weight":1.25,"composition_preset":"Negative space [Tag]","composition_weight":1.25,"style_preset":"Anime screenshot [Tag]","style_weight":1.25,"lighting_preset":"Backlighting [Tag]","lighting_weight":1.25},"expected":"(straight-on:5.00), (from side:5.00), (facing left:5.00), (from below:3.33), (full body:1.00), (dutch angle:1.00), (fisheye:1.25), (depth of field:1.25), (motion blur:1.25), (negative space:1.25), (anime screenshot:1.25), (backlighting:1.25)"}
+{"name":"all groups","position":[45,-30,2.5,1],"values":{"lens_preset":"Fisheye distortion [Tag]","lens_weight":1.25,"dof_preset":"Depth of field [Tag]","dof_weight":1.25,"movement_preset":"Motion blur [Tag]","movement_weight":1.25,"composition_preset":"Negative space [Tag]","composition_weight":1.25,"style_preset":"Anime screenshot [Tag]","style_weight":1.25,"lighting_preset":"Backlighting [Tag]","lighting_weight":1.25},"expected":"(three-quarter view:10.00), (facing left:10.00), (from below:3.33), (full body:1.00), (dutch angle:1.00), (fisheye:1.25), (depth of field:1.25), (motion blur:1.25), (negative space:1.25), (anime screenshot:1.25), (backlighting:1.25)"}
 ]
