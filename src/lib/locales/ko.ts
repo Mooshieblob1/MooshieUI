@@ -3804,6 +3804,8 @@ const ko: Record<string, string> = {
   "comic.cast_name": "이름",
   "comic.cast_tags": "외모",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "네거티브",
+  "comic.cast_negative_placeholder": "이 캐릭터의 네거티브",
   "comic.remove_cast": "캐릭터 삭제",
   "comic.story": "스토리와 연속성",
   "comic.check_continuity": "완성된 컷을 태거로 확인해 바뀐 외모나 배경을 표시",

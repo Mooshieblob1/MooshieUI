@@ -283,6 +283,7 @@ function sanitizeCast(raw: unknown): CastMember[] {
       id: c.id as string,
       name: String(c.name ?? ""),
       tags: String(c.tags ?? ""),
+      negative: String(c.negative ?? ""),
       savedCharacterId: typeof c.savedCharacterId === "string" && c.savedCharacterId ? c.savedCharacterId : null,
       referenceImage: typeof c.referenceImage === "string" && c.referenceImage ? c.referenceImage : null,
     }));
@@ -1207,6 +1208,7 @@ class ComicStore {
         id,
         name: initial?.name ?? "",
         tags: initial?.tags ?? "",
+        negative: initial?.negative ?? "",
         savedCharacterId: initial?.savedCharacterId ?? null,
         referenceImage: initial?.referenceImage ?? null,
       },
@@ -1219,12 +1221,14 @@ class ComicStore {
     id: string;
     name: string;
     prompt: string;
+    negative?: string;
     reference: string | null;
     thumbnail: string | null;
   }): string {
     return this.addCastMember({
       name: character.name,
       tags: character.prompt,
+      negative: character.negative ?? "",
       savedCharacterId: character.id,
       referenceImage: character.reference ?? character.thumbnail ?? null,
     });

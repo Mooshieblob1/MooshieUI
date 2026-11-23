@@ -3826,6 +3826,8 @@ const de: Record<string, string> = {
   "comic.cast_name": "Name",
   "comic.cast_tags": "Aussehen",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "Negativ",
+  "comic.cast_negative_placeholder": "Negativ für diese Figur",
   "comic.remove_cast": "Figur entfernen",
   "comic.story": "Story und Kontinuität",
   "comic.check_continuity": "Jedes fertige Panel mit dem Tagger prüfen und geändertes Aussehen oder Schauplatz markieren",

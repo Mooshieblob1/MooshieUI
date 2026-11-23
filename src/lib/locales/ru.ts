@@ -3804,6 +3804,8 @@ const ru: Record<string, string> = {
   "comic.cast_name": "Имя",
   "comic.cast_tags": "Внешность",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "Негатив",
+  "comic.cast_negative_placeholder": "Негатив для этого персонажа",
   "comic.remove_cast": "Удалить персонажа",
   "comic.story": "Сюжет и последовательность",
   "comic.check_continuity": "Проверять каждый готовый кадр тегером и отмечать изменённую внешность или место",

@@ -221,7 +221,7 @@ pub fn definitions() -> Value {
                             "properties": {
                                 "prompt": { "type": "string", "description": "What this panel shows." },
                                 "dialogue": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "Speech bubbles, the words only, exactly as lettered. NovelAI only." },
-                                "cast": { "type": "array", "items": { "type": "string" }, "description": "Names from cast who are in this panel; their appearance tags are added." },
+                                "cast": { "type": "array", "items": { "type": "string" }, "description": "Names from cast who are in this panel; their appearance and negative tags are added." },
                                 "characters": { "type": "array", "maxItems": 6, "items": { "type": "string" }, "description": "Saved MooshieUI character names (list_library) in this panel." },
                                 "setting": { "type": "string", "description": "Replaces the page setting for this panel (a flashback, a cut away)." },
                                 "negative_prompt": { "type": "string" }
@@ -237,7 +237,8 @@ pub fn definitions() -> Value {
                             "required": ["name"],
                             "properties": {
                                 "name": { "type": "string" },
-                                "tags": { "type": "string", "description": "Appearance tags: count, hair, eyes, outfit, e.g. 1girl, long black hair, red eyes, sailor uniform." }
+                                "tags": { "type": "string", "description": "Appearance tags: count, hair, eyes, outfit, e.g. 1girl, long black hair, red eyes, sailor uniform." },
+                                "negative": { "type": "string", "description": "Negative tags to avoid in every panel this character appears in." }
                             }
                         }
                     },

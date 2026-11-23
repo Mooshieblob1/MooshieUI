@@ -28,6 +28,7 @@ import {
   panelGenerationSize,
   panelIds,
   panelImageCss,
+  panelNegative,
   panelPixelRect,
   panelPrompt,
   panelRects,
@@ -495,4 +496,16 @@ test("panelBorderPolygon, slant inset clamping, and CSS border helpers stay cons
   assert.equal(fresh.panY, 0);
   assert.equal(fresh.zoom, 1);
   assert.equal(fresh.borderStyle, "standard");
+});
+
+test("panelNegative appends assigned cast negatives to the panel negative", () => {
+  const cast = [
+    { id: "c1", name: "Aki", tags: "1girl", negative: "glasses, hat," },
+    { id: "c2", name: "Ren", tags: "1boy", negative: "beard" },
+    { id: "c3", name: "Sora", tags: "1girl" },
+  ];
+  const panel = { ...newPanel("p1"), negative: "blurry, ", cast: ["c1", "c3"] };
+  assert.equal(panelNegative(panel, cast), "blurry, glasses, hat");
+  assert.equal(panelNegative({ ...newPanel("p2"), cast: ["c2"] }, cast), "beard");
+  assert.equal(panelNegative({ ...newPanel("p3"), cast: ["c3"] }, cast), "");
 });

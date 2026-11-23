@@ -1065,6 +1065,16 @@
               suggestLoraKeywords={true}
               storageKey="mooshieui.promptHeight.comic.castTags"
             />
+            <ComicPromptField
+              value={member.negative ?? ""}
+              onchange={(next) => comic.updateCastMember(member.id, { negative: next })}
+              placeholder={locale.t("comic.cast_negative_placeholder")}
+              ariaLabel={locale.t("comic.cast_negative")}
+              rows={1}
+              minHeight="min-h-10"
+              suggestLoraKeywords={false}
+              storageKey="mooshieui.promptHeight.comic.castNegative"
+            />
           </div>
         {/each}
       </section>

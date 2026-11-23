@@ -3804,6 +3804,8 @@ const zhTw: Record<string, string> = {
   "comic.cast_name": "名字",
   "comic.cast_tags": "外觀",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "負面",
+  "comic.cast_negative_placeholder": "此角色的負面提示詞",
   "comic.remove_cast": "刪除角色",
   "comic.story": "劇情與連貫性",
   "comic.check_continuity": "用標註器檢查每個完成的分格，標出外觀或場景的變化",

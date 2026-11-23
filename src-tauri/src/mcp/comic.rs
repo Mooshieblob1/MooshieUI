@@ -553,6 +553,7 @@ pub fn take_text_block(prompt: &str) -> (String, Vec<String>) {
 pub struct CastIn {
     pub name: String,
     pub tags: String,
+    pub negative: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -602,6 +603,15 @@ impl Panel {
             .iter()
             .filter_map(|i| page.cast.get(*i))
             .map(|c| c.tags.as_str())
+            .collect()
+    }
+
+    fn cast_negatives<'a>(&self, page: &'a PageText) -> Vec<&'a str> {
+        self.cast
+            .iter()
+            .filter_map(|i| page.cast.get(*i))
+            .map(|c| c.negative.as_str())
+            .filter(|s| !s.is_empty())
             .collect()
     }
 
@@ -869,6 +879,7 @@ pub fn plan(args: &Value) -> Result<Plan, String> {
         .map(|c| CastIn {
             name: c.name.trim().to_string(),
             tags: c.tags.trim().to_string(),
+            negative: c.negative.trim().to_string(),
         })
         .collect::<Vec<_>>();
     let mut panels = Vec::with_capacity(count);
@@ -988,6 +999,12 @@ async fn panel_params(plan: &Plan, i: usize) -> Result<GenerationParams, String>
         i as i64,
     );
     let mut params = setups::apply(&plan.setup, &o)?;
+    let cast_neg = panel.cast_negatives(&plan.page);
+    if !cast_neg.is_empty() {
+        let mut parts = vec![params.negative_prompt.as_str()];
+        parts.extend(cast_neg.iter().copied());
+        params.negative_prompt = join_tags(&parts);
+    }
     let mut args = plan.additions.clone();
     args["characters"] = json!(panel.characters);
     super::tools::finish_prompt(&mut params, &args).await?;
@@ -1037,6 +1054,12 @@ async fn one_image_params(plan: &Plan) -> Result<GenerationParams, String> {
     for (i, panel) in plan.panels.iter().enumerate() {
         let mut prompt = panel.one_image_prompt(i + 1, &plan.page);
         let mut uc = panel.negative_prompt.clone().unwrap_or_default();
+        let cast_neg = panel.cast_negatives(&plan.page);
+        if !cast_neg.is_empty() {
+            let mut parts = vec![uc.as_str()];
+            parts.extend(cast_neg.iter().copied());
+            uc = join_tags(&parts);
+        }
         if let Some(lib) = &lib {
             for name in &panel.characters {
                 let c = library::find_character(lib, name, &arch)?;
@@ -1681,6 +1704,7 @@ mod tests {
             cast: vec![CastIn {
                 name: "Aki".into(),
                 tags: "1girl, long black hair".into(),
+                ..Default::default()
             }],
         };
         let panel = Panel {
@@ -1716,6 +1740,41 @@ mod tests {
             vec!["Wait!", "No.", "Never."]
         );
         assert!(dialogue_lines(&json!(3)).is_err());
+    }
+
+    #[test]
+    fn cast_negatives_deserialize_and_collect_assigned_members() {
+        let with_neg: CastIn = serde_json::from_value(
+            json!({ "name": "Aki", "tags": "1girl", "negative": "glasses, hat" }),
+        )
+        .unwrap();
+        let without_neg: CastIn =
+            serde_json::from_value(json!({ "name": "Ren", "tags": "1boy" })).unwrap();
+        let other_neg: CastIn = serde_json::from_value(
+            json!({ "name": "Sora", "tags": "1girl", "negative": "twintails" }),
+        )
+        .unwrap();
+        assert_eq!(with_neg.negative, "glasses, hat");
+        assert_eq!(without_neg.negative, "");
+
+        let page = PageText {
+            style: String::new(),
+            setting: String::new(),
+            cast: vec![with_neg, without_neg, other_neg],
+        };
+        let panel = Panel {
+            prompt: "smile".into(),
+            dialogue: vec![],
+            cast: vec![0, 1],
+            characters: vec![],
+            setting: String::new(),
+            negative_prompt: Some("blurry".into()),
+        };
+        let negs = panel.cast_negatives(&page);
+        assert_eq!(negs, vec!["glasses, hat"]);
+        let mut parts = vec![panel.negative_prompt.as_deref().unwrap_or("")];
+        parts.extend(negs.iter().copied());
+        assert_eq!(join_tags(&parts), "blurry, glasses, hat");
     }
 
     #[test]

@@ -3846,6 +3846,8 @@ const zh: Record<string, string> = {
   "comic.cast_name": "名字",
   "comic.cast_tags": "外观",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "负面",
+  "comic.cast_negative_placeholder": "此角色的负面提示词",
   "comic.remove_cast": "删除角色",
   "comic.story": "剧情与连贯性",
   "comic.check_continuity": "用标注器检查每个完成的分格，标出外观或场景的变化",

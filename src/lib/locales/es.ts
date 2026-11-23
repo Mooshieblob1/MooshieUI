@@ -3879,6 +3879,8 @@ const es: Record<string, string> = {
   "comic.cast_name": "Nombre",
   "comic.cast_tags": "Aspecto",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "Negativo",
+  "comic.cast_negative_placeholder": "Negativo para este personaje",
   "comic.remove_cast": "Quitar personaje",
   "comic.story": "Historia y continuidad",
   "comic.check_continuity": "Revisar cada viñeta terminada con el etiquetador y marcar un aspecto o escenario cambiado",
