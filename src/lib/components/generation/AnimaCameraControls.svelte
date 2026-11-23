@@ -17,23 +17,29 @@
   ] as const;
   let expanded = $state(false);
   let extrasExpanded = $state(false);
+  let previewExpanded = $state(false);
   let viewport = $state<HTMLDivElement>();
   let scene = $state.raw<ReturnType<typeof createScene> | null>(null);
   let unavailable = $state(false);
 
   const t = (key: string) => locale.t(`${prefix}.${key}`);
-  const inputClass = "min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-300 focus:border-indigo-500 focus:outline-none";
+  const selectClass = "min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-300 focus:border-indigo-500 focus:outline-none";
+  const numberClass = "rounded-md border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] tabular-nums text-neutral-300 focus:border-indigo-500 focus:outline-none";
+  const activeExtraCount = $derived(
+    (generation.animaCamera.extremePreset !== "None" ? 1 : 0) +
+    data.extra_groups.filter((g) => generation.animaCamera.extras[g.key as CameraGroup].preset !== "None").length,
+  );
 
   function setAxis(key: CameraAxis, value: number) {
     generation.animaCamera = normalizeAnimaCamera({ ...generation.animaCamera, [key]: value });
   }
 
-  function setExtra(key: CameraGroup, patch: Partial<ExtraSelection>) {
+  function setExtra(key: CameraGroup, patch: Partial<ExtraSelection>, save = true) {
     const current = generation.animaCamera;
     generation.animaCamera = normalizeAnimaCamera({
       ...current, extras: { ...current.extras, [key]: { ...current.extras[key], ...patch } },
     });
-    generation.saveSettings();
+    if (save) generation.saveSettings();
   }
 
   $effect(() => {
@@ -86,33 +92,34 @@
     </label>
   </div>
   {#if expanded}
-    <div id={`${id}-controls`} class="space-y-3 border-t border-neutral-700/60 p-3">
-      <p class="text-[10px] text-neutral-500">{t("guide_tip")}</p>
-      <div class="relative h-44 overflow-hidden rounded-md border border-neutral-700 bg-neutral-950" bind:this={viewport}>
+    <div id={`${id}-controls`} class="space-y-2 border-t border-neutral-700/60 p-2.5">
+      <div class="relative h-32 overflow-hidden rounded-md border border-neutral-700 bg-neutral-950" title={t("guide_tip")} bind:this={viewport}>
         {#if unavailable}
           <p class="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-neutral-400" role="status">{t("unavailable")}</p>
         {/if}
       </div>
-      <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <div class="grid grid-cols-3 gap-1.5">
         {#each axes as axis}
           <div class="min-w-0 space-y-1">
-            <label for={`${id}-${axis.key}-preset`} class="block text-[10px] text-neutral-400">{t(axis.key)}</label>
-            <select id={`${id}-${axis.key}-preset`} class={`w-full ${inputClass}`}
+            <div class="flex items-center justify-between gap-1">
+              <label for={`${id}-${axis.key}-preset`} class="min-w-0 truncate text-[10px] text-neutral-400" title={t(axis.key)}>{t(axis.key)}</label>
+              <input id={`${id}-${axis.key}`} type="number" class={`w-14 shrink-0 ${numberClass}`}
+                aria-label={t(axis.key)} min={axis.min} max={axis.max} step={axis.step}
+                value={generation.animaCamera[axis.key]}
+                onchange={(e) => { setAxis(axis.key, e.currentTarget.valueAsNumber); generation.saveSettings(); }} />
+            </div>
+            <select id={`${id}-${axis.key}-preset`} class={`w-full ${selectClass}`}
               value={logic.closestPreset(axis.key, generation.animaCamera[axis.key]).value}
               onchange={(e) => { setAxis(axis.key, Number(e.currentTarget.value)); generation.saveSettings(); }}>
               {#each data.camera_presets[axis.key] as preset, i}
                 <option value={preset.value}>{t(`presets.${axis.key}_${i}`)}</option>
               {/each}
             </select>
-            <input id={`${id}-${axis.key}`} type="number" class={`w-full ${inputClass}`}
-              aria-label={t(axis.key)} min={axis.min} max={axis.max} step={axis.step}
-              value={generation.animaCamera[axis.key]}
-              onchange={(e) => { setAxis(axis.key, e.currentTarget.valueAsNumber); generation.saveSettings(); }} />
           </div>
         {/each}
       </div>
-      <div class="flex items-center justify-between">
-        <label class="touch-target flex items-center gap-2 text-xs text-neutral-300">
+      <div class="flex items-center justify-between gap-2">
+        <label class="touch-target flex items-center gap-1.5 text-xs text-neutral-300">
           <input type="checkbox" class="accent-indigo-500" checked={generation.animaCamera.roll > 0}
             onchange={(e) => {
               generation.animaCamera = { ...generation.animaCamera, roll: e.currentTarget.checked ? 1 : 0 };
@@ -120,19 +127,25 @@
             }} />
           {t("dutch")}
         </label>
+        <button type="button" class="touch-target flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200"
+          aria-expanded={extrasExpanded} aria-controls={`${id}-extras`} onclick={() => extrasExpanded = !extrasExpanded}>
+          <span aria-hidden="true">{extrasExpanded ? "▾" : "▸"}</span>{t("extras")}
+          {#if activeExtraCount > 0}
+            <span class="rounded bg-indigo-600/30 px-1 text-[10px] tabular-nums text-indigo-300">{activeExtraCount}</span>
+          {/if}
+        </button>
         <button type="button" class="touch-target text-[11px] text-neutral-400 hover:text-indigo-300"
           onclick={() => { generation.animaCamera = normalizeAnimaCamera(); generation.saveSettings(); }}>{t("reset")}</button>
       </div>
-      <button type="button" class="touch-target flex w-full items-center gap-2 text-xs text-neutral-400 hover:text-neutral-200"
-        aria-expanded={extrasExpanded} aria-controls={`${id}-extras`} onclick={() => extrasExpanded = !extrasExpanded}>
-        <span aria-hidden="true">{extrasExpanded ? "▾" : "▸"}</span>{t("extras")}
-      </button>
       {#if extrasExpanded}
-        <div id={`${id}-extras`} class="space-y-3 border-l border-neutral-700 pl-3">
-          <div class="space-y-1">
-            <label for={`${id}-extreme`} class="block text-[10px] text-neutral-400">{t("extreme")}</label>
-            <div class="flex gap-2">
-              <select id={`${id}-extreme`} class={`flex-1 ${inputClass}`} value={generation.animaCamera.extremePreset}
+        <div id={`${id}-extras`} class="grid grid-cols-2 gap-1.5 border-l border-neutral-700 pl-2">
+          <div class="col-span-2 space-y-1">
+            <div class="flex items-center gap-0.5">
+              <label for={`${id}-extreme`} class="text-[10px] text-neutral-400">{t("extreme")}</label>
+              <InfoTip text={t("extreme_tip")} />
+            </div>
+            <div class="flex gap-1.5">
+              <select id={`${id}-extreme`} class={`min-w-0 flex-1 ${selectClass}`} value={generation.animaCamera.extremePreset}
                 onchange={(e) => {
                   generation.animaCamera = { ...generation.animaCamera, extremePreset: e.currentTarget.value };
                   generation.saveSettings();
@@ -142,7 +155,7 @@
                 {/each}
               </select>
               {#if generation.animaCamera.extremePreset !== "None"}
-                <input type="number" min="0.1" max="50" step="0.1" class={`w-20 ${inputClass}`}
+                <input type="number" min="0.1" max="50" step="0.1" class={`w-16 shrink-0 ${numberClass}`}
                   aria-label={locale.t(`${prefix}.group_weight`, { group: t("extreme") })} value={generation.animaCamera.extremeWeight}
                   onchange={(e) => {
                     generation.animaCamera = normalizeAnimaCamera({ ...generation.animaCamera, extremeWeight: e.currentTarget.valueAsNumber });
@@ -150,17 +163,14 @@
                   }} />
               {/if}
             </div>
-            {#if generation.animaCamera.extremePreset !== "None"}
-              <p class="text-[10px] text-amber-400/80">{t("extreme_tip")}</p>
-            {/if}
           </div>
           {#each data.extra_groups as group}
             {@const key = group.key as CameraGroup}
             {@const extra = generation.animaCamera.extras[key]}
-            <div class="space-y-1">
-              <label for={`${id}-${key}`} class="block text-[10px] text-neutral-400">{t(key)}</label>
-              <div class="flex gap-2">
-                <select id={`${id}-${key}`} class={`flex-1 ${inputClass}`} value={extra.preset}
+            <div class="min-w-0 space-y-1">
+              <label for={`${id}-${key}`} class="block truncate text-[10px] text-neutral-400" title={t(key)}>{t(key)}</label>
+              <div class="flex gap-1">
+                <select id={`${id}-${key}`} class={`min-w-0 flex-1 ${selectClass}`} value={extra.preset}
                   onchange={(e) => setExtra(key, { preset: e.currentTarget.value })}>
                   <option value="None">{t("none")}</option>
                   <option value="Custom">{t("custom")}</option>
@@ -169,25 +179,27 @@
                   {/each}
                 </select>
                 {#if extra.preset !== "None"}
-                  <input type="number" min="0.1" max="10" step="0.1" class={`w-20 ${inputClass}`}
+                  <input type="number" min="0.1" max="10" step="0.1" class={`w-14 shrink-0 ${numberClass}`}
                     aria-label={locale.t(`${prefix}.group_weight`, { group: t(key) })} value={extra.weight}
                     onchange={(e) => setExtra(key, { weight: e.currentTarget.valueAsNumber })} />
                 {/if}
               </div>
               {#if extra.preset === "Custom"}
-                <input type="text" class={`w-full ${inputClass}`} aria-label={locale.t(`${prefix}.group_custom`, { group: t(key) })}
+                <input type="text" class={`w-full ${selectClass}`} aria-label={locale.t(`${prefix}.group_custom`, { group: t(key) })}
                   placeholder={t("custom_placeholder")} value={extra.custom}
-                  onchange={(e) => setExtra(key, { custom: e.currentTarget.value })} />
+                  oninput={(e) => setExtra(key, { custom: e.currentTarget.value }, false)}
+                  onchange={() => generation.saveSettings()} />
               {/if}
             </div>
           {/each}
         </div>
       {/if}
-      <div class="space-y-1">
-        <label for={`${id}-preview`} class="block text-[10px] text-neutral-400">{t("preview")}</label>
-        <textarea id={`${id}-preview`} readonly rows="3" value={generation.animaCameraPrompt}
-          class={`w-full resize-y ${inputClass}`}></textarea>
-      </div>
+      <button type="button" class="flex w-full items-start gap-1.5 rounded border border-neutral-700/80 bg-neutral-900/80 px-2 py-1 text-left font-mono text-[10px] text-neutral-400 hover:border-neutral-600 hover:text-neutral-300"
+        aria-expanded={previewExpanded} aria-label={t("preview")} title={generation.animaCameraPrompt}
+        onclick={() => previewExpanded = !previewExpanded}>
+        <span class="shrink-0 text-neutral-500" aria-hidden="true">{previewExpanded ? "▾" : "▸"}</span>
+        <span class={previewExpanded ? "min-w-0 flex-1 whitespace-pre-wrap break-words" : "min-w-0 flex-1 truncate"}>{generation.animaCameraPrompt}</span>
+      </button>
     </div>
   {/if}
 </div>
