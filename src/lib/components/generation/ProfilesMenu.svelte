@@ -16,17 +16,28 @@
   let inputRef = $state<HTMLInputElement | null>(null);
   let position = $state({ top: 0, right: 0 });
 
+  function updatePosition() {
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    position = {
+      top: rect.bottom + 6,
+      right: Math.max(8, window.innerWidth - rect.right),
+    };
+  }
+
   function show() {
-    if (anchor) {
-      const rect = anchor.getBoundingClientRect();
-      position = { top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) };
-    }
+    updatePosition();
     nameInput = generationTabs.activeTab?.name ?? "";
     open = true;
-    queueMicrotask(() => {
-      inputRef?.focus();
-      inputRef?.select();
-    });
+    // Skip auto-focus on touch devices so opening the profiles list does not
+    // immediately summon the on-screen keyboard over the saved profiles.
+    const isCoarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+    if (!isCoarsePointer) {
+      queueMicrotask(() => {
+        inputRef?.focus();
+        inputRef?.select();
+      });
+    }
   }
 
   $effect(() => {
@@ -34,7 +45,9 @@
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") open = false;
     };
-    const onResize = () => (open = false);
+    // Reposition instead of closing: opening the mobile on-screen keyboard
+    // resizes the viewport and fires window resize.
+    const onResize = () => updatePosition();
     document.addEventListener("keydown", onKey);
     window.addEventListener("resize", onResize);
     return () => {
@@ -101,7 +114,7 @@
       onclick={() => (open = false)}
     ></button>
     <div
-      class="absolute flex max-h-[70vh] w-80 flex-col rounded-xl border border-neutral-700 bg-neutral-900 p-3 shadow-2xl shadow-black/40"
+      class="absolute flex max-h-[70vh] w-80 max-w-[calc(100vw-1rem)] flex-col rounded-xl border border-neutral-700 bg-neutral-900 p-3 shadow-2xl shadow-black/40"
       style="top: {position.top}px; right: {position.right}px"
       role="dialog"
       aria-label={locale.t("generation.profiles.button")}
