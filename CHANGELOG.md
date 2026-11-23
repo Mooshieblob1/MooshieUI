@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v2.4.8
+
+### Generation & Prompting
+- **Anima Camera**: optional collapsible **Anima Camera** panel below the negative prompt for Anima `txt2img`, `img2img`, and `inpainting` with synchronized **Horizontal angle**, **Elevation**, **Framing / zoom**, and **Dutch angle** controls, a lazy-loaded interactive 3D positioning guide (with numeric fallback without WebGL), an **Extra Prompts** grid (**Extreme viewpoint**, **Lens / perspective**, **Focus / depth of field**, **Motion effects**, **Composition**, **Illustration style**, **Lighting**), collapsible prompt preview, profile persistence, and auto-disable on metadata import.
+- **Guide Image for txt2img**: new **Guide Image** option in `txt2img` with **Guide strength** and **Guide until** sliders that steers early steps toward a reference image's layout and colours via ComfyUI's core `LatentOperationBlend` while starting from pure noise at full denoise across KSampler model families without extra models.
+- **Concept recipes**: create, **Import** / **Export**, or **Save recipe** from Enhance chat (plus **Generate with AI** and **Refine with AI**) with **Visual goal**, **Cues to include**, **Avoid / UC**, **Never negate in UC**, **Adaptation rules**, **Scope**, and **Trigger #slug** / **Extra triggers**. Toggle active recipes from the Generate page **Recipes** button to apply them silently at generate time in **AI adapt** or instant **Tags only** mode, synced with preferences and included in Single-ZIP backups.
+
+### Comic Builder
+- **Cast member negative prompts**: each Cast card now has a **Negative** prompt box (auto-filled when adding from Characters) whose tags are appended to assigned panels during generation and supported via `cast[].negative` in MCP `create_comic`.
+
+### Fixes & Maintenance
+- **Mobile Profiles popup**: opening **Profiles** on mobile browsers no longer closes immediately when the on-screen keyboard resizes the viewport; skips auto-focusing the name field on touch devices and clamps popup width for narrow screens.
+- **ComfyUI v0.46.0**: updated the pinned managed ComfyUI version to `v0.46.0`.
+- **Security**: updated the Rust `cookie` crate to fix `RUSTSEC-2026-0594`.
+
+---
+
 ## What's New in v2.4.7
 
 ### Comic Builder
