@@ -17,11 +17,13 @@ preset or custom English prompt text, with an optional weight. Extreme viewpoint
 replace the ordinary direction and elevation tags while retaining framing and
 Dutch angle. Their orientation is described by the prompt, not the 3D guide.
 
-The read-only preview shows the fragment added to the positive prompt. The
-defaults and weight calculation match
+The collapsible preview bar shows the fragment added to the positive prompt. The
+defaults and weight calculation are based on
 [Comfyui-Anima_camera_angle-Aitha v1.0.1](https://github.com/AithaEzio/Comfyui-Anima_camera_angle-Aitha/releases/tag/v1.0.1),
-including its strong direction weighting. Prompt tags guide the model; they do
-not guarantee exact geometry. Imported code and runtime notices are included in
+with front-quarter angles (`45` and `315` degrees) blending through
+`three-quarter view` plus `facing left`/`facing right` so they stay distinct
+from full side profiles. Prompt tags guide the model; they do not guarantee
+exact geometry. Imported code and runtime notices are included in
 [`public/licenses/anima-camera-LICENSE.txt`](../public/licenses/anima-camera-LICENSE.txt).
 
 No custom node, extra model weights, LoRA, or separate installation is required.
@@ -40,8 +42,9 @@ assistant-supplied prompt, so MCP requests do not inherit these camera tags.
 ## Validation
 
 Run `npm run check`. The Guardrails workflow also runs
-`scripts/tests/animaCamera.test.ts`, with 180 expected prompts exported from
-the pinned package's Python implementation. Cases cover all illustration
+`scripts/tests/animaCamera.test.ts` (185 tests, including parity fixtures
+derived from the pinned package's Python implementation and front-quarter
+`three-quarter view` blend/deduplication checks). Cases cover all illustration
 presets, direction/elevation/framing boundaries, Dutch angle, custom text,
 weights, and extreme viewpoints.
 
