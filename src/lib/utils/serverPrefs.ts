@@ -31,6 +31,7 @@ export interface UserPrefsData {
   locale?: string;
   artist_local_previews?: unknown;
   enhancer_sessions?: unknown;
+  enhance_recipes?: unknown;
   style_creator?: unknown;
   anime_scene?: unknown;
   shortcuts?: unknown;

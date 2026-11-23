@@ -1028,6 +1028,8 @@ export interface PromptAssistantOpts {
    * (`characterNotesBlock`). Only an external provider is sent it.
    */
   character_notes?: string;
+  /** User-defined Enhance concept recipes rendered for the system prompt. */
+  recipes?: string;
   /** From the Enhance chat: the answer may start with a `<reply>` block for the user. */
   chat?: boolean;
 }

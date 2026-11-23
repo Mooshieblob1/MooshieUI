@@ -2140,6 +2140,7 @@ export async function deleteWildcard(path: string): Promise<void> {
 export interface BackupCounts {
   characters: number;
   prompt_presets: number;
+  enhance_recipes?: number;
   styles: number;
   lora_presets: number;
   lora_triggers: number;

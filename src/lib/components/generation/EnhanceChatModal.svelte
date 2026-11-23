@@ -15,6 +15,7 @@
   import { tick } from "svelte";
   import { portal } from "../../utils/portal.js";
   import { enhanceChat, NAI_MAX_REFERENCES, sessionFlowOf, type ChatExchange } from "../../stores/enhanceChat.svelte.js";
+  import { enhanceRecipes } from "../../stores/enhanceRecipes.svelte.js";
   import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -33,6 +34,7 @@
   import { writeClipboardText } from "../../utils/clipboardText.js";
   import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import EnhanceRecipesPanel from "./EnhanceRecipesPanel.svelte";
   import NaiEnhanceReview from "./NaiEnhanceReview.svelte";
   import type { OutputImage } from "../../types/index.js";
 
@@ -235,7 +237,7 @@
     if (e.key === "Escape" && !pickerOpen) {
       e.stopPropagation();
       if (enhanceChat.view === "memory") enhanceChat.finishMemoryReview(false);
-      else if (enhanceChat.view === "review") enhanceChat.backToChat();
+      else if (enhanceChat.view === "review" || enhanceChat.view === "recipes") enhanceChat.backToChat();
       else enhanceChat.close();
     }
   }
@@ -263,6 +265,14 @@
 
   function reviewNai(ex: ChatExchange) {
     if (!enhanceChat.reviewAnswer(ex.at)) gallery.showToast(locale.t("prompt_assistant.chat_needs_v5"), "error");
+  }
+
+  function saveRecipeFromAnswer(at: number) {
+    const idx = exchanges.findIndex((item) => item.at === at);
+    const slice = idx >= 0 ? exchanges.slice(Math.max(0, idx - 5), idx + 1) : exchanges.slice(-6);
+    enhanceChat.openSaveRecipeFromChat(
+      slice.map((item) => ({ user: item.user, reply: item.reply, prompt: item.prompt })),
+    );
   }
 
   async function copy(text: string) {
@@ -300,6 +310,14 @@
       <div class="max-w-full whitespace-pre-wrap break-words rounded-2xl rounded-tl-sm bg-neutral-800 px-3 py-2 text-xs leading-relaxed text-neutral-100">
         {ex.reply}
       </div>
+      {#if (m?.createdRecipeId && enhanceRecipes.getById(m.createdRecipeId)) || (m?.updatedRecipeId && enhanceRecipes.getById(m.updatedRecipeId))}
+        {@const targetRecipeId = m?.createdRecipeId ?? m?.updatedRecipeId ?? ""}
+        <div class="flex items-center gap-1.5">
+          <button class={btn} onclick={() => enhanceChat.openEditRecipe(targetRecipeId)}>
+            {locale.t("prompt_assistant.recipe_edit_created")}
+          </button>
+        </div>
+      {/if}
     {/if}
     {#if ex.prompt}
       <div class="w-full rounded-xl border {m?.applied ? 'border-emerald-600/50' : 'border-neutral-700'} bg-neutral-950 p-2.5">
@@ -392,10 +410,35 @@
             {/if}
           {/if}
           <button class={btn} title={locale.t("common.copy")} aria-label={locale.t("common.copy")} onclick={() => void copy(ex.prompt)}>⧉</button>
+          {#if !isH3}
+            <button
+              class={btn}
+              title={locale.t("prompt_assistant.recipe_save_from_chat_tip")}
+              onclick={() => saveRecipeFromAnswer(ex.at)}
+            >
+              {locale.t("prompt_assistant.recipe_save_from_chat")}
+            </button>
+          {/if}
           {#if m?.applied}
             <span class="text-[10px] text-emerald-400">✓ {locale.t("prompt_assistant.chat_applied")}</span>
           {/if}
         </div>
+        {#if m?.appliedRecipes && m.appliedRecipes.length > 0}
+          <div class="mt-1.5 flex flex-wrap items-center gap-1">
+            <span class="text-[10px] text-neutral-500">{locale.t("prompt_assistant.recipe_applied_label")}</span>
+            {#each m.appliedRecipes as r (r.id)}
+              <button
+                type="button"
+                class="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-px text-[10px] text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50"
+                disabled={!enhanceRecipes.getById(r.id)}
+                title="#{r.slug}"
+                onclick={() => enhanceChat.openEditRecipe(r.id)}
+              >
+                {r.name}
+              </button>
+            {/each}
+          </div>
+        {/if}
         {#if m?.pendingMemory && m.pendingMemory.length > 0}
           <div class="mt-2.5 space-y-1.5 border-t border-neutral-800 pt-2">
             <div class="text-[10px] font-medium text-neutral-300">{locale.t("characters.memory.review_title")}</div>
@@ -429,7 +472,7 @@
         {/if}
       </div>
     {/if}
-    {#if isLast && m?.request}
+    {#if isLast && m?.request && !m?.createdRecipeId && !m?.updatedRecipeId}
       <button
         class="text-[10px] text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
         disabled={enhanceChat.busy}
@@ -471,6 +514,9 @@
         {:else if enhanceChat.view === "review"}
           <button class={btn} onclick={() => enhanceChat.backToChat()}>← {locale.t("prompt_assistant.chat_back")}</button>
           <h2 class="truncate text-sm font-semibold text-neutral-100">{locale.t("prompt_assistant.nai_review_title")}</h2>
+        {:else if enhanceChat.view === "recipes"}
+          <button class={btn} onclick={() => enhanceChat.backToChat()}>← {locale.t("prompt_assistant.chat_back")}</button>
+          <h2 class="truncate text-sm font-semibold text-neutral-100">{locale.t("prompt_assistant.recipe_title")}</h2>
         {:else}
           <h2 class="truncate text-sm font-semibold text-neutral-100">✨ {title}</h2>
           {#if isNai && variant}
@@ -480,6 +526,17 @@
           {/if}
         {/if}
         <div class="ml-auto flex items-center gap-1">
+          {#if enhanceChat.view === "chat" && !isH3}
+            <button
+              class="rounded-lg border px-2 py-0.5 text-[10px] {enhanceRecipes.activeIds.length > 0
+                ? 'border-indigo-500/70 bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25'
+                : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800'}"
+              title={locale.t("prompt_assistant.recipe_manage_tip")}
+              onclick={() => enhanceChat.openRecipes()}
+            >
+              {locale.t("prompt_assistant.recipe_button")}{#if enhanceRecipes.activeIds.length > 0} ({enhanceRecipes.activeIds.length}){/if}
+            </button>
+          {/if}
           {#if enhanceChat.view === "chat" && exchanges.length > 0}
             <button class={btn} onclick={newChat}>⟲ {locale.t("prompt_assistant.chat_new")}</button>
           {/if}
@@ -533,6 +590,8 @@
         <div class="min-h-0 flex-1 overflow-y-auto p-3">
           <NaiEnhanceReview />
         </div>
+      {:else if enhanceChat.view === "recipes"}
+        <EnhanceRecipesPanel />
       {:else}
         <div bind:this={scroller} class="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
           {#if hidden > 0}
@@ -611,6 +670,41 @@
                   />
                 </div>
               {/each}
+            </div>
+          {/if}
+
+          {#if !isH3 && enhanceRecipes.recipes.length > 0}
+            <div class="mb-2 flex flex-wrap items-center gap-1">
+              {#each enhanceRecipes.recipes as recipe (recipe.id)}
+                {@const active = enhanceRecipes.isActive(recipe.id)}
+                <button
+                  type="button"
+                  class="rounded-full border px-2 py-0.5 text-[10px] transition-colors {active
+                    ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
+                    : 'border-neutral-700 bg-neutral-900 text-neutral-400 hover:border-neutral-600 hover:text-neutral-200'}"
+                  title="#{recipe.slug} - {recipe.intent}"
+                  aria-pressed={active}
+                  onclick={() => enhanceRecipes.toggleActive(recipe.id)}
+                >
+                  {recipe.name}
+                </button>
+              {/each}
+              <button
+                type="button"
+                class="rounded-full border border-dashed border-neutral-700 px-2 py-0.5 text-[10px] text-neutral-500 hover:border-neutral-500 hover:text-neutral-200"
+                title={locale.t("prompt_assistant.recipe_manage_tip")}
+                aria-label={locale.t("prompt_assistant.recipe_title")}
+                onclick={() => enhanceChat.openRecipes()}
+              >+</button>
+              {#if enhanceRecipes.activeIds.length >= 2}
+                <button
+                  type="button"
+                  class="px-1.5 py-0.5 text-[10px] text-neutral-500 hover:text-neutral-200"
+                  onclick={() => enhanceRecipes.clearActive()}
+                >
+                  {locale.t("prompt_assistant.recipe_clear_active")}
+                </button>
+              {/if}
             </div>
           {/if}
 
