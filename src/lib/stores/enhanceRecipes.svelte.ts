@@ -10,6 +10,8 @@ import { triggerSync } from "../utils/syncTrigger.js";
 
 const STORAGE_KEY = "mooshieui.enhanceRecipes.v1";
 const ACTIVE_KEY = "mooshieui.enhanceRecipes.active.v1";
+const ENHANCED_FP_KEY = "mooshieui.enhanceRecipes.enhancedFps.v1";
+const ENHANCED_FP_LIMIT = 32;
 const STORE_VERSION = 1;
 
 interface PersistedRecipes {
@@ -52,11 +54,13 @@ class EnhanceRecipesStore {
   /** True while silent LLM adaptation is running on Generate. */
   isApplyingAtGenerate = $state(false);
   private _enhancedFingerprints = new Set<string>();
+  private _enhancedFpStorageKey: string | null = null;
 
   constructor() {
     const initial = loadRecipes();
     this.recipes = initial;
     this.activeIds = loadActiveIds(initial);
+    this.ensureEnhancedFpsLoaded();
   }
 
   get activeRecipes(): EnhanceRecipe[] {
@@ -64,17 +68,48 @@ class EnhanceRecipesStore {
     return this.recipes.filter((r) => active.has(r.id));
   }
 
-  recordEnhancedFingerprint(fp: string): void {
-    if (!fp) return;
-    if (this._enhancedFingerprints.has(fp)) this._enhancedFingerprints.delete(fp);
-    this._enhancedFingerprints.add(fp);
-    if (this._enhancedFingerprints.size > 32) {
-      const oldest = this._enhancedFingerprints.values().next().value;
-      if (oldest !== undefined) this._enhancedFingerprints.delete(oldest);
+  private ensureEnhancedFpsLoaded(): void {
+    const key = userScopedKey(ENHANCED_FP_KEY);
+    if (key === this._enhancedFpStorageKey) return;
+    this._enhancedFpStorageKey = key;
+    this._enhancedFingerprints = new Set<string>();
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      for (const item of parsed.slice(-ENHANCED_FP_LIMIT)) {
+        if (typeof item === "string" && item) this._enhancedFingerprints.add(item);
+      }
+    } catch {
+      /* storage unavailable */
     }
   }
 
+  private saveEnhancedFpsLocal(): void {
+    try {
+      const key = userScopedKey(ENHANCED_FP_KEY);
+      this._enhancedFpStorageKey = key;
+      localStorage.setItem(key, JSON.stringify([...this._enhancedFingerprints]));
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
+  recordEnhancedFingerprint(fp: string): void {
+    if (!fp) return;
+    this.ensureEnhancedFpsLoaded();
+    if (this._enhancedFingerprints.has(fp)) this._enhancedFingerprints.delete(fp);
+    this._enhancedFingerprints.add(fp);
+    if (this._enhancedFingerprints.size > ENHANCED_FP_LIMIT) {
+      const oldest = this._enhancedFingerprints.values().next().value;
+      if (oldest !== undefined) this._enhancedFingerprints.delete(oldest);
+    }
+    this.saveEnhancedFpsLocal();
+  }
+
   isEnhancedFingerprint(fp: string): boolean {
+    this.ensureEnhancedFpsLoaded();
     return this._enhancedFingerprints.has(fp);
   }
 

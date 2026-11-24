@@ -188,15 +188,41 @@ export function matchGenerateTimeRecipes(
 }
 
 export interface RecipePromptFields {
-  flow: string;
   positive: string;
   negative: string;
-  characters?: readonly { prompt: string; negative_prompt: string }[];
+  characters?: readonly { prompt: string; negative_prompt: string; enabled?: boolean }[];
+}
+
+export interface RecipeCharacterSlot {
+  index: number;
+  prompt: string;
+  negative_prompt: string;
 }
 
 /**
- * Deterministic key over prompt fields and active recipes for Generate-time
+ * Extract enabled, non-empty character slots with their original array indices,
+ * ignoring disabled slots, blank slots, and placement coordinates.
+ */
+export function activeRecipeCharacters(
+  characters?: readonly { prompt: string; negative_prompt: string; enabled?: boolean }[],
+): RecipeCharacterSlot[] {
+  if (!characters || characters.length === 0) return [];
+  const out: RecipeCharacterSlot[] = [];
+  for (let index = 0; index < characters.length; index++) {
+    const c = characters[index];
+    if (c.enabled === false) continue;
+    const prompt = c.prompt.trim();
+    const negative_prompt = c.negative_prompt.trim();
+    if (!prompt && !negative_prompt) continue;
+    out.push({ index, prompt, negative_prompt });
+  }
+  return out;
+}
+
+/**
+ * Deterministic key over user prompt fields and active recipes for Generate-time
  * caching and skipping double-processing right after Enhance Chat Apply.
+ * Strictly prompt-only: model, parameters, and settings are excluded.
  */
 export function recipePromptFingerprint(
   fields: RecipePromptFields,
@@ -206,11 +232,10 @@ export function recipePromptFingerprint(
     .map((r) => `${r.id}@${r.updatedAt}:${r.applyMode}`)
     .sort()
     .join("|");
-  const charsKey = (fields.characters ?? [])
-    .map((c) => `${c.prompt.trim()}\u0000${c.negative_prompt.trim()}`)
+  const charsKey = activeRecipeCharacters(fields.characters)
+    .map((c) => `${c.prompt}\u0000${c.negative_prompt}`)
     .join("\u0001");
   return [
-    fields.flow,
     fields.positive.trim(),
     fields.negative.trim(),
     charsKey,
@@ -281,7 +306,7 @@ function mergeUniqueTags(existing: string, addition: string, isNaiPositive = fal
  * and strips `neverUc` tags from every UC field.
  */
 export function applyRecipesDeterministic<
-  TChar extends { prompt: string; negative_prompt: string },
+  TChar extends { prompt: string; negative_prompt: string; enabled?: boolean },
 >(
   fields: {
     positive: string;
@@ -297,18 +322,23 @@ export function applyRecipesDeterministic<
 } {
   let positive = stripLeakedRecipeSlugs(fields.positive, recipes);
   let negative = stripLeakedRecipeSlugs(fields.negative, recipes);
-  let characters = fields.characters?.map((c) => ({
-    ...c,
-    prompt: stripLeakedRecipeSlugs(c.prompt, recipes),
-    negative_prompt: stripLeakedRecipeSlugs(c.negative_prompt, recipes),
-  }));
+  let characters = fields.characters?.map((c) =>
+    c.enabled === false
+      ? c
+      : {
+          ...c,
+          prompt: stripLeakedRecipeSlugs(c.prompt, recipes),
+          negative_prompt: stripLeakedRecipeSlugs(c.negative_prompt, recipes),
+        },
+  );
 
   for (const recipe of recipes) {
     if (recipe.include) {
-      const activeChars = characters?.filter((c) => c.prompt.trim().length > 0) ?? [];
+      const activeChars =
+        characters?.filter((c) => c.enabled !== false && c.prompt.trim().length > 0) ?? [];
       if (isNai && characters && activeChars.length > 0 && recipe.scope === "character") {
         characters = characters.map((c) =>
-          c.prompt.trim().length > 0
+          c.enabled !== false && c.prompt.trim().length > 0
             ? { ...c, prompt: mergeUniqueTags(c.prompt, recipe.include, false) }
             : c,
         );
@@ -323,10 +353,14 @@ export function applyRecipesDeterministic<
 
   negative = stripNeverUcTags(negative, recipes);
   if (characters) {
-    characters = characters.map((c) => ({
-      ...c,
-      negative_prompt: stripNeverUcTags(c.negative_prompt, recipes),
-    }));
+    characters = characters.map((c) =>
+      c.enabled === false
+        ? c
+        : {
+            ...c,
+            negative_prompt: stripNeverUcTags(c.negative_prompt, recipes),
+          },
+    );
   }
   return { positive, negative, characters };
 }
