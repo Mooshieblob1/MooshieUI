@@ -2,6 +2,8 @@ import { generation } from "./generation.svelte.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
 import { enhanceRecipes } from "./enhanceRecipes.svelte.js";
 import { recipePromptFingerprint } from "../utils/enhanceRecipes.js";
+import { stripPromptComments } from "../utils/promptComments.js";
+import { joinPromptBoxes } from "../utils/promptSanitize.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
 import { naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
@@ -104,6 +106,11 @@ export interface NaiEnhancePending {
   answerAt?: number;
   /** Run once when the rewrite is applied: saves what it learned to memory. */
   onApplied?: () => void;
+}
+
+/** Join main + extra prompt boxes with comments stripped, matching `prepareUserPrompts().rawPositive/rawNegative`. */
+function joinedUserPrompt(main: string, extras: readonly { content: string }[]): string {
+  return joinPromptBoxes([main, ...extras.map((b) => b.content)].map(stripPromptComments));
 }
 
 /** Rows whose text the outfit tools read and write: every box not being removed. */
@@ -709,9 +716,8 @@ class EnhanceChatStore {
         enhanceRecipes.recordEnhancedFingerprint(
           recipePromptFingerprint(
             {
-              flow: `general:${generation.modelFamily}`,
-              positive: generation.positivePrompt,
-              negative: generation.negativePrompt,
+              positive: joinedUserPrompt(generation.positivePrompt, generation.extraPositiveBoxes),
+              negative: joinedUserPrompt(generation.negativePrompt, generation.extraNegativeBoxes),
             },
             active,
           ),
@@ -997,15 +1003,17 @@ class EnhanceChatStore {
     if (p.answerAt !== undefined && p.base.selected && p.uc.selected && p.characters.every((c) => c.selected)) {
       const appliedIds = new Set((this.meta[p.answerAt]?.appliedRecipes ?? []).map((r) => r.id));
       const active = enhanceRecipes.activeRecipes;
-      const resolvedVariant = naiV5Variant(generation.checkpoint);
-      if (resolvedVariant && active.length > 0 && active.every((r) => appliedIds.has(r.id))) {
+      if (active.length > 0 && active.every((r) => appliedIds.has(r.id))) {
         enhanceRecipes.recordEnhancedFingerprint(
           recipePromptFingerprint(
             {
-              flow: `nai-${resolvedVariant}`,
-              positive: generation.positivePrompt,
-              negative: generation.negativePrompt,
-              characters: generation.novelaiSettings.characters,
+              positive: joinedUserPrompt(generation.positivePrompt, generation.extraPositiveBoxes),
+              negative: joinedUserPrompt(generation.negativePrompt, generation.extraNegativeBoxes),
+              characters: generation.novelaiSettings.characters.map((c) => ({
+                ...c,
+                prompt: stripPromptComments(c.prompt),
+                negative_prompt: stripPromptComments(c.negative_prompt),
+              })),
             },
             active,
           ),

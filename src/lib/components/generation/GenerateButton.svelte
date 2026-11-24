@@ -37,7 +37,7 @@
   import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
   import { requestGeneration, trackGeneration, submitGeneration } from "../../utils/generationSubmit.js";
-  import { applyActiveRecipesToParams } from "../../utils/recipeGenerateApply.js";
+  import { buildParamsWithActiveRecipes } from "../../utils/recipeGenerateApply.js";
   import { enhanceRecipes } from "../../stores/enhanceRecipes.svelte.js";
   import { beginPausedEdit, uploadPausedEditImage } from "../../utils/pausedEdit.js";
   import { queue } from "../../stores/queue.svelte.js";
@@ -191,6 +191,7 @@
 
   async function handleGenerate() {
     // Keyboard shortcuts reach this handler even when the button is disabled.
+    if (enhanceRecipes.isApplyingAtGenerate) return;
     if (generation.mode === "video" && !generation.canGenerate) return;
 
     const sequential = isSequentialGenerateRun();
@@ -241,7 +242,7 @@
       // apply here.
       if (generation.resumeAppliesToMode && generation.isPaused && generation.mode === "txt2img") {
         generation.saveCurrentPromptToHistory();
-        await submitGeneration(await applyActiveRecipesToParams(generation.toParams()));
+        await submitGeneration(await buildParamsWithActiveRecipes());
         generation.saveSettings();
         return;
       }
@@ -269,15 +270,13 @@
         }
         generation.saveCurrentPromptToHistory();
         await submitGeneration(
-          await applyActiveRecipesToParams(
-            generation.toParams({
-              overrides: {
-                mode: "txt2img",
-                resume_edit_image: editImage,
-                resume_edit_mask: generation.maskImage,
-              },
-            }),
-          ),
+          await buildParamsWithActiveRecipes({
+            overrides: {
+              mode: "txt2img",
+              resume_edit_image: editImage,
+              resume_edit_mask: generation.maskImage,
+            },
+          }),
         );
         generation.saveSettings();
         // Back to the text-to-image view; the paused run stays until discarded.
@@ -498,7 +497,7 @@
       } else if (repeatActive) {
         await runRepeat();
       } else {
-        const params = await applyActiveRecipesToParams(generation.toParams());
+        const params = await buildParamsWithActiveRecipes();
         const sentRegions = params.positive_regions?.length ?? 0;
         if (sentRegions > 0) {
           console.log("[regional] Sending", sentRegions, "region(s) via conditioning");
@@ -573,7 +572,7 @@
         let outcome: "done" | "failed" | "stopped";
         try {
           // Fresh params each run, so random seeds and wildcards reroll.
-          const params = await applyActiveRecipesToParams(generation.toParams());
+          const params = await buildParamsWithActiveRecipes();
           const promptId = await submitGeneration(params);
           outcome = await waitForPrompt(promptId, stopped);
         } catch (e) {
@@ -622,7 +621,7 @@
       if (orderedRunCancelRequested || runToken !== orderedRunToken) break;
       const choiceIndex = (run.nextIndex + i) % choices.length;
       const fixedPresetChoices = new Map([[run.presetId, choices[choiceIndex]]]);
-      const params = await applyActiveRecipesToParams(generation.toParams({ fixedPresetChoices }));
+      const params = await buildParamsWithActiveRecipes({ fixedPresetChoices });
       console.log(
         "[generate] ordered_wildcard:",
         `${i + 1}/${count}`,
@@ -738,7 +737,7 @@
     for (const { cell, index } of cellOrder) {
       compare.applyToGeneration(cell);
 
-      const params = await applyActiveRecipesToParams(generation.toParams());
+      const params = await buildParamsWithActiveRecipes();
 
       // Anima models produce poor results below 1024 — clamp to 1024² area
       // preserving aspect ratio. The single-image path does this on the store;

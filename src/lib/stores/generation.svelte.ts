@@ -296,7 +296,25 @@ export interface PausedStage {
   workerId?: number;
 }
 
+export interface PreparedUserPrompts {
+  /** Raw joined, comment-stripped prompt boxes (before presets/wildcards), for Enhance Chat fingerprint matching. */
+  rawPositive: string;
+  rawNegative: string;
+  rawCharacters: NovelAiCharacter[];
+  /**
+   * Resolved user prompt after inline/active prompt chunks, wildcards, and `<segment:...>`
+   * extraction, BEFORE settings (stylePreset, artist styles, camera controls,
+   * autoQualityTags, disablesNegativePrompt, weight translation, model sanitization).
+   */
+  positive: string;
+  negative: string;
+  characters: NovelAiCharacter[];
+  detailSegments: ReturnType<typeof parseSegmentDetailPrompt>["segments"];
+}
+
 export interface GenerationToParamsOptions {
+  /** Pre-prepared (and possibly recipe-adapted) user prompts; skips re-rolling wildcards and prompt chunks. */
+  preparedPrompts?: PreparedUserPrompts;
   fixedPresetChoices?: ReadonlyMap<string, string>;
   /** When false, positive_regions is omitted (regional inpaint chain). */
   includeConditioningRegions?: boolean;
@@ -4177,12 +4195,7 @@ class GenerationStore {
     return locale.t(key, { file });
   }
 
-  toParams(options: GenerationToParamsOptions = {}) {
-    // Video mode loads its own UNet/CLIP/VAE trio from the `video_*` fields and
-    // never touches `checkpoint`, so the image-pipeline model guards below would
-    // block generation over state video does not use.
-    const isVideo = this._mode === "video";
-
+  private assertGenerationInputsReady(isVideo: boolean): void {
     // A text encoder, VAE or model in the wrong picker fails deep in ComfyUI
     // with an error that names neither file; say which pick is wrong instead.
     // NovelAI renders remotely and ignores these pickers entirely.
@@ -4233,6 +4246,162 @@ class GenerationStore {
           `or choose a full checkpoint instead.`,
       );
     }
+  }
+
+  private resolveRngSeed(options: GenerationToParamsOptions): {
+    inPauseFlow: boolean;
+    seedSource: string;
+    rngSeed: number;
+  } {
+    // Whether this request pauses or continues the paused run.
+    const inPauseFlow = this.resumeAppliesToMode && !options.outsidePausedRun;
+    const seedSource = inPauseFlow && this.isPaused
+      ? this.pausedStages[0].seed
+      : options.seed ?? this.seed;
+    const numericSeed = parseInt(seedSource, 10);
+    const rngSeed: number =
+      !isNaN(numericSeed) && numericSeed !== -1
+        ? numericSeed >>> 0
+        : (Math.random() * 0x100000000) >>> 0;
+    return { inPauseFlow, seedSource, rngSeed };
+  }
+
+  private expandUserWildcards(
+    inlinePositiveRaw: string,
+    inlineNegativeRaw: string,
+    characters: NovelAiCharacter[],
+    rngSeed: number,
+  ): { inlinePositive: string; inlineNegative: string; characters: NovelAiCharacter[] } {
+    // Expand random alternation syntax ({a|b|c}, {2$$a|b|c}, etc.).
+    // Seeded from the user seed so the same seed always produces the same roll.
+    // When seed is -1 (let backend choose), we pick a fresh random integer so
+    // the expansion is still deterministic within this submission; the gallery
+    // stores the resolved (expanded) prompt so regenerating always reproduces.
+    const hasPositiveRandom = hasRandomSyntax(inlinePositiveRaw);
+    const hasNegativeRandom = hasRandomSyntax(inlineNegativeRaw);
+    // `__name__` file wildcards: expanded before {a|b} (an option may hold
+    // alternation) and once more after it (an alternation may hold a wildcard).
+    wildcards.beginBuild();
+    const expandAll = (text: string, salt: number, randomize: boolean) => {
+      let out = wildcards.expand(text, rngSeed + salt).text;
+      if (randomize || hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt);
+      if (out.includes("__")) {
+        out = wildcards.expand(out, rngSeed + salt + 7).text;
+        if (hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt + 7);
+      }
+      return out;
+    };
+    return {
+      inlinePositive: expandAll(inlinePositiveRaw, 0, hasPositiveRandom),
+      inlineNegative: expandAll(inlineNegativeRaw, 1, hasNegativeRandom),
+      characters: characters.map((character, i) => ({
+        ...character,
+        prompt: character.prompt.includes("__")
+          ? wildcards.expand(character.prompt, rngSeed + 101 + i * 2).text
+          : character.prompt,
+        negative_prompt: character.negative_prompt.includes("__")
+          ? wildcards.expand(character.negative_prompt, rngSeed + 102 + i * 2).text
+          : character.negative_prompt,
+      })),
+    };
+  }
+
+  /**
+   * Resolve only the user's own prompt text (main + extra boxes + NovelAI character
+   * boxes + prompt chunks + wildcards + `<segment:...>` extraction), WITHOUT any
+   * model/parameter/style/quality/camera injections or model-specific sanitization.
+   */
+  prepareUserPrompts(options: GenerationToParamsOptions = {}): PreparedUserPrompts {
+    const isVideo = this._mode === "video";
+    this.assertGenerationInputsReady(isVideo);
+
+    const ownPrompts = options.prompts ?? null;
+    const rawPositive = ownPrompts
+      ? stripPromptComments(ownPrompts.positive)
+      : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments));
+    const rawNegative = ownPrompts
+      ? stripPromptComments(ownPrompts.negative)
+      : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments));
+    const rawCharacters: NovelAiCharacter[] =
+      this.isNovelAi && !ownPrompts
+        ? (this.novelaiSettings.characters ?? []).map((c) => ({
+            ...c,
+            center: { ...c.center },
+            prompt: stripPromptComments(c.prompt),
+            negative_prompt: stripPromptComments(c.negative_prompt),
+          }))
+        : [];
+
+    const inlinePositiveIds = promptPresets.inlinePresetIds(rawPositive);
+    const inlineNegativeIds = promptPresets.inlinePresetIds(rawNegative);
+    const novelAiCharacters =
+      this.isNovelAi && !ownPrompts
+        ? this.resolveNovelAiCharacters(options.fixedPresetChoices)
+        : { characters: [] as NovelAiCharacter[], inlineIds: new Set<string>() };
+    const inlinePresetIds = new Set([
+      ...inlinePositiveIds,
+      ...inlineNegativeIds,
+      ...novelAiCharacters.inlineIds,
+    ]);
+    const inlinePositiveRaw = promptPresets.resolveInline(rawPositive, {
+      fixedChoices: options.fixedPresetChoices,
+    });
+    const inlineNegativeRaw = promptPresets.resolveInline(rawNegative, {
+      fixedChoices: options.fixedPresetChoices,
+    });
+
+    const { rngSeed } = this.resolveRngSeed(options);
+    const expanded = this.expandUserWildcards(
+      inlinePositiveRaw,
+      inlineNegativeRaw,
+      novelAiCharacters.characters,
+      rngSeed,
+    );
+
+    const parsedSegmentDetails = parseSegmentDetailPrompt(expanded.inlinePositive);
+    let userPositive = parsedSegmentDetails.baseText;
+    let userNegative = expanded.inlineNegative;
+
+    const preset = ownPrompts
+      ? { prepend: "", append: "" }
+      : promptPresets.resolve({
+          fixedChoices: options.fixedPresetChoices,
+          skipIds: inlinePresetIds,
+          advanceFixedOrdered: false,
+        });
+    if (preset.prepend) {
+      userPositive = mergeNovelAiTags(userPositive, preset.prepend, "before");
+    }
+    if (preset.append) {
+      userPositive = mergeNovelAiTags(userPositive, preset.append, "after");
+    }
+
+    const chunkUcIds = [
+      ...(ownPrompts ? [] : promptPresets.activeIdsFor(inlinePresetIds)),
+      ...inlinePositiveIds,
+    ];
+    const chunkUc = promptPresets.negativeFor(chunkUcIds);
+    if (chunkUc) {
+      userNegative = mergeNovelAiTags(userNegative, chunkUc, "after");
+    }
+
+    return {
+      rawPositive,
+      rawNegative,
+      rawCharacters,
+      positive: userPositive,
+      negative: userNegative,
+      characters: expanded.characters,
+      detailSegments: parsedSegmentDetails.segments,
+    };
+  }
+
+  toParams(options: GenerationToParamsOptions = {}) {
+    // Video mode loads its own UNet/CLIP/VAE trio from the `video_*` fields and
+    // never touches `checkpoint`, so the image-pipeline model guards below would
+    // block generation over state video does not use.
+    const isVideo = this._mode === "video";
+    this.assertGenerationInputsReady(isVideo);
 
     const style = this.stylePresetsEnabled
       ? (STYLE_PRESETS.find((preset) => preset.id === this.stylePreset) ?? STYLE_PRESETS[0])
@@ -4249,141 +4418,147 @@ class GenerationStore {
       keepBreak: !this.isNovelAi && !isVideo && familySupportsBreakChunking(this.modelFamily),
     };
     const ownPrompts = options.prompts ?? null;
-    // `//` comments come off each box before the boxes are joined, so a
-    // comment at the end of one box cannot swallow the next box's text.
-    const effectivePositive = sanitizePromptForSend(
-      ownPrompts
-        ? stripPromptComments(ownPrompts.positive)
-        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments)),
-      sanitizeOptions
-    );
-    const effectiveNegative = sanitizePromptForSend(
-      ownPrompts
-        ? stripPromptComments(ownPrompts.negative)
-        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments)),
-      sanitizeOptions
-    );
-
-    // Expand inline `@preset:<slug>` directives in the user-typed prompts
-    // first, so wildcard rolls happen before any merging/dedup logic. Each
-    // occurrence rolls independently.
-    const inlinePositiveIds = promptPresets.inlinePresetIds(effectivePositive);
-    const inlineNegativeIds = promptPresets.inlinePresetIds(effectiveNegative);
-    const novelAiCharacters = ownPrompts
-      ? { characters: [] as NovelAiCharacter[], inlineIds: new Set<string>() }
-      : this.resolveNovelAiCharacters(options.fixedPresetChoices);
-    const inlinePresetIds = new Set([
-      ...inlinePositiveIds,
-      ...inlineNegativeIds,
-      ...novelAiCharacters.inlineIds,
-    ]);
-    const inlinePositiveRaw = promptPresets.resolveInline(effectivePositive, {
-      fixedChoices: options.fixedPresetChoices,
-    });
-    const inlineNegativeRaw = promptPresets.resolveInline(effectiveNegative, {
-      fixedChoices: options.fixedPresetChoices,
-    });
-
-    // Expand random alternation syntax ({a|b|c}, {2$$a|b|c}, etc.).
-    // Seeded from the user seed so the same seed always produces the same roll.
-    // When seed is -1 (let backend choose), we pick a fresh random integer so
-    // the expansion is still deterministic within this submission; the gallery
-    // stores the resolved (expanded) prompt so regenerating always reproduces.
-    const hasPositiveRandom = hasRandomSyntax(inlinePositiveRaw);
-    const hasNegativeRandom = hasRandomSyntax(inlineNegativeRaw);
-    // Whether this request pauses or continues the paused run.
-    const inPauseFlow = this.resumeAppliesToMode && !options.outsidePausedRun;
-    const seedSource = inPauseFlow && this.isPaused
-      ? this.pausedStages[0].seed
-      : options.seed ?? this.seed;
-    const numericSeed = parseInt(seedSource, 10);
-    const rngSeed: number =
-      !isNaN(numericSeed) && numericSeed !== -1
-        ? numericSeed >>> 0
-        : (Math.random() * 0x100000000) >>> 0;
-    // `__name__` file wildcards: expanded before {a|b} (an option may hold
-    // alternation) and once more after it (an alternation may hold a wildcard).
-    wildcards.beginBuild();
-    const expandAll = (text: string, salt: number, randomize: boolean) => {
-      let out = wildcards.expand(text, rngSeed + salt).text;
-      if (randomize || hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt);
-      if (out.includes("__")) {
-        out = wildcards.expand(out, rngSeed + salt + 7).text;
-        if (hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt + 7);
-      }
-      return out;
-    };
-    const inlinePositive = expandAll(inlinePositiveRaw, 0, hasPositiveRandom);
-    const inlineNegative = expandAll(inlineNegativeRaw, 1, hasNegativeRandom);
-    novelAiCharacters.characters = novelAiCharacters.characters.map((character, i) => ({
-      ...character,
-      prompt: character.prompt.includes("__") ? wildcards.expand(character.prompt, rngSeed + 101 + i * 2).text : character.prompt,
-      negative_prompt: character.negative_prompt.includes("__")
-        ? wildcards.expand(character.negative_prompt, rngSeed + 102 + i * 2).text
-        : character.negative_prompt,
-    }));
-
-    // Parse <segment:...> auto-refinement tags from the user-typed prompt before
-    // system fragments (style presets, artist styles, preset appends, quality
-    // tags) are merged in — a trailing-form segment must not swallow them.
-    const parsedSegmentDetails = parseSegmentDetailPrompt(inlinePositive);
-
-    // Every merge below goes through mergeIntoPrompt: in NovelAI mode the
-    // comma re-tokenizer would fold `1girl, rain,\nText:\nMumei` into
-    // `1girl, rain, Text:, Mumei` the moment any style or chunk is active.
-    let positivePrompt = this.mergeIntoPrompt(
-      parsedSegmentDetails.baseText,
-      style.positive,
-      "after",
-    );
-    let negativePrompt = this.mergeIntoPrompt(inlineNegative, style.negative, "after");
-
-    // Inject tags contributed by any currently-active Artist Styles. These are
-    // not visible in the prompt textbox — they flow straight into the payload
-    // so the user sees badges in the UI instead.
-    // NovelAI mode strips the `@` a style may have stored: a style built
-    // while an Anima checkpoint was selected holds `@artist`, and `@` is
-    // the prompt-chunk sigil on NovelAI, not an artist marker.
+    const { inPauseFlow, seedSource, rngSeed } = this.resolveRngSeed(options);
     const styleFragment = options.skipActiveStyles ? "" : styles.buildPromptFragment(this.isNovelAi);
-    if (styleFragment) {
-      positivePrompt = this.mergeIntoPrompt(positivePrompt, styleFragment, "after");
-    }
-    if (options.extraPositive) {
-      positivePrompt = this.mergeIntoPrompt(positivePrompt, options.extraPositive, "after");
-    }
 
-    // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
-    // pick a random choice per generation — mergeComfyTags dedupes them against
-    // whatever the user has already typed.
-    const preset = ownPrompts
-      ? { prepend: "", append: "" }
-      : promptPresets.resolve({
-          fixedChoices: options.fixedPresetChoices,
-          skipIds: inlinePresetIds,
-          advanceFixedOrdered: false,
-        });
-    if (preset.prepend) {
-      positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.prepend, "before");
-    }
-    if (preset.append) {
-      positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.append, "after");
-    }
+    let positivePrompt: string;
+    let negativePrompt: string;
+    let novelAiCharacters: { characters: NovelAiCharacter[] };
+    let parsedSegmentDetails: { segments: ReturnType<typeof parseSegmentDetailPrompt>["segments"] };
 
-    // UC carried by styles and chunks goes to the negative prompt: active
-    // styles, the chunks the pass above applied, and chunks used inline in
-    // the positive prompt. A chunk used only in the negative box is already
-    // negative text there, so its UC is not added again.
-    const chunkUcIds = [
-      ...(ownPrompts ? [] : promptPresets.activeIdsFor(inlinePresetIds)),
-      ...inlinePositiveIds,
-    ];
-    const ucParts = [
-      options.skipActiveStyles ? "" : styles.buildNegativeFragment(),
-      promptPresets.negativeFor(chunkUcIds),
-      options.extraNegative?.trim() ?? "",
-    ].filter(Boolean);
-    if (ucParts.length > 0) {
-      negativePrompt = this.mergeIntoPrompt(negativePrompt, ucParts.join(", "), "after");
+    if (options.preparedPrompts) {
+      const prepared = options.preparedPrompts;
+      novelAiCharacters = { characters: prepared.characters };
+      parsedSegmentDetails = { segments: prepared.detailSegments };
+      positivePrompt = this.mergeIntoPrompt(
+        sanitizePromptForSend(prepared.positive, sanitizeOptions),
+        style.positive,
+        "after",
+      );
+      negativePrompt = this.mergeIntoPrompt(
+        sanitizePromptForSend(prepared.negative, sanitizeOptions),
+        style.negative,
+        "after",
+      );
+      if (styleFragment) {
+        positivePrompt = this.mergeIntoPrompt(positivePrompt, styleFragment, "after");
+      }
+      if (options.extraPositive) {
+        positivePrompt = this.mergeIntoPrompt(positivePrompt, options.extraPositive, "after");
+      }
+      const ucParts = [
+        options.skipActiveStyles ? "" : styles.buildNegativeFragment(),
+        options.extraNegative?.trim() ?? "",
+      ].filter(Boolean);
+      if (ucParts.length > 0) {
+        negativePrompt = this.mergeIntoPrompt(negativePrompt, ucParts.join(", "), "after");
+      }
+    } else {
+      // `//` comments come off each box before the boxes are joined, so a
+      // comment at the end of one box cannot swallow the next box's text.
+      const effectivePositive = sanitizePromptForSend(
+        ownPrompts
+          ? stripPromptComments(ownPrompts.positive)
+          : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments)),
+        sanitizeOptions
+      );
+      const effectiveNegative = sanitizePromptForSend(
+        ownPrompts
+          ? stripPromptComments(ownPrompts.negative)
+          : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments)),
+        sanitizeOptions
+      );
+
+      // Expand inline `@preset:<slug>` directives in the user-typed prompts
+      // first, so wildcard rolls happen before any merging/dedup logic. Each
+      // occurrence rolls independently.
+      const inlinePositiveIds = promptPresets.inlinePresetIds(effectivePositive);
+      const inlineNegativeIds = promptPresets.inlinePresetIds(effectiveNegative);
+      const resolvedChars = ownPrompts
+        ? { characters: [] as NovelAiCharacter[], inlineIds: new Set<string>() }
+        : this.resolveNovelAiCharacters(options.fixedPresetChoices);
+      const inlinePresetIds = new Set([
+        ...inlinePositiveIds,
+        ...inlineNegativeIds,
+        ...resolvedChars.inlineIds,
+      ]);
+      const inlinePositiveRaw = promptPresets.resolveInline(effectivePositive, {
+        fixedChoices: options.fixedPresetChoices,
+      });
+      const inlineNegativeRaw = promptPresets.resolveInline(effectiveNegative, {
+        fixedChoices: options.fixedPresetChoices,
+      });
+
+      const expanded = this.expandUserWildcards(
+        inlinePositiveRaw,
+        inlineNegativeRaw,
+        resolvedChars.characters,
+        rngSeed,
+      );
+      novelAiCharacters = { characters: expanded.characters };
+
+      // Parse <segment:...> auto-refinement tags from the user-typed prompt before
+      // system fragments (style presets, artist styles, preset appends, quality
+      // tags) are merged in — a trailing-form segment must not swallow them.
+      const parsedSegments = parseSegmentDetailPrompt(expanded.inlinePositive);
+      parsedSegmentDetails = { segments: parsedSegments.segments };
+
+      // Every merge below goes through mergeIntoPrompt: in NovelAI mode the
+      // comma re-tokenizer would fold `1girl, rain,\nText:\nMumei` into
+      // `1girl, rain, Text:, Mumei` the moment any style or chunk is active.
+      positivePrompt = this.mergeIntoPrompt(
+        parsedSegments.baseText,
+        style.positive,
+        "after",
+      );
+      negativePrompt = this.mergeIntoPrompt(expanded.inlineNegative, style.negative, "after");
+
+      // Inject tags contributed by any currently-active Artist Styles. These are
+      // not visible in the prompt textbox — they flow straight into the payload
+      // so the user sees badges in the UI instead.
+      // NovelAI mode strips the `@` a style may have stored: a style built
+      // while an Anima checkpoint was selected holds `@artist`, and `@` is
+      // the prompt-chunk sigil on NovelAI, not an artist marker.
+      if (styleFragment) {
+        positivePrompt = this.mergeIntoPrompt(positivePrompt, styleFragment, "after");
+      }
+      if (options.extraPositive) {
+        positivePrompt = this.mergeIntoPrompt(positivePrompt, options.extraPositive, "after");
+      }
+
+      // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
+      // pick a random choice per generation — mergeComfyTags dedupes them against
+      // whatever the user has already typed.
+      const preset = ownPrompts
+        ? { prepend: "", append: "" }
+        : promptPresets.resolve({
+            fixedChoices: options.fixedPresetChoices,
+            skipIds: inlinePresetIds,
+            advanceFixedOrdered: false,
+          });
+      if (preset.prepend) {
+        positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.prepend, "before");
+      }
+      if (preset.append) {
+        positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.append, "after");
+      }
+
+      // UC carried by styles and chunks goes to the negative prompt: active
+      // styles, the chunks the pass above applied, and chunks used inline in
+      // the positive prompt. A chunk used only in the negative box is already
+      // negative text there, so its UC is not added again.
+      const chunkUcIds = [
+        ...(ownPrompts ? [] : promptPresets.activeIdsFor(inlinePresetIds)),
+        ...inlinePositiveIds,
+      ];
+      const ucParts = [
+        options.skipActiveStyles ? "" : styles.buildNegativeFragment(),
+        promptPresets.negativeFor(chunkUcIds),
+        options.extraNegative?.trim() ?? "",
+      ].filter(Boolean);
+      if (ucParts.length > 0) {
+        negativePrompt = this.mergeIntoPrompt(negativePrompt, ucParts.join(", "), "after");
+      }
     }
 
     // The Multiple-Angles LoRA wants its shot phrase first. Prepended as-is

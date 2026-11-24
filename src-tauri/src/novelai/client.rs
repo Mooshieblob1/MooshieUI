@@ -278,9 +278,10 @@ impl<'a> NovelAiClient<'a> {
                         previews.insert(*sample, image.clone());
                     }
                     StreamEvent::Error { message } => {
+                        log::warn!("NovelAI stream reported error frame: {message}");
                         return Err(AppError::ApiError {
                             status: 500,
-                            message: message.clone(),
+                            message: format_server_error_detail(&message),
                         });
                     }
                 }
@@ -500,8 +501,24 @@ fn error_message(status: u16, content_type: &str, body: &str) -> String {
 
     if detail.is_empty() {
         "NovelAI request failed.".to_string()
+    } else if status >= 500 {
+        format_server_error_detail(&detail)
     } else {
         detail
+    }
+}
+
+/// Prefix 5xx server messages with "NovelAI server error: " so transient
+/// upstream failures read clearly in UI errors instead of looking local.
+fn format_server_error_detail(detail: &str) -> String {
+    let trimmed = detail.trim();
+    if trimmed.is_empty() {
+        return "NovelAI request failed.".to_string();
+    }
+    if trimmed.to_ascii_lowercase().contains("novelai") {
+        trimmed.to_string()
+    } else {
+        format!("NovelAI server error: {trimmed}")
     }
 }
 
@@ -557,6 +574,21 @@ mod tests {
             "Subscription required"
         );
         assert_eq!(error_message(500, "", ""), "NovelAI request failed.");
+    }
+
+    #[test]
+    fn server_5xx_errors_identify_novelai_without_double_prefixing() {
+        let body =
+            r#"{"statusCode":500,"message":"Error generating image, an internal error occurred"}"#;
+        assert_eq!(
+            error_message(500, "application/json", body),
+            "NovelAI server error: Error generating image, an internal error occurred"
+        );
+        assert_eq!(
+            format_server_error_detail("NovelAI backend worker timed out"),
+            "NovelAI backend worker timed out"
+        );
+        assert_eq!(format_server_error_detail("   "), "NovelAI request failed.");
     }
 
     #[test]

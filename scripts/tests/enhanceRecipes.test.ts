@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activeRecipeCharacters,
   applyRecipesDeterministic,
   detectRecipeCreationIntent,
   detectRecipeRefineIntent,
@@ -379,26 +380,90 @@ test("applyRecipesDeterministic merges tags cleanly in General mode", () => {
   assert.match(result.negative, /six pack/);
 });
 
-test("recipePromptFingerprint stays stable for identical inputs and invalidates on edits", () => {
+test("activeRecipeCharacters filters disabled and empty slots while preserving original indices", () => {
+  const slots = activeRecipeCharacters([
+    { prompt: "   ", negative_prompt: "  ", enabled: true },
+    { prompt: "disabled char", negative_prompt: "hat", enabled: false },
+    { prompt: " blonde hair ", negative_prompt: " short hair ", enabled: true },
+    { prompt: "", negative_prompt: "glasses" },
+  ]);
+  assert.deepEqual(slots, [
+    { index: 2, prompt: "blonde hair", negative_prompt: "short hair" },
+    { index: 3, prompt: "", negative_prompt: "glasses" },
+  ]);
+});
+
+test("applyRecipesDeterministic leaves enabled: false character slots untouched", () => {
+  const recipe = sampleRecipe({
+    scope: "character",
+    include: "toned, navel",
+    neverUc: "abs, muscular",
+  });
+  const result = applyRecipesDeterministic(
+    {
+      positive: "1girl, solo",
+      negative: "lowres",
+      characters: [
+        { prompt: "disabled, #linea-alba", negative_prompt: "abs", enabled: false },
+        { prompt: "blonde hair", negative_prompt: "muscular", enabled: true },
+      ],
+    },
+    [recipe],
+    true,
+  );
+  assert.equal(result.characters?.length, 2);
+  assert.equal(result.characters![0].prompt, "disabled, #linea-alba");
+  assert.equal(result.characters![0].negative_prompt, "abs");
+  assert.equal(result.characters![1].prompt, "blonde hair, toned, navel");
+  assert.equal(result.characters![1].negative_prompt, "");
+});
+
+test("recipePromptFingerprint is prompt-only, ignores coords/blank/disabled slots, and invalidates on prompt edits", () => {
   const baseRecipe = sampleRecipe();
   const baseFields = {
     positive: "1girl, solo",
     negative: "lowres",
-    characters: [{ prompt: "blonde hair", negative_prompt: "short hair" }],
+    characters: [{ prompt: "blonde hair", negative_prompt: "short hair", enabled: true }],
   };
   const fpA = recipePromptFingerprint(baseFields, [baseRecipe]);
   const fpSame = recipePromptFingerprint(
     {
-      positive: "1girl, solo",
+      positive: "  1girl, solo  ",
       negative: "lowres",
-      characters: [{ prompt: "blonde hair", negative_prompt: "short hair" }],
+      characters: [
+        { prompt: "   ", negative_prompt: "", enabled: true },
+        { prompt: "hidden char", negative_prompt: "abs", enabled: false },
+        // Extra fields like center coordinates are ignored by fingerprinting.
+        { prompt: "blonde hair", negative_prompt: "short hair", enabled: true, center: { x: 0.1, y: 0.9 } } as {
+          prompt: string;
+          negative_prompt: string;
+          enabled: boolean;
+        },
+      ],
     },
     [sampleRecipe()],
   );
   assert.equal(fpA, fpSame);
   assert.notEqual(
     fpA,
+    recipePromptFingerprint(
+      {
+        ...baseFields,
+        characters: [
+          { prompt: "blonde hair", negative_prompt: "short hair", enabled: true },
+          { prompt: "second char", negative_prompt: "", enabled: true },
+        ],
+      },
+      [baseRecipe],
+    ),
+  );
+  assert.notEqual(
+    fpA,
     recipePromptFingerprint({ ...baseFields, positive: "1girl, park" }, [baseRecipe]),
+  );
+  assert.notEqual(
+    fpA,
+    recipePromptFingerprint({ ...baseFields, negative: "worst quality" }, [baseRecipe]),
   );
   assert.notEqual(
     fpA,
