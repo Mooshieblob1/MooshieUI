@@ -4999,6 +4999,7 @@ const ja: Record<string, string> = {
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "{name} で PR 有効（{count} 枚、+{anlas} Anlas）。クリックでオフ。",
   "characters.references.pill_off_tip": "{name} の PR はオフです（{count} 枚準備済み）。クリックでオン。",
+  "characters.references.pill_ready_tip": "{name} の PR を保存済み（{count} 枚）。クリックで Precise Reference に有効化。",
   "characters.references.pill_empty_tip": "このキャラクターの Precise Reference 画像を追加または生成",
   "characters.references.use_toggle": "Precise Reference を使用",
   "characters.references.use_tip": "Use または Enhance で適用する際、このキャラクターの Precise Reference 画像を自動で添付します（1枚につき +5 Anlas、V5 Full では High effort）。",

@@ -111,7 +111,12 @@ async function encodeCardReferences(
  */
 export async function attachCharacterPreciseReferences(
   characters: readonly SavedCharacter[],
-  opts?: { requireEnabled?: boolean; forceReplaceVibes?: boolean; autoAttached?: boolean },
+  opts?: {
+    requireEnabled?: boolean;
+    forceReplaceVibes?: boolean;
+    autoAttached?: boolean;
+    preserveOverrides?: boolean;
+  },
 ): Promise<AttachCharacterReferencesResult> {
   const empty: AttachCharacterReferencesResult = {
     addedBase64s: [],
@@ -167,6 +172,7 @@ export async function attachCharacterPreciseReferences(
     const res = reconcileCharacterDirectorReferences(working, card.id, encoded.entries, {
       max: NOVELAI_MAX_DIRECTOR_REFERENCES,
       legacyImages,
+      preserveOverrides: opts?.preserveOverrides ?? true,
     });
     working = res.next;
     changed = true;

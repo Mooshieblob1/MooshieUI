@@ -29,10 +29,11 @@ import yueThumbnail from "../assets/characters/yue-thumbnail.webp?inline";
 import yueReference from "../assets/characters/yue-reference.webp?inline";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
 import {
+  attachCharacterPreciseReferences,
   patchAttachedCharacterReference,
-  reconcileUntaggedDirectorReferences,
   removeAttachedCharacterReferences,
   syncAttachedCharacterReferences,
+  type AttachCharacterReferencesResult,
 } from "../utils/characterPreciseRef.js";
 
 const STORAGE_KEY = "mooshieui.savedCharacters.v1";
@@ -428,21 +429,34 @@ class SavedCharactersStore {
     }
   }
 
-  /** Enable or disable automatic Precise Reference attachment for `id` on Use & Enhance. */
-  setUsePreciseReference(id: string, enabled: boolean): void {
+  /** Enable or disable Precise Reference for `id`, attaching or clearing it immediately. */
+  async setUsePreciseReference(
+    id: string,
+    enabled: boolean,
+    opts?: { forceReplaceVibes?: boolean },
+  ): Promise<AttachCharacterReferencesResult | null> {
     const card = this.characters.find((c) => c.id === id);
-    if (!card || Boolean(card.usePreciseReference) === enabled) return;
-    this.characters = this.characters.map((c) =>
-      c.id === id ? { ...c, usePreciseReference: enabled } : c,
-    );
-    this.saveSettings();
+    if (!card) return null;
+    if (Boolean(card.usePreciseReference) !== enabled) {
+      this.characters = this.characters.map((c) =>
+        c.id === id ? { ...c, usePreciseReference: enabled } : c,
+      );
+      this.saveSettings();
+    }
     if (!enabled) {
-      void removeAttachedCharacterReferences(id, {
+      await removeAttachedCharacterReferences(id, {
         legacySources: [card, ...(card.preciseReferences ?? [])],
       });
-    } else {
-      void reconcileUntaggedDirectorReferences(this.characters, this.currentArchitecture);
+      return null;
     }
+    const updated = this.characters.find((c) => c.id === id);
+    if (!updated) return null;
+    return await attachCharacterPreciseReferences([updated], {
+      requireEnabled: false,
+      forceReplaceVibes: opts?.forceReplaceVibes ?? true,
+      autoAttached: false,
+      preserveOverrides: true,
+    });
   }
 
   /**
@@ -505,7 +519,16 @@ class SavedCharactersStore {
       this.saveSettings();
       const updated = this.characters.find((c) => c.id === id);
       if (updated) {
-        void syncAttachedCharacterReferences(updated, { previousSources });
+        if (shouldEnable) {
+          void attachCharacterPreciseReferences([updated], {
+            requireEnabled: false,
+            forceReplaceVibes: false,
+            autoAttached: false,
+            preserveOverrides: true,
+          });
+        } else {
+          void syncAttachedCharacterReferences(updated, { previousSources });
+        }
       }
     }
     return { added, duplicates, hitCap };

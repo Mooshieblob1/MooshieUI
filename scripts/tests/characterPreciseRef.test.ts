@@ -612,3 +612,70 @@ test("detectSingleCharacterFromMetadata resolves unambiguous character and rejec
   // Empty metadata -> returns null.
   assert.equal(detectSingleCharacterFromMetadata(null, cards), null);
 });
+
+test("reconcileCharacterDirectorReferences preserves live panel overrides when preserveOverrides is set", () => {
+  const existing = [
+    {
+      image: "same-img",
+      description: "outfit",
+      strength: 2.5,
+      fidelity: 0.7,
+      enabled: false,
+      source_character_id: "alice",
+      source_ref_id: "ref-1",
+      auto_attached: false,
+    },
+    {
+      image: "other-img",
+      description: "style",
+      strength: 1.0,
+      fidelity: 1.0,
+      enabled: true,
+    },
+  ];
+  const replacements = [
+    {
+      image: "same-img",
+      description: "character_mainoutfit",
+      strength: 1.0,
+      fidelity: 1.0,
+      enabled: true,
+      source_character_id: "alice",
+      source_ref_id: "ref-1",
+      auto_attached: true,
+    },
+    {
+      image: "new-img",
+      description: "character",
+      strength: 1.25,
+      fidelity: 0.9,
+      enabled: true,
+      source_character_id: "alice",
+      source_ref_id: "ref-2",
+      auto_attached: true,
+    },
+  ];
+
+  // With preserveOverrides: same-img keeps panel description/strength/fidelity/enabled/auto_attached:false,
+  // while new-img uses its replacement values and other-img stays untouched.
+  const preserved = reconcileCharacterDirectorReferences(existing, "alice", replacements, {
+    preserveOverrides: true,
+  });
+  assert.equal(preserved.next.length, 3);
+  assert.deepEqual(preserved.next[0], {
+    image: "same-img",
+    description: "outfit",
+    strength: 2.5,
+    fidelity: 0.7,
+    enabled: false,
+    source_character_id: "alice",
+    source_ref_id: "ref-1",
+    auto_attached: false,
+  });
+  assert.deepEqual(preserved.next[1], replacements[1]);
+  assert.deepEqual(preserved.next[2], existing[1]);
+
+  // Default behavior (preserveOverrides omitted) still replaces same-img with replacements[0].
+  const overwritten = reconcileCharacterDirectorReferences(existing, "alice", replacements);
+  assert.deepEqual(overwritten.next[0], replacements[0]);
+});
