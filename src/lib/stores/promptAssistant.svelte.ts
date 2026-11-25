@@ -612,10 +612,11 @@ class PromptAssistantStore {
     prompt: string,
     negative: string,
     saved: SavedCharacterHint[] = [],
+    targetStyle?: CharacterPromptStyle,
   ): Promise<ExtractedCharacter[]> {
     if (this.isGenerating) throw new Error("busy_generation");
     assertAllowedRequest([prompt]);
-    const request = characterExtractRequest(prompt, negative, saved);
+    const request = characterExtractRequest(prompt, negative, saved, targetStyle);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
@@ -624,8 +625,9 @@ class PromptAssistantStore {
           const parsed = parseExtractedCharacters(
             await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
           );
-          // Held to the prompt: what the prompt does not say is dropped.
-          if (parsed) return groundExtracted(parsed, prompt, negative);
+          // Held to the prompt: what the prompt does not say is dropped,
+          // unless the model was asked to rewrite tags into natural prose.
+          if (parsed) return groundExtracted(parsed, prompt, negative, targetStyle);
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
         }
         throw new Error("invalid_character_extract");

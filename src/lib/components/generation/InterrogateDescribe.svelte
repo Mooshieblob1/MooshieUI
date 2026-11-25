@@ -19,9 +19,12 @@
     imageToken: string;
     /** Called after the description went into the prompt. */
     onapplied: () => void;
+    /** Optional action to extract character cards from the generated description. */
+    onExtractCharacters?: (text: string) => void;
+    extractBusy?: boolean;
   }
 
-  let { imageToken, onapplied }: Props = $props();
+  let { imageToken, onapplied, onExtractCharacters, extractBusy = false }: Props = $props();
 
   let length = $state<"short" | "detailed">("detailed");
   let running = $state(false);
@@ -207,6 +210,14 @@
         onclick={copy}
         class="px-3 py-1 text-xs rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
       >{locale.t('common.copy')}</button>
+      {#if onExtractCharacters && text.trim()}
+        <button
+          type="button"
+          onclick={() => onExtractCharacters(text)}
+          disabled={extractBusy}
+          class="px-3 py-1 text-xs rounded-lg bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+        >{extractBusy ? locale.t('characters.extracting') : locale.t('characters.extract_from_interrogator')}</button>
+      {/if}
       <button
         onclick={() => apply(false)}
         class="px-3 py-1 text-xs rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
