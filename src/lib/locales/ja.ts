@@ -4993,6 +4993,8 @@ const ja: Record<string, string> = {
   "generation.novelai.reference.hover_manual": "手動リファレンス",
   "generation.novelai.reference.hover_click_open": "クリックで Precise Reference を開く",
   "generation.novelai.reference.hover_click_remove": "クリックで削除",
+  "generation.novelai.reference.character_unassigned": "キャラクター未連携",
+  "generation.novelai.reference.link_character_tip": "このリファレンスを保存済みキャラクターに紐づけて、PR バッジに名前を表示します",
   "characters.editor.references": "リファレンス",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "{name} で PR 有効（{count} 枚、+{anlas} Anlas）。クリックでオフ。",

@@ -4968,6 +4968,8 @@ const it: Record<string, string> = {
   "generation.novelai.reference.hover_manual": "Riferimento manuale",
   "generation.novelai.reference.hover_click_open": "Clicca per aprire Precise Reference",
   "generation.novelai.reference.hover_click_remove": "Clicca per rimuovere",
+  "generation.novelai.reference.character_unassigned": "Nessun personaggio collegato",
+  "generation.novelai.reference.link_character_tip": "Collega questo riferimento a un personaggio salvato affinché i badge PR mostrino il suo nome",
   "characters.editor.references": "Riferimenti",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "PR attivo su {name} ({count} immagine/i, +{anlas} Anlas). Clicca per disattivare.",

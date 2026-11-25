@@ -1072,7 +1072,7 @@
       locale.t(key, { name: character.name }),
       result === "duplicate" ? "info" : "success",
     );
-    if (result !== "duplicate") void attachReference(character);
+    void attachReference(character);
   }
 
   /**

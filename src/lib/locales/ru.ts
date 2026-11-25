@@ -4968,6 +4968,8 @@ const ru: Record<string, string> = {
   "generation.novelai.reference.hover_manual": "Ручной референс",
   "generation.novelai.reference.hover_click_open": "Нажмите, чтобы открыть Precise Reference",
   "generation.novelai.reference.hover_click_remove": "Нажмите, чтобы удалить",
+  "generation.novelai.reference.character_unassigned": "Персонаж не привязан",
+  "generation.novelai.reference.link_character_tip": "Привяжите этот референс к сохранённому персонажу, чтобы на значках PR отображалось его имя",
   "characters.editor.references": "Референсы",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "PR включён для {name} ({count} изобр., +{anlas} Anlas). Нажмите, чтобы отключить.",

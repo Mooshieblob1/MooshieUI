@@ -2,6 +2,8 @@
   import { progress } from "../../stores/progress.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import { matchImageToSavedCharacter } from "../../utils/characterPreciseRef.js";
   import { canvas } from "../../stores/canvas.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -614,7 +616,22 @@
         gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
         return;
       }
-      generation.addNovelAiDirectorReference(base64);
+      const match = await matchImageToSavedCharacter(
+        base64,
+        savedCharacters.characters,
+        savedCharacters.currentArchitecture,
+      );
+      if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+        return;
+      }
+      generation.addNovelAiDirectorReference(
+        base64,
+        "character",
+        match
+          ? { sourceCharacterId: match.characterId, sourceRefId: match.refId, autoAttached: false }
+          : undefined,
+      );
       gallery.showToast(locale.t("generation.novelai.reference.toast_added"), "success");
     } catch (e) {
       console.error("Send preview to Precise Reference failed:", e);

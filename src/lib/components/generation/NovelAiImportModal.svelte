@@ -17,6 +17,9 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { novelaiImport } from "../../stores/novelaiImport.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import { matchImageToSavedCharacter } from "../../utils/characterPreciseRef.js";
+  import { detectSingleCharacterFromMetadata } from "../../utils/characterPreciseRefLogic.js";
   import {
     applyNovelAiSelection,
     ensureNovelAiReferenceModel,
@@ -88,7 +91,24 @@
         return;
       }
       if (kind === "vibe") generation.addNovelAiVibe(base64);
-      else generation.addNovelAiDirectorReference(base64);
+      else {
+        const visual = await matchImageToSavedCharacter(
+          base64,
+          savedCharacters.characters,
+          savedCharacters.currentArchitecture,
+        );
+        const card = visual
+          ? null
+          : detectSingleCharacterFromMetadata(meta, savedCharacters.currentCharacters);
+        const sourceCharacterId = visual?.characterId ?? card?.id;
+        generation.addNovelAiDirectorReference(
+          base64,
+          "character",
+          sourceCharacterId
+            ? { sourceCharacterId, sourceRefId: visual?.refId, autoAttached: false }
+            : undefined,
+        );
+      }
       if (switchedModel) {
         gallery.showToast(
           locale.t("novelai.import.toast.switched_model_named", { model: switchedModel }),
