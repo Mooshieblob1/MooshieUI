@@ -2973,6 +2973,95 @@ pub(crate) fn clipboard_set_file_drop_win(path: &std::path::Path) -> Result<(), 
     Ok(())
 }
 
+/// Pass raw PNG bytes through unchanged (preserving all embedded chunks/metadata)
+/// or decode another supported image format and re-encode it as PNG.
+#[cfg(any(target_os = "windows", test))]
+fn normalize_clipboard_image_to_png(raw: Vec<u8>) -> Result<Vec<u8>, AppError> {
+    if raw.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok(raw);
+    }
+    let decoded = decode_gallery_image(&raw)
+        .map_err(AppError::Other)?
+        .into_rgba8();
+    let (width, height) = (decoded.width(), decoded.height());
+    let rgba = decoded.into_raw();
+    let params = crate::metadata::read_image_metadata(&raw)
+        .ok()
+        .flatten()
+        .filter(|m| !m.is_empty());
+    match params {
+        Some(p) => crate::metadata::encode_png_with_metadata_rgba8(
+            &rgba,
+            width,
+            height,
+            &p,
+            crate::metadata::MetadataMode::Both,
+        )
+        .map_err(AppError::Other),
+        None => crate::jxl::encode_rgba8_png(&rgba, width, height)
+            .map_err(|e| AppError::Other(format!("Failed to encode clipboard PNG: {}", e))),
+    }
+}
+
+/// Read an image file referenced by a Windows clipboard file drop (`CF_HDROP`)
+/// and return PNG bytes.
+#[cfg(any(target_os = "windows", test))]
+fn read_clipboard_image_file(path: &std::path::Path) -> Option<Vec<u8>> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > 100 * 1024 * 1024 {
+        return None;
+    }
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    if !matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "webp" | "jxl" | "gif" | "bmp"
+    ) {
+        return None;
+    }
+    let raw = std::fs::read(path).ok()?;
+    normalize_clipboard_image_to_png(raw).ok()
+}
+
+/// Read an image from the Windows clipboard when it holds a file drop (`CF_HDROP`,
+/// such as files copied from MooshieUI or Explorer) or a registered `PNG` format.
+#[cfg(target_os = "windows")]
+fn clipboard_read_image_win() -> Option<Vec<u8>> {
+    let mut files: Option<Vec<String>> = None;
+    let mut png_bytes: Option<Vec<u8>> = None;
+    {
+        let _clip = clipboard_win::Clipboard::new_attempts(10).ok()?;
+        let mut paths = Vec::new();
+        if clipboard_win::raw::get_file_list(&mut paths).is_ok() && !paths.is_empty() {
+            files = Some(paths);
+        }
+        for fmt_name in ["PNG", "image/png"] {
+            if let Some(fmt) = clipboard_win::raw::register_format(fmt_name) {
+                if clipboard_win::raw::is_format_avail(fmt.get()) {
+                    let mut buf = Vec::new();
+                    if clipboard_win::raw::get_vec(fmt.get(), &mut buf).is_ok() && !buf.is_empty() {
+                        png_bytes = Some(buf);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if let Some(paths) = files {
+        if let Some(bytes) = paths
+            .iter()
+            .find_map(|p| read_clipboard_image_file(std::path::Path::new(p)))
+        {
+            return Some(bytes);
+        }
+    }
+    if let Some(buf) = png_bytes {
+        if let Ok(bytes) = normalize_clipboard_image_to_png(buf) {
+            return Some(bytes);
+        }
+    }
+    None
+}
+
 /// Copy image bytes to the system clipboard using native platform tools.
 fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), AppError> {
     #[cfg(target_os = "linux")]
@@ -3223,6 +3312,10 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
     {
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
+
+        if let Some(bytes) = clipboard_read_image_win() {
+            return Ok(bytes);
+        }
 
         let tmp_path = std::env::temp_dir().join(format!(
             "mooshie_clipboard_read-{}.png",
@@ -9973,6 +10066,13 @@ fn prune_image_cache(cache_dir: &std::path::Path, ttl_secs: u64) {
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn read_clipboard_image(app: AppHandle) -> Result<Vec<u8>, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(Some(bytes)) = tokio::task::spawn_blocking(clipboard_read_image_win).await {
+            return Ok(bytes);
+        }
+    }
+
     use tauri_plugin_clipboard_manager::ClipboardExt;
 
     let clipboard_image = app
@@ -12077,5 +12177,100 @@ mod h3_video_lora_tests {
             model_family_from_filename("illustration_mix.safetensors"),
             Some("illustrious")
         );
+    }
+}
+
+#[cfg(test)]
+mod clipboard_image_tests {
+    use super::*;
+
+    fn sample_png_with_metadata() -> Vec<u8> {
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("prompt".to_string(), "1girl, test_tag".to_string());
+        crate::metadata::encode_png_with_metadata_rgba8(
+            &rgba,
+            2,
+            2,
+            &meta,
+            crate::metadata::MetadataMode::Both,
+        )
+        .expect("encode sample png")
+    }
+
+    fn sample_webp_bytes() -> Vec<u8> {
+        let img = image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(
+                2,
+                2,
+                vec![
+                    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                ],
+            )
+            .expect("rgba image"),
+        );
+        let mut webp_bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut webp_bytes),
+            image::ImageFormat::WebP,
+        )
+        .expect("encode webp");
+        webp_bytes
+    }
+
+    #[test]
+    fn normalize_clipboard_image_to_png_preserves_png_bytes_verbatim() {
+        let png = sample_png_with_metadata();
+        let out = normalize_clipboard_image_to_png(png.clone()).expect("png normalize");
+        assert_eq!(out, png);
+    }
+
+    #[test]
+    fn normalize_clipboard_image_to_png_transcodes_webp_to_png() {
+        let webp = sample_webp_bytes();
+        let out = normalize_clipboard_image_to_png(webp).expect("webp transcode");
+        assert!(out.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let decoded = image::load_from_memory(&out).expect("valid png");
+        assert_eq!((decoded.width(), decoded.height()), (2, 2));
+    }
+
+    #[test]
+    fn read_clipboard_image_file_reads_images_and_rejects_invalid_inputs() {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshie-clipboard-file-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let png_path = dir.join("copied.png");
+        let png = sample_png_with_metadata();
+        std::fs::write(&png_path, &png).expect("write png");
+
+        let webp_path = dir.join("copied.webp");
+        std::fs::write(&webp_path, sample_webp_bytes()).expect("write webp");
+
+        let txt_path = dir.join("notes.txt");
+        std::fs::write(&txt_path, b"not an image").expect("write txt");
+
+        let subdir_path = dir.join("folder.png");
+        std::fs::create_dir_all(&subdir_path).expect("create subdir");
+
+        let missing_path = dir.join("missing.png");
+
+        assert_eq!(
+            read_clipboard_image_file(&png_path).as_deref(),
+            Some(png.as_slice())
+        );
+
+        let converted = read_clipboard_image_file(&webp_path).expect("read webp file");
+        assert!(converted.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+        assert_eq!(read_clipboard_image_file(&txt_path), None);
+        assert_eq!(read_clipboard_image_file(&subdir_path), None);
+        assert_eq!(read_clipboard_image_file(&missing_path), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
