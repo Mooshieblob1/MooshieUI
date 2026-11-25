@@ -88,6 +88,12 @@ When same_as is set and this character's appearance differs from the saved one (
 Reply shape with same_as:
 {"characters":[{"name":"...","prompt":"...","negative":"...","same_as":"","variant":""}]}`;
 
+const NATURAL_TARGET_RULES =
+  "\n\nTarget style: the saved card stores natural-language descriptions, not comma-separated tags. Convert each character's extracted appearance traits (and negative traits, if any) into a short, readable descriptive phrase while keeping every detail strictly faithful to what the input states.";
+
+const TAG_TARGET_RULES =
+  "\n\nTarget style: the saved card stores comma-separated appearance tags, not full sentences. Convert each character's extracted appearance details (and negative traits, if any) into concise comma-separated tags while keeping every detail strictly faithful to what the input states.";
+
 export const CHARACTER_EXTRACT_RETRY =
   'The previous reply was not valid JSON in the required shape. Reply again with JSON only: {"characters":[{"name":"...","prompt":"...","negative":"...","same_as":""}]}';
 
@@ -237,8 +243,9 @@ export function groundExtracted(
   items: ExtractedCharacter[],
   prompt: string,
   negative: string,
+  targetStyle?: CharacterPromptStyle,
 ): ExtractedCharacter[] {
-  if (!isTagPrompt(prompt)) return items;
+  if (!isTagPrompt(prompt) || targetStyle === "natural") return items;
   const positive = tagIndex(prompt);
   const uc = tagIndex(negative);
   const owned = boxOnlyTags(prompt);
@@ -306,6 +313,7 @@ export function characterExtractRequest(
   prompt: string,
   negative: string,
   saved: SavedCharacterHint[] = [],
+  targetStyle?: CharacterPromptStyle,
 ): {
   system: string;
   prompt: string;
@@ -320,8 +328,14 @@ export function characterExtractRequest(
     });
   let user = `Prompt:\n${prompt.trim()}` + (uc ? `\n\nNegative prompt:\n${uc}` : "");
   if (hints.length > 0) user += `\n\nAlready saved characters:\n${hints.join("\n")}`;
+  let system = hints.length > 0 ? SYSTEM + SAME_AS_RULES : SYSTEM;
+  if (targetStyle === "natural" && isTagPrompt(prompt)) {
+    system += NATURAL_TARGET_RULES;
+  } else if (targetStyle === "tags" && !isTagPrompt(prompt)) {
+    system += TAG_TARGET_RULES;
+  }
   return {
-    system: hints.length > 0 ? SYSTEM + SAME_AS_RULES : SYSTEM,
+    system,
     prompt: user,
     maxTokens: CHARACTER_EXTRACT_MAX_TOKENS,
   };

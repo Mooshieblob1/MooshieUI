@@ -31,16 +31,37 @@
 
 <script lang="ts">
   import { untrack } from "svelte";
-  import type { InterrogationResult, TagResult } from "../../types/index.js";
+  import type { InterrogationResult, OutputImage, TagResult } from "../../types/index.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
-  import { savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
+  import {
+    architecturePromptStyle,
+    savedCharacters,
+    type SavedCharacter,
+  } from "../../stores/savedCharacters.svelte.js";
   import { escapeArtistParens, isArtistTagToken } from "../../utils/artistTag.js";
   import { getConfig, updateConfig } from "../../utils/api.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import { normalizeTag, pickCandidates, type DetectTags } from "../../utils/characterDetect.js";
+  import type { ExtractedCharacter } from "../../utils/characterExtract.js";
+  import {
+    partitionExtracted,
+    tagsToExtractSource,
+    type ExtractSourceKind,
+  } from "../../utils/characterImageExtract.js";
+  import { applyCharacterExtractDecisions } from "../../utils/characterExtractFlow.js";
+  import {
+    blobToCharacterThumbnail,
+    outputImageToCharacterThumbnail,
+    type CharacterImages,
+  } from "../../utils/characterThumbnail.js";
+  import CharacterExtractReviewModal, {
+    type DuplicateDecision,
+    type DuplicateMatch,
+    type NewCharacterDecision,
+  } from "./CharacterExtractReviewModal.svelte";
   import InterrogateDescribe from "./InterrogateDescribe.svelte";
 
   interface Props {
@@ -49,11 +70,30 @@
     stage: string | null;
     downloadProgress: { downloaded: number; total: number; filename: string } | null;
     imagePreviewUrl: string | null;
+    sourceImage?: OutputImage | null;
     error: string | null;
     onclose: () => void;
   }
 
-  let { result, loading, stage, downloadProgress, imagePreviewUrl, error, onclose }: Props = $props();
+  let {
+    result,
+    loading,
+    stage,
+    downloadProgress,
+    imagePreviewUrl,
+    sourceImage = null,
+    error,
+    onclose,
+  }: Props = $props();
+
+  let extractingCharacters = $state(false);
+  let extractReview = $state<{
+    arch: string;
+    fresh: ExtractedCharacter[];
+    matches: DuplicateMatch[];
+    sourceKind: ExtractSourceKind;
+    sourceImages: CharacterImages | null;
+  } | null>(null);
 
   // Track checked state per tag per category
   let checkedCharacter = $state<Record<string, boolean>>({});
@@ -89,8 +129,102 @@
       checkedGeneral = Object.fromEntries(result.general_tags.map((t) => [t.name, true]));
       checkedCopyright = Object.fromEntries(result.copyright_tags.map((t) => [t.name, false]));
       artistDetectTurnedOn = false;
+      extractReview = null;
     }
   });
+
+  async function resolveSourceImages(): Promise<CharacterImages | null> {
+    if (sourceImage) {
+      const thumb = await outputImageToCharacterThumbnail(sourceImage).catch(() => null);
+      if (thumb) return thumb;
+    }
+    if (imagePreviewUrl) {
+      try {
+        const resp = await fetch(imagePreviewUrl);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const thumb = await blobToCharacterThumbnail(new Blob([await blob.arrayBuffer()]));
+          if (thumb) return thumb;
+        }
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  async function runCharacterExtract(prompt: string, sourceKind: ExtractSourceKind) {
+    const arch = savedCharacters.currentArchitecture;
+    if (!arch) {
+      gallery.showToast(locale.t("characters.no_architecture"), "info");
+      return;
+    }
+    if (!promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    if (detecting || promptAssistant.isGenerating || extractingCharacters) return;
+    extractingCharacters = true;
+    try {
+      const saved = savedCharacters.currentCharacters;
+      const targetStyle = architecturePromptStyle(arch);
+      const [found, sourceImages] = await Promise.all([
+        promptAssistant.extractCharacters(prompt, "", saved, targetStyle),
+        resolveSourceImages(),
+      ]);
+      if (found.length === 0) {
+        gallery.showToast(locale.t("characters.toast.none_found"), "info");
+        return;
+      }
+      const { matches, fresh } = partitionExtracted(found, saved);
+      if (fresh.length === 0 && matches.length === 0) {
+        gallery.showToast(locale.t("characters.toast.already_saved"), "info");
+        return;
+      }
+      extractReview = { arch, fresh, matches, sourceKind, sourceImages };
+    } catch (e) {
+      console.error("Interrogator character extraction failed:", e);
+      const msg = String(e);
+      gallery.showToast(
+        msg.includes("invalid_character_extract")
+          ? locale.t("characters.toast.invalid_reply")
+          : mapLlmError(msg),
+        "error",
+      );
+    } finally {
+      extractingCharacters = false;
+    }
+  }
+
+  async function extractFromCheckedTags() {
+    if (!result) return;
+    const src = tagsToExtractSource(result, {
+      character: checkedCharacter,
+      general: checkedGeneral,
+      copyright: checkedCopyright,
+    });
+    if (!src) {
+      gallery.showToast(locale.t("characters.toast.none_found"), "info");
+      return;
+    }
+    await runCharacterExtract(src.prompt, "interrogator");
+  }
+
+  async function applyExtractReview(decisions: DuplicateDecision[], named: NewCharacterDecision[]) {
+    const pending = extractReview;
+    extractReview = null;
+    if (!pending) return;
+    await applyCharacterExtractDecisions({
+      arch: pending.arch,
+      decisions,
+      named,
+      hadMatches: pending.matches.length > 0,
+      sourceImages: pending.sourceImages,
+      setBusy: (busy) => {
+        extractingCharacters = busy;
+      },
+    });
+  }
 
   async function turnOnArtistDetection() {
     try {
@@ -555,7 +689,12 @@
 
         <!-- The same image in words, for prose-prompted models -->
         {#if result.image_token}
-          <InterrogateDescribe imageToken={result.image_token} onapplied={onclose} />
+          <InterrogateDescribe
+            imageToken={result.image_token}
+            onapplied={onclose}
+            onExtractCharacters={(prose) => void runCharacterExtract(prose, "describe")}
+            extractBusy={extractingCharacters || detecting || promptAssistant.isGenerating}
+          />
         {/if}
 
         <!-- Saved characters the prompt assistant found -->
@@ -745,7 +884,7 @@
             <span class="text-neutral-600">|</span>
             <button onclick={deselectAll} class="text-xs text-neutral-400 hover:text-neutral-200 transition-colors">{locale.t('generation.interrogate.deselect_all')}</button>
           </div>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <button
               onclick={handleCopy}
               class="px-3 py-1.5 text-sm rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
@@ -754,6 +893,14 @@
               onclick={handleCopyAIBooru}
               class="px-3 py-1.5 text-sm rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
             >{locale.t('generation.interrogate.copy_aibooru')}</button>
+            <button
+              onclick={() => void extractFromCheckedTags()}
+              disabled={!anyChecked || extractingCharacters || detecting || promptAssistant.isGenerating}
+              title={locale.t('characters.extract_from_interrogator_tip')}
+              class="px-3 py-1.5 text-sm rounded-lg bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+            >{extractingCharacters
+              ? locale.t('characters.extracting')
+              : locale.t('characters.extract_from_interrogator')}</button>
             <button
               onclick={handleApply}
               disabled={!anyChecked}
@@ -765,3 +912,14 @@
     {/if}
   </div>
 </div>
+
+{#if extractReview}
+  <CharacterExtractReviewModal
+    matches={extractReview.matches}
+    fresh={extractReview.fresh}
+    sourceKind={extractReview.sourceKind}
+    sourcePreviewUrl={extractReview.sourceImages?.thumbnail ?? null}
+    onsave={applyExtractReview}
+    onclose={() => { extractReview = null; }}
+  />
+{/if}

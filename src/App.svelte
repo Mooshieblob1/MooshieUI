@@ -1255,6 +1255,7 @@
 
   // Interrogation state (for lightbox + context menu)
   let showInterrogateModal = $state(false);
+  let interrogateSourceImage = $state<OutputImage | null>(null);
 
   // Artist tag insert: the actual replace/append logic lives in the shared
   // `artistInsert` store so the bottom-panel favourites tab can reuse the
@@ -1553,6 +1554,7 @@
 
   async function interrogateFromPreviewUrl(url: string) {
     showInterrogateModal = true;
+    interrogateSourceImage = null;
     interrogateLoading = true;
     interrogateResult = null;
     interrogateStage = null;
@@ -1704,6 +1706,7 @@
 
   async function interrogateFromGallery(image: OutputImage) {
     showInterrogateModal = true;
+    interrogateSourceImage = image;
     interrogateLoading = true;
     interrogateResult = null;
     interrogateStage = null;
@@ -1774,6 +1777,7 @@
   async function runQuickInterrogation(previewUrl: string | null, run: () => Promise<InterrogationResult>) {
     showInterrogateQuickModal = false;
     showInterrogateModal = true;
+    interrogateSourceImage = null;
     interrogateLoading = true;
     interrogateResult = null;
     interrogateStage = null;
@@ -5318,10 +5322,12 @@
     stage={interrogateStage}
     downloadProgress={interrogateDownloadProgress}
     imagePreviewUrl={interrogateImageUrl}
+    sourceImage={interrogateSourceImage}
     error={interrogateError}
     onclose={() => {
       showInterrogateModal = false;
       interrogateResult = null;
+      interrogateSourceImage = null;
       setInterrogatePreview(null);
       interrogateError = null;
     }}

@@ -1,6 +1,7 @@
 <script lang="ts" module>
   import type { SavedCharacter } from "../../stores/savedCharacters.svelte.js";
   import type { ExtractedCharacter } from "../../utils/characterExtract.js";
+  import type { ExtractSourceKind } from "../../utils/characterImageExtract.js";
 
   export type DuplicateAction = "update" | "variant" | "new" | "disregard";
 
@@ -15,6 +16,8 @@
     variantName: string;
     /** Card name when it is saved as a character of its own after all. */
     newName: string;
+    /** Attach the inspected source image as this card's thumbnail/reference. */
+    useImage?: boolean;
   }
 
   /** A character that matched nothing saved, with the name the user gave it. */
@@ -23,6 +26,8 @@
     /** Starts as the name the prompt assistant suggested. */
     name: string;
     keep: boolean;
+    /** Attach the inspected source image as this card's thumbnail/reference. */
+    useImage?: boolean;
   }
 </script>
 
@@ -38,36 +43,61 @@
    * click outside does not throw away an extraction that took a while.
    */
   import { portal } from "../../utils/portal.js";
-  import { untrack } from "svelte";
   import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     matches: DuplicateMatch[];
     /** Characters that matched nothing saved. */
     fresh: ExtractedCharacter[];
+    sourceKind?: ExtractSourceKind;
+    sourcePreviewUrl?: string | null;
+    canSwitchToInterrogator?: boolean;
+    switchingToInterrogator?: boolean;
+    onSwitchToInterrogator?: () => void;
     onsave: (decisions: DuplicateDecision[], named: NewCharacterDecision[]) => void;
     onclose: () => void;
   }
 
-  let { matches, fresh, onsave, onclose }: Props = $props();
+  let {
+    matches,
+    fresh,
+    sourceKind,
+    sourcePreviewUrl = null,
+    canSwitchToInterrogator = false,
+    switchingToInterrogator = false,
+    onSwitchToInterrogator,
+    onsave,
+    onclose,
+  }: Props = $props();
 
-  // Mounted once per extraction, so the props are read once on purpose. A
-  // match the model labelled as a variant starts on Save as variant; any
-  // other starts on Update, the "same character, newer details" reading.
-  let rows = $state<DuplicateDecision[]>(
-    untrack(() =>
-      matches.map((m) => ({
+  let rows = $state<DuplicateDecision[]>([]);
+  let newRows = $state<NewCharacterDecision[]>([]);
+
+  // Re-initialize editable rows when the incoming match/fresh lists change
+  // (e.g. initial open or switching from metadata to interrogator).
+  $effect(() => {
+    const mList = matches;
+    const fList = fresh;
+    const hasImg = Boolean(sourcePreviewUrl);
+    const singleChar = mList.length + fList.length === 1;
+    rows = mList.map((m) => {
+      const action: DuplicateAction = m.item.variant ? "variant" : "update";
+      const defaultUse = hasImg && singleChar && (action !== "update" || !m.saved.thumbnail);
+      return {
         ...m,
-        action: m.item.variant ? "variant" : "update",
+        action,
         variantName: `${m.saved.name} (${m.item.variant || locale.t("characters.dupes.variant_default")})`,
         newName: m.item.name,
-      })),
-    ),
-  );
-
-  let newRows = $state<NewCharacterDecision[]>(
-    untrack(() => fresh.map((item) => ({ item, name: item.name, keep: true }))),
-  );
+        useImage: defaultUse,
+      };
+    });
+    newRows = fList.map((item) => ({
+      item,
+      name: item.name,
+      keep: true,
+      useImage: hasImg && singleChar,
+    }));
+  });
 
   const choices: { action: DuplicateAction; key: string }[] = [
     { action: "update", key: "characters.dupes.update" },
@@ -133,9 +163,28 @@
   <div class="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
     <div class="mb-3 flex items-start justify-between gap-3">
       <div>
-        <h3 class="text-sm font-semibold text-neutral-100">
-          {locale.t(namingOnly ? "characters.naming.title" : "characters.dupes.title")}
-        </h3>
+        <div class="flex flex-wrap items-center gap-2">
+          <h3 class="text-sm font-semibold text-neutral-100">
+            {locale.t(namingOnly ? "characters.naming.title" : "characters.dupes.title")}
+          </h3>
+          {#if sourceKind === "metadata" || sourceKind === "interrogator" || sourceKind === "describe"}
+            <span class="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-[10px] font-medium text-neutral-300">
+              {locale.t(`characters.extract_source.${sourceKind}`)}
+            </span>
+          {/if}
+          {#if sourceKind === "metadata" && canSwitchToInterrogator && onSwitchToInterrogator}
+            <button
+              type="button"
+              disabled={switchingToInterrogator}
+              onclick={onSwitchToInterrogator}
+              class="rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+            >
+              {switchingToInterrogator
+                ? locale.t("characters.switching_to_interrogator")
+                : locale.t("characters.use_interrogator_instead")}
+            </button>
+          {/if}
+        </div>
         <p class="mt-1 text-[11px] text-neutral-500">
           {locale.t(namingOnly ? "characters.naming.desc" : "characters.dupes.desc")}
           {locale.t("characters.review.edit_hint")}
@@ -177,6 +226,17 @@
               />
             </div>
             {@render editor(row.item, !row.keep)}
+            {#if sourcePreviewUrl && row.keep}
+              <label class="mt-2 inline-flex items-center gap-1.5 text-[11px] text-neutral-300 select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  bind:checked={row.useImage}
+                  class="h-3.5 w-3.5 rounded accent-indigo-500"
+                />
+                <img src={sourcePreviewUrl} alt="" class="w-5 h-5 rounded object-cover border border-neutral-700 shrink-0" />
+                <span>{locale.t("characters.use_as_card_picture")}</span>
+              </label>
+            {/if}
           </div>
         {/each}
         {#if !namingOnly}
@@ -239,6 +299,17 @@
               />
             {/if}
           </div>
+          {#if sourcePreviewUrl && row.action !== "disregard"}
+            <label class="mt-2 inline-flex items-center gap-1.5 text-[11px] text-neutral-300 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                bind:checked={row.useImage}
+                class="h-3.5 w-3.5 rounded accent-indigo-500"
+              />
+              <img src={sourcePreviewUrl} alt="" class="w-5 h-5 rounded object-cover border border-neutral-700 shrink-0" />
+              <span>{locale.t("characters.use_as_card_picture")}</span>
+            </label>
+          {/if}
         </div>
       {/each}
     </div>

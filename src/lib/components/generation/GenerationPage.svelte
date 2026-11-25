@@ -833,6 +833,7 @@
   let interrogateStage = $state<string | null>(null);
   let interrogateDownloadProgress = $state<{ downloaded: number; total: number; filename: string } | null>(null);
   let interrogateImageUrl = $state<string | null>(null);
+  let interrogateSourceImage = $state<OutputImage | null>(null);
   let interrogateError = $state<string | null>(null);
 
   /** Compare entry label: pin the first image, then pick the second (issue #517). */
@@ -878,6 +879,7 @@
 
   async function interrogateSessionImage(image: OutputImage) {
     showInterrogateModal = true;
+    interrogateSourceImage = image;
     interrogateLoading = true;
     interrogateResult = null;
     interrogateStage = null;
@@ -2773,8 +2775,9 @@
       stage={interrogateStage}
       downloadProgress={interrogateDownloadProgress}
       imagePreviewUrl={interrogateImageUrl}
+      sourceImage={interrogateSourceImage}
       error={interrogateError}
-      onclose={() => { showInterrogateModal = false; interrogateResult = null; interrogateImageUrl = null; interrogateError = null; }}
+      onclose={() => { showInterrogateModal = false; interrogateResult = null; interrogateImageUrl = null; interrogateSourceImage = null; interrogateError = null; }}
     />
   {/if}
 
