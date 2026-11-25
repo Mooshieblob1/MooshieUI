@@ -4974,6 +4974,7 @@ const ko: Record<string, string> = {
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "{name}에 PR 켜짐({count}장, +{anlas} Anlas). 클릭하여 끄기.",
   "characters.references.pill_off_tip": "{name} PR 꺼짐({count}장 준비됨). 클릭하여 켜기.",
+  "characters.references.pill_ready_tip": "{name} PR 저장됨({count}장). 클릭하여 Precise Reference에서 활성화.",
   "characters.references.pill_empty_tip": "이 캐릭터의 Precise Reference 이미지를 추가하거나 생성",
   "characters.references.use_toggle": "Precise Reference 사용",
   "characters.references.use_tip": "Use 또는 Enhance로 적용할 때 이 캐릭터의 Precise Reference 이미지를 자동으로 첨부합니다(이미지당 +5 Anlas, V5 Full에서는 High effort).",

@@ -249,6 +249,9 @@
       gallery.showToast(locale.t("characters.toast.reference_only_vibes", { name: character.name }), "info");
       return;
     }
+    if (res.addedBase64s.length > 0 || res.replacedCount > 0) {
+      window.dispatchEvent(new Event("mooshie:open-precise-references"));
+    }
     if (res.addedBase64s.length > 0) {
       gallery.showToast(
         res.addedBase64s.length > 1
@@ -272,6 +275,53 @@
       gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
     } else if (res.failedCount > 0 && res.replacedCount === 0) {
       gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+    }
+  }
+
+  /**
+   * Toggle Precise Reference from a card's PR pill: attaches straight into
+   * the NovelAI Precise Reference panel and scrolls it open (so mode, outfit,
+   * or strength can be edited right away), or removes it when already active.
+   */
+  async function toggleCharacterPr(character: SavedCharacter) {
+    if (effectiveCharacterPreciseReferences(character).length === 0) {
+      openEditor(character, "references");
+      return;
+    }
+    if (!canReference) {
+      void savedCharacters.setUsePreciseReference(character.id, !character.usePreciseReference);
+      return;
+    }
+    const isAttached = generation.novelaiSettings.director_references.some(
+      (r) => r.source_character_id === character.id,
+    );
+    if (isAttached) {
+      await savedCharacters.setUsePreciseReference(character.id, false);
+      return;
+    }
+    const res = await savedCharacters.setUsePreciseReference(character.id, true, {
+      forceReplaceVibes: true,
+    });
+    if (!res) return;
+    if (res.skippedFull && res.addedBase64s.length === 0 && res.replacedCount === 0) {
+      gallery.showToast(locale.t("characters.toast.reference_full", { name: character.name }), "info");
+      return;
+    }
+    if (res.failedCount > 0 && res.addedBase64s.length === 0 && res.replacedCount === 0) {
+      gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+      return;
+    }
+    if (res.addedBase64s.length > 0 || res.replacedCount > 0) {
+      window.dispatchEvent(new Event("mooshie:open-precise-references"));
+      gallery.showToast(
+        res.addedBase64s.length > 1
+          ? locale.t("characters.references.toast_added_count", {
+              name: character.name,
+              count: String(res.addedBase64s.length),
+            })
+          : locale.t("characters.toast.reference_only_added", { name: character.name }),
+        "success",
+      );
     }
   }
 
@@ -1287,33 +1337,53 @@
       {#if canReference || character.architecture === NOVELAI_ARCHITECTURE}
         {@const refCount = effectiveCharacterPreciseReferences(character).length}
         {@const dedicatedCount = character.preciseReferences?.length ?? 0}
-        {@const prOn = Boolean(character.usePreciseReference) && refCount > 0}
+        {@const attachedRefs = canReference
+          ? generation.novelaiSettings.director_references.filter(
+              (r) => r.source_character_id === character.id,
+            )
+          : []}
+        {@const attachedCount = attachedRefs.length}
+        {@const activeAttachedCount = attachedRefs.filter((r) => r.enabled !== false).length}
+        {@const isAttachedInPanel = attachedCount > 0}
+        {@const prPrefOn = Boolean(character.usePreciseReference) && refCount > 0}
         <button
           type="button"
-          class="shrink-0 h-5 px-1.5 flex items-center justify-center gap-0.5 rounded text-[10px] font-medium transition-colors {prOn
-            ? 'border border-indigo-500/50 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
-            : 'text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800'}"
-          title={prOn
+          class="shrink-0 h-5 px-1.5 flex items-center justify-center gap-0.5 rounded text-[10px] font-medium transition-colors {isAttachedInPanel && activeAttachedCount > 0
+            ? 'border border-amber-500/55 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30'
+            : isAttachedInPanel
+              ? 'border border-amber-500/35 bg-amber-500/10 text-amber-300/75 hover:bg-amber-500/20'
+              : prPrefOn
+                ? 'border border-indigo-500/40 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25'
+                : 'text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800'}"
+          title={isAttachedInPanel
             ? locale.t("characters.references.pill_on_tip", {
                 name: character.name,
-                count: String(refCount),
-                anlas: String(refCount * PRECISE_REFERENCE_COST),
+                count: String(activeAttachedCount || attachedCount),
+                anlas: String(activeAttachedCount * PRECISE_REFERENCE_COST),
               })
-            : refCount > 0
-              ? locale.t("characters.references.pill_off_tip", {
+            : prPrefOn && canReference
+              ? locale.t("characters.references.pill_ready_tip", {
                   name: character.name,
                   count: String(refCount),
                 })
-              : locale.t("characters.references.pill_empty_tip")}
-          aria-pressed={prOn}
-          onclick={() => {
-            if (refCount > 0) savedCharacters.setUsePreciseReference(character.id, !character.usePreciseReference);
-            else openEditor(character, "references");
-          }}
+              : prPrefOn
+                ? locale.t("characters.references.pill_on_tip", {
+                    name: character.name,
+                    count: String(refCount),
+                    anlas: String(refCount * PRECISE_REFERENCE_COST),
+                  })
+                : refCount > 0
+                  ? locale.t("characters.references.pill_off_tip", {
+                      name: character.name,
+                      count: String(refCount),
+                    })
+                  : locale.t("characters.references.pill_empty_tip")}
+          aria-pressed={canReference ? isAttachedInPanel : prPrefOn}
+          onclick={() => void toggleCharacterPr(character)}
         >
           <span>{locale.t("characters.references.pill_label")}</span>
-          {#if dedicatedCount > 1 || (prOn && refCount > 1)}
-            <span class="tabular-nums opacity-85">{refCount}</span>
+          {#if (isAttachedInPanel && attachedCount > 1) || (!isAttachedInPanel && (dedicatedCount > 1 || (prPrefOn && refCount > 1)))}
+            <span class="tabular-nums opacity-85">{isAttachedInPanel ? attachedCount : refCount}</span>
           {/if}
         </button>
       {/if}

@@ -259,16 +259,18 @@ export function reconcileCharacterDirectorReferences<T extends DirectorRefEntry>
   refs: readonly T[],
   characterId: string,
   replacements: readonly T[],
-  opts?: { max?: number; legacyImages?: ReadonlySet<string> },
+  opts?: { max?: number; legacyImages?: ReadonlySet<string>; preserveOverrides?: boolean },
 ): { next: T[]; added: T[]; skippedFull: boolean; duplicateCount: number } {
   const max = opts?.max ?? NOVELAI_MAX_DIRECTOR_REFERENCES;
   const remaining: T[] = [];
+  const existingByImage = new Map<string, T>();
   let insertAt = -1;
   for (const r of refs) {
     const taggedMatch = r.source_character_id === characterId;
     const legacyMatch = !r.source_character_id && Boolean(opts?.legacyImages?.has(r.image));
     if (taggedMatch || legacyMatch) {
       if (insertAt === -1) insertAt = remaining.length;
+      if (!existingByImage.has(r.image)) existingByImage.set(r.image, r);
     } else {
       remaining.push(r);
     }
@@ -289,8 +291,19 @@ export function reconcileCharacterDirectorReferences<T extends DirectorRefEntry>
       skippedFull = true;
       break;
     }
-    existingImages.add(item.image);
-    added.push(item);
+    const prev = opts?.preserveOverrides ? existingByImage.get(item.image) : undefined;
+    const entry: T = prev
+      ? {
+          ...item,
+          description: prev.description,
+          strength: prev.strength,
+          fidelity: prev.fidelity,
+          enabled: prev.enabled !== undefined ? prev.enabled : item.enabled,
+          ...(prev.auto_attached === false ? { auto_attached: false } : {}),
+        }
+      : item;
+    existingImages.add(entry.image);
+    added.push(entry);
   }
 
   const next = [...remaining];

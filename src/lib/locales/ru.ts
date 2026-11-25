@@ -4974,6 +4974,7 @@ const ru: Record<string, string> = {
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "PR включён для {name} ({count} изобр., +{anlas} Anlas). Нажмите, чтобы отключить.",
   "characters.references.pill_off_tip": "PR выключен для {name} ({count} готово). Нажмите, чтобы включить.",
+  "characters.references.pill_ready_tip": "PR сохранён для {name} ({count} изобр.). Нажмите, чтобы активировать в Precise Reference.",
   "characters.references.pill_empty_tip": "Добавить или сгенерировать изображения Precise Reference для персонажа",
   "characters.references.use_toggle": "Использовать Precise Reference",
   "characters.references.use_tip": "Автоматически прикрепляет изображения Precise Reference этого персонажа при Use или Enhance (+5 Anlas за изображение, High effort на V5 Full).",

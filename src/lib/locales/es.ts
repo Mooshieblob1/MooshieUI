@@ -5003,6 +5003,7 @@ const es: Record<string, string> = {
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "PR activo en {name} ({count} imagen(es), +{anlas} Anlas). Haz clic para desactivar.",
   "characters.references.pill_off_tip": "PR desactivado para {name} ({count} imagen(es) lista(s)). Haz clic para activar.",
+  "characters.references.pill_ready_tip": "PR guardado para {name} ({count} imagen(es)). Haz clic para activar en Precise Reference.",
   "characters.references.pill_empty_tip": "Añadir o generar imágenes de Precise Reference para este personaje",
   "characters.references.use_toggle": "Usar Precise Reference",
   "characters.references.use_tip": "Adjunta automáticamente las imágenes de Precise Reference de este personaje al aplicar con Use o Enhance (+5 Anlas por imagen, High effort en V5 Full).",

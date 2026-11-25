@@ -520,6 +520,18 @@
     );
   });
 
+  $effect(() => {
+    const handler = () => {
+      if (mobileFriendly) {
+        novelaiSectionOpen = true;
+      } else {
+        void openPreciseReferences();
+      }
+    };
+    window.addEventListener("mooshie:open-precise-references", handler);
+    return () => window.removeEventListener("mooshie:open-precise-references", handler);
+  });
+
   let collapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const state: Record<string, boolean> = {

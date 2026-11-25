@@ -2538,6 +2538,7 @@ const en: Record<string, string> = {
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "PR active on {name} ({count} image(s), +{anlas} Anlas). Click to turn off.",
   "characters.references.pill_off_tip": "PR off for {name} ({count} image(s) ready). Click to turn on.",
+  "characters.references.pill_ready_tip": "PR saved for {name} ({count} image(s)). Click to activate in Precise Reference.",
   "characters.references.pill_empty_tip": "Add or generate Precise Reference images for this character",
   "characters.references.use_toggle": "Use Precise Reference",
   "characters.references.use_tip": "Automatically attach this character's Precise Reference image(s) when applied via Use or Enhance (+5 Anlas per image, High effort on V5 Full).",

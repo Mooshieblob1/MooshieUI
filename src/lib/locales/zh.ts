@@ -4975,6 +4975,7 @@ const zh: Record<string, string> = {
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "{name} 的 PR 已开启（{count} 张，+{anlas} Anlas）。点击关闭。",
   "characters.references.pill_off_tip": "{name} 的 PR 已关闭（已就绪 {count} 张）。点击开启。",
+  "characters.references.pill_ready_tip": "已为 {name} 保存 PR（{count} 张）。点击在 Precise Reference 中启用。",
   "characters.references.pill_empty_tip": "为此角色添加或生成 Precise Reference 图片",
   "characters.references.use_toggle": "使用 Precise Reference",
   "characters.references.use_tip": "通过 Use 或 Enhance 应用此角色时自动附加其 Precise Reference 图片（每张 +5 Anlas，V5 Full 下强制 High effort）。",
