@@ -37,12 +37,18 @@
     imageBytesToBase64,
     loadOutputImageForGenerationInput,
   } from "../../utils/galleryActions.js";
-  import { estimateNovelAiCost, novelAiUpscaleCost } from "../../utils/novelaiCost.js";
+  import {
+    PRECISE_REFERENCE_COST,
+    estimateNovelAiCost,
+    novelAiUpscaleCost,
+  } from "../../utils/novelaiCost.js";
   import {
     NOVELAI_MEDIUM_EFFORT,
     naiV5Variant,
     novelAiActiveDirectorReferenceCount,
+    novelAiActiveDirectorReferenceSummary,
     novelAiEffortForcedByPreciseReference,
+    novelAiReferenceLabelKey,
     novelAiUsesMediumEffort,
   } from "../../utils/novelaiModels.js";
   import {
@@ -196,6 +202,13 @@
   // modal that a single click can multiply.
   const variationsCost = $derived(
     costFor(naiImageEnhance.oneXSize, naiImageEnhance.variety, naiImageEnhance.variationCount),
+  );
+  const activeRefSummary = $derived(
+    novelAiActiveDirectorReferenceSummary(
+      generation.novelAiModel,
+      generation.novelaiSettings.director_references,
+      false,
+    ),
   );
 
   const headerKey = $derived(
@@ -721,6 +734,22 @@
           ? locale.t("novelai.enhance.upscale_prompt_note")
           : locale.t("novelai.enhance.prompt_note")}
       </p>
+
+      {#if action !== "upscale" && activeRefSummary.count > 0}
+        <p
+          class="mt-2 rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200"
+        >
+          {locale.t("generation.novelai.reference.image_enhance_active", {
+            count: String(activeRefSummary.count),
+            modes: activeRefSummary.modes.map((m) => locale.t(novelAiReferenceLabelKey(m))).join(", "),
+            anlas: String(
+              activeRefSummary.count *
+                PRECISE_REFERENCE_COST *
+                (action === "variations" ? naiImageEnhance.variationCount : 1),
+            ),
+          })}
+        </p>
+      {/if}
 
       {#if naiImageEnhance.error}
         <div class="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">

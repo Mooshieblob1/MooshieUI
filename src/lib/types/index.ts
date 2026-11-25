@@ -170,6 +170,11 @@ export interface NovelAiDirectorReference {
    * V5 removed the Fidelity slider and pins this to 1.0 (0.0 secondary strength).
    */
   fidelity: number;
+  /**
+   * Whether this entry is included when generating. Defaults to true when omitted;
+   * disabled entries stay in the panel with their settings without being sent or billed.
+   */
+  enabled?: boolean;
 }
 
 /**

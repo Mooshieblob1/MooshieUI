@@ -678,6 +678,7 @@ mod tests {
             description: "character".into(),
             strength: 1.0,
             fidelity: 1.0,
+            enabled: true,
         }];
 
         let out = crop_request(&base, &plan(), "portrait, close-up", "AAAA".into(), 0);

@@ -8,6 +8,8 @@ import { locale } from "../stores/locale.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { generation } from "../stores/generation.svelte.js";
 import { authHeaders, isTauri } from "./ipc.js";
+import { fileToNovelAiBase64 } from "./novelaiImage.js";
+import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "./novelaiModels.js";
 import {
   loadGalleryImage,
   loadGalleryImagePng,
@@ -265,4 +267,55 @@ export async function addImageToVideoReference(image: OutputImage): Promise<numb
   generation.mode = "video";
   generation.saveSettings();
   return index + 1;
+}
+
+/**
+ * Append `image` (gallery or session output, including `.jxl`/`.webp`) to
+ * NovelAI's Precise Reference list without touching the prompt or model.
+ */
+export async function addOutputImageAsPreciseReference(
+  image: OutputImage,
+  description = "character",
+): Promise<boolean> {
+  if (!generation.isNovelAi || !generation.supportsNovelAiPreciseReference) return false;
+  const refs = generation.novelaiSettings.director_references;
+  if (refs.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+    gallery.showToast(
+      locale.t("generation.novelai.reference.toast_full", {
+        max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+      }),
+      "info",
+    );
+    return false;
+  }
+  try {
+    const { bytes } = await loadOutputImageForGenerationInput(image, "reference.png");
+    const base64 = await fileToNovelAiBase64(
+      new Blob([new Uint8Array(bytes)], { type: "image/png" }),
+    );
+    if (!base64) {
+      gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+      return false;
+    }
+    if (generation.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+      gallery.showToast(
+        locale.t("generation.novelai.reference.toast_full", {
+          max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+        }),
+        "info",
+      );
+      return false;
+    }
+    if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+      gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+      return false;
+    }
+    generation.addNovelAiDirectorReference(base64, description);
+    gallery.showToast(locale.t("generation.novelai.reference.toast_added"), "success");
+    return true;
+  } catch (e) {
+    console.error("Failed to add image as Precise Reference:", e);
+    gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+    return false;
+  }
 }

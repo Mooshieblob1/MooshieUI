@@ -28,7 +28,12 @@
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_SAVED_CHARACTER_LIMIT } from "../../utils/naiSavedCharacters.js";
   import type { NaiCanonPriority } from "../../utils/naiSavedCharacters.js";
-  import { naiV5Variant } from "../../utils/novelaiModels.js";
+  import {
+    naiV5Variant,
+    novelAiActiveDirectorReferenceSummary,
+    novelAiReferenceLabelKey,
+  } from "../../utils/novelaiModels.js";
+  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { readClipboardImageSafe } from "../../utils/api.js";
   import { writeClipboardText } from "../../utils/clipboardText.js";
@@ -103,6 +108,24 @@
   /** At least two filled boxes on a V5 model, which is when isolating means anything. */
   const canIsolateCurrent = $derived(
     !!variant && generation.novelaiSettings.characters.filter((c) => c.prompt.trim()).length >= 2,
+  );
+  const activeRefSummary = $derived(
+    isNai
+      ? novelAiActiveDirectorReferenceSummary(
+          generation.novelAiModel,
+          generation.novelaiSettings.director_references,
+          generation.isNovelAiInfill,
+        )
+      : { count: 0, modes: [] },
+  );
+  const activeRefNotice = $derived(
+    activeRefSummary.count > 0
+      ? locale.t("generation.novelai.reference.enhance_active", {
+          count: String(activeRefSummary.count),
+          modes: activeRefSummary.modes.map((m) => locale.t(novelAiReferenceLabelKey(m))).join(", "),
+          anlas: String(activeRefSummary.count * PRECISE_REFERENCE_COST),
+        })
+      : "",
   );
   const sendable = $derived(!enhanceChat.busy && canSend(flow));
 
@@ -524,6 +547,16 @@
               {locale.t(enhanceChat.curate || variant === "full" ? "prompt_assistant.nai_variant_full" : "prompt_assistant.nai_variant_curated")}
             </span>
           {/if}
+          {#if activeRefSummary.count > 0}
+            <span
+              class="shrink-0 rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-200"
+              title={activeRefNotice}
+            >
+              {locale.t("generation.novelai.reference.enhance_badge", {
+                count: String(activeRefSummary.count),
+              })}
+            </span>
+          {/if}
         {/if}
         <div class="ml-auto flex items-center gap-1">
           {#if enhanceChat.view === "chat" && !isH3}
@@ -727,6 +760,11 @@
           {#if isNai && savedNames.length > 0}
             <p class="mt-1 truncate text-[10px] text-neutral-500" title={savedNames.join(", ")}>
               {locale.t("prompt_assistant.nai_saved_characters", { names: savedNames.join(", ") })}
+            </p>
+          {/if}
+          {#if activeRefNotice}
+            <p class="mt-1 text-[10px] text-indigo-300/90">
+              {activeRefNotice}
             </p>
           {/if}
 

@@ -7,6 +7,8 @@
   import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
+  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
+  import { novelAiActiveDirectorReferenceSummary } from "../../utils/novelaiModels.js";
   import { stripArtistSigil } from "../../utils/artistTag.js";
   import type { StyleArtist } from "../../stores/styles.svelte.js";
 
@@ -33,6 +35,15 @@
     const one = estimateCurrentNovelAiCost(1, true);
     return one === null ? null : one * styleCreator.cardsPerRound;
   });
+  const activeRefCount = $derived(
+    generation.isNovelAi
+      ? novelAiActiveDirectorReferenceSummary(
+          generation.novelAiModel,
+          generation.novelaiSettings.director_references,
+          false,
+        ).count
+      : 0,
+  );
 
   // The badge needs the subscription tier, same as the Generate button.
   $effect(() => {
@@ -186,6 +197,14 @@
         <span class="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
           {locale.t("style_creator.cost_badge", { anlas })}
         </span>
+      {/if}
+      {#if activeRefCount > 0}
+        <p class="mt-1 text-[11px] text-amber-300/90">
+          {locale.t("generation.novelai.reference.style_creator_active", {
+            count: String(activeRefCount),
+            anlas: String(activeRefCount * PRECISE_REFERENCE_COST),
+          })}
+        </p>
       {/if}
     {/if}
   </section>

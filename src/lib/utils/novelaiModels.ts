@@ -423,6 +423,21 @@ export const NOVELAI_OUTFIT_REFERENCE_OPTION = {
   labelKey: "generation.novelai.reference.desc_outfit",
 } as const;
 
+const REF_LABEL_KEY_BY_BASE: Record<string, string> = {
+  [NAI_REF_CHARACTER]: "generation.novelai.reference.desc_character",
+  [NAI_REF_STYLE]: "generation.novelai.reference.desc_style",
+  [NAI_REF_CHARACTER_STYLE]: "generation.novelai.reference.desc_character_style",
+  [NAI_REF_OUTFIT]: "generation.novelai.reference.desc_outfit",
+};
+
+/** Locale key for the human label of any stored Precise Reference description value. */
+export function novelAiReferenceLabelKey(description: string): string {
+  return (
+    REF_LABEL_KEY_BY_BASE[novelAiReferenceBaseType(description)] ??
+    "generation.novelai.reference.desc_character"
+  );
+}
+
 /** Map a stored description wire value to its dropdown base type. */
 export function novelAiReferenceBaseType(description: string): string {
   if (description === NAI_REF_CHARACTER_MAIN_OUTFIT) return NAI_REF_CHARACTER;
@@ -456,28 +471,47 @@ export function novelAiSetPreferSameOutfit(description: string, prefer: boolean)
   return description;
 }
 
-/** Count references that will actually be sent for the given model and action. */
-export function novelAiActiveDirectorReferenceCount(
+export interface ActiveDirectorReferenceSummary {
+  count: number;
+  /** Deduplicated base/outfit wire values (`character`, `style`, `character&style`, `costume`) in slot order. */
+  modes: string[];
+}
+
+/** Collect active Precise References (`count` and deduplicated modes) for the given model and action. */
+export function novelAiActiveDirectorReferenceSummary(
   model: NovelAiModelInfo | null | undefined,
-  references: readonly { image?: string; description: string }[],
+  references: readonly { image?: string; description: string; enabled?: boolean }[],
   isInfill: boolean,
-): number {
+): ActiveDirectorReferenceSummary {
   if (!model?.preciseReference || (isInfill && !model.preciseReferenceInpainting)) {
-    return 0;
+    return { count: 0, modes: [] };
   }
   let count = 0;
+  const modes: string[] = [];
   for (const r of references) {
+    if (r.enabled === false) continue;
     if (r.image !== undefined && r.image.length === 0) continue;
     if (!model.outfitReferences && r.description === NAI_REF_OUTFIT) continue;
     count += 1;
+    const base = novelAiReferenceBaseType(r.description);
+    if (base && !modes.includes(base)) modes.push(base);
   }
-  return count;
+  return { count, modes };
+}
+
+/** Count references that will actually be sent for the given model and action. */
+export function novelAiActiveDirectorReferenceCount(
+  model: NovelAiModelInfo | null | undefined,
+  references: readonly { image?: string; description: string; enabled?: boolean }[],
+  isInfill: boolean,
+): number {
+  return novelAiActiveDirectorReferenceSummary(model, references, isInfill).count;
 }
 
 /** True when active Precise References force High effort on a Medium-effort-capable model. */
 export function novelAiEffortForcedByPreciseReference(
   model: NovelAiModelInfo | null | undefined,
-  references: readonly { image?: string; description: string }[],
+  references: readonly { image?: string; description: string; enabled?: boolean }[],
   isInfill: boolean,
 ): boolean {
   return (

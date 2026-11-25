@@ -9,7 +9,14 @@
   import { imageEditor } from "../../stores/imageEditor.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "../../stores/naiImageEnhance.svelte.js";
   import { generate, uploadImageBytes, downloadModel, saveVideoToGalleryManual } from "../../utils/api.js";
-  import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput, imageUrlToPngBytes } from "../../utils/galleryActions.js";
+  import {
+    loadOutputImageForGenerationInput,
+    uploadImageUrlForGenerationInput,
+    imageUrlToPngBytes,
+    addOutputImageAsPreciseReference,
+  } from "../../utils/galleryActions.js";
+  import { fileToNovelAiBase64 } from "../../utils/novelaiImage.js";
+  import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "../../utils/novelaiModels.js";
   import { normalizeGenerationInputBytes, MAX_INPUT_PIXELS_INPAINT } from "../../utils/editImagePreparation.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
   import {
@@ -563,11 +570,56 @@
         action: () => directorTools.open(directorSource, previewSrc),
       });
     }
+    if (generation.isNovelAi && generation.supportsNovelAiPreciseReference) {
+      items.push({
+        label: locale.t("generation.novelai.reference.send_to"),
+        action: () => void sendToPreciseReference(),
+      });
+    }
 
     ctxMenuItems = items;
     ctxMenuX = e.clientX;
     ctxMenuY = e.clientY;
     ctxMenuVisible = true;
+  }
+
+  async function sendToPreciseReference() {
+    const saved = getActiveSavedImage();
+    if (saved) {
+      await addOutputImageAsPreciseReference(saved);
+      return;
+    }
+    if (generation.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+      gallery.showToast(
+        locale.t("generation.novelai.reference.toast_full", {
+          max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+        }),
+        "info",
+      );
+      return;
+    }
+    const sourceUrl = previewSrc ?? progress.lastOutputImage;
+    if (!sourceUrl) {
+      gallery.showToast(locale.t("preview.not_available"), "info");
+      return;
+    }
+    try {
+      const bytes = await imageUrlToPngBytes(sourceUrl);
+      const base64 = await fileToNovelAiBase64(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+      if (!base64) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+        return;
+      }
+      if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+        return;
+      }
+      generation.addNovelAiDirectorReference(base64);
+      gallery.showToast(locale.t("generation.novelai.reference.toast_added"), "success");
+    } catch (e) {
+      console.error("Send preview to Precise Reference failed:", e);
+      gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+    }
   }
 </script>
 

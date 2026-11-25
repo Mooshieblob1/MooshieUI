@@ -42,7 +42,10 @@ export async function fileToNovelAiBase64(
   file: Blob,
   maxDimension = NOVELAI_REFERENCE_MAX_DIMENSION,
 ): Promise<string | null> {
-  if (file.type && !file.type.startsWith("image/")) return null;
+  const looksLikeImageByName =
+    file instanceof File &&
+    /\.(png|jpe?g|webp|gif|bmp|avif|jxl|ico|tiff?)$/i.test(file.name);
+  if (file.type && !file.type.startsWith("image/") && !looksLikeImageByName) return null;
   try {
     const image = await decode(file);
     const longest = Math.max(image.width, image.height);

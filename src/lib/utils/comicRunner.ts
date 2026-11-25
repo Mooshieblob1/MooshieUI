@@ -64,7 +64,12 @@ import { isTauri } from "./ipc.js";
 import { resolveNaiLanguage } from "./naiLanguage.js";
 import { NAI_MAX_TOKENS, naiComicSystemPrompt } from "./naiPrompt.js";
 import { naiSystemWithSkill } from "./naiSkill.js";
-import { NOVELAI_MAX_DIRECTOR_REFERENCES, naiV5Variant } from "./novelaiModels.js";
+import {
+  NAI_REF_CHARACTER,
+  NAI_REF_CHARACTER_MAIN_OUTFIT,
+  NOVELAI_MAX_DIRECTOR_REFERENCES,
+  naiV5Variant,
+} from "./novelaiModels.js";
 
 /** How long a finished prompt may take to show up as an image before it counts as lost. */
 const IMAGE_GRACE_MS = 60_000;
@@ -244,13 +249,18 @@ async function applyReferenceImages(
   if (pngs.length === 0) return;
   if (kind === "novelai") {
     if (params.novelai) {
+      const description =
+        naiV5Variant(generation.checkpoint) !== null
+          ? NAI_REF_CHARACTER_MAIN_OUTFIT
+          : NAI_REF_CHARACTER;
       params.novelai = {
         ...params.novelai,
         director_references: pngs.slice(0, NOVELAI_MAX_DIRECTOR_REFERENCES).map((png) => ({
           image: bytesToBase64(png),
-          description: "character",
+          description,
           strength: 0.6,
           fidelity: 1.0,
+          enabled: true,
         })),
       };
     }

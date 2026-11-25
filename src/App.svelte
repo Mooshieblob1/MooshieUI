@@ -38,7 +38,16 @@
   import { notifyKrea2RefusalLoraMissing } from "./lib/utils/krea2UncensoredSetup.js";
   import { BETA57_SCHEDULER } from "./lib/utils/samplingRecommendation.js";
   import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, setUiResting } from "./lib/utils/api.js";
-  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
+  import {
+    loadOutputImageForGenerationInput,
+    uploadOutputImageForGenerationInput,
+    sendImageToVideoFrame,
+    addImageToVideoReference,
+    videoReferenceSlotsFree,
+    addOutputImageAsPreciseReference,
+  } from "./lib/utils/galleryActions.js";
+  import { fileToNovelAiBase64 } from "./lib/utils/novelaiImage.js";
+  import { NAI_REF_STYLE, NOVELAI_MAX_DIRECTOR_REFERENCES } from "./lib/utils/novelaiModels.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
   import { UPSCALE_ACTION } from "./lib/utils/novelaiEnhance.js";
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
@@ -1492,6 +1501,14 @@
             },
           ]
         : []),
+      ...(generation.isNovelAi && generation.supportsNovelAiPreciseReference && !isVideoImage(image)
+        ? [
+            {
+              label: locale.t("generation.novelai.reference.send_to"),
+              action: () => void addOutputImageAsPreciseReference(image),
+            },
+          ]
+        : []),
       ...(naiImageEnhanceAvailable() && !isVideoImage(image)
         ? [
             {
@@ -1594,6 +1611,37 @@
   }
 
   async function setStyleReferenceFromPreviewUrl(url: string) {
+    if (generation.isNovelAi && generation.supportsNovelAiPreciseReference) {
+      if (generation.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+        gallery.showToast(
+          locale.t("generation.novelai.reference.toast_full", {
+            max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+          }),
+          "info",
+        );
+        return;
+      }
+      try {
+        const { bytes } = await fetchModelPreviewImageBytes(url, "style_reference.png");
+        const base64 = await fileToNovelAiBase64(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+        if (!base64) {
+          gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+          return;
+        }
+        if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+          gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+          return;
+        }
+        generation.addNovelAiDirectorReference(base64, NAI_REF_STYLE);
+        currentPage = "generate";
+        gallery.showToast(locale.t("generation.novelai.reference.style_hub_added"), "success");
+      } catch (e) {
+        console.error("Failed to load preview as Precise Reference:", e);
+        gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+      }
+      return;
+    }
+
     try {
       const name = await uploadModelPreviewImage(url, "style_reference.png");
       generation.styleReferenceImage = name;
@@ -4702,6 +4750,16 @@
             onclick={() => gallery.selectedImage && directorTools.open(gallery.selectedImage, gallery.lightboxUrl ?? null)}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h.01"/><path d="M17.8 6.2L19 5"/><path d="M3 21l9-9"/><path d="M12.2 6.2L11 5"/></svg>
+          </button>
+        {/if}
+        {#if generation.isNovelAi && generation.supportsNovelAiPreciseReference && gallery.selectedImage && !isVideoImage(gallery.selectedImage)}
+          <button
+            title={locale.t("generation.novelai.reference.send_to")}
+            aria-label={locale.t("generation.novelai.reference.send_to")}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+            onclick={() => gallery.selectedImage && void addOutputImageAsPreciseReference(gallery.selectedImage)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
           </button>
         {/if}
         <!-- Enhance, Upscale and Variations. All three sit beside Director
