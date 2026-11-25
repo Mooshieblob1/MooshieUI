@@ -34,6 +34,7 @@ import {
   type LearnedMemory,
   type PendingLearnedFact,
 } from "./characterMemory.js";
+import { matchCharacterCardsInText } from "./characterPreciseRefLogic.js";
 import { naiRequestTexts, promptRequestTexts, rateRequest, savedCharactersForRequest } from "./contentSafety.js";
 import { joinReply } from "./enhanceChat.js";
 import { withImageMarker } from "./enhancerSession.js";
@@ -325,11 +326,18 @@ async function runGeneral(request: ChatRequest, signal: AbortSignal, tabId: stri
   });
   const cleanedPrompt = stripLeakedRecipeSlugs(result.prompt, activeRecipes);
   const sentIds = new Set(noted.map((n) => n.id));
+  const matchedCharacterIds =
+    cleanedPrompt.trim() && generation.isNovelAi && generation.supportsNovelAiPreciseReference
+      ? matchCharacterCardsInText(savedCharacters.currentCharacters, [text], {
+          base: cleanedPrompt,
+        }).map((c) => c.id)
+      : [];
   file("general", request, result.sessionUser, result.reply, cleanedPrompt, {
     appliedRecipes:
       activeRecipes.length > 0
         ? activeRecipes.map((r) => ({ id: r.id, name: r.name, slug: r.slug }))
         : undefined,
+    ...(matchedCharacterIds.length > 0 ? { matchedCharacterIds } : {}),
     ...learnedMeta(result.learned, sentIds, !!cleanedPrompt.trim()),
   }, signal, tabId);
 }
@@ -454,10 +462,15 @@ async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string |
   );
   const parsed = result.parsed;
   let prompt = "";
+  let matchedCharacterIds: string[] = [];
   if (parsed.base.trim()) {
     const cleanBase = stripLeakedRecipeSlugs(parsed.base, activeRecipes);
     const cleanUc = stripNeverUcTags(stripLeakedRecipeSlugs(parsed.uc, activeRecipes), activeRecipes);
     const cleanChars = parsed.characters.map((c) => stripLeakedRecipeSlugs(c, activeRecipes));
+    matchedCharacterIds = matchCharacterCardsInText(roster, [text], {
+      base: cleanBase,
+      characters: cleanChars,
+    }).map((c) => c.id);
     // Each box's own UC: the answer's CHAR n UC line, or the box's current one
     // when it wrote none. Then the other characters' distinctive garments go
     // in automatically, so clothes cannot jump between similar characters even
@@ -488,6 +501,7 @@ async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string |
       activeRecipes.length > 0
         ? activeRecipes.map((r) => ({ id: r.id, name: r.name, slug: r.slug }))
         : undefined,
+    ...(matchedCharacterIds.length > 0 ? { matchedCharacterIds } : {}),
     ...learnedMeta(learned, sentIds, !!prompt && result.problems.length === 0),
   }, signal, tabId);
 }

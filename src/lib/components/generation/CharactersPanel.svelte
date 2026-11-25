@@ -11,12 +11,16 @@
   import {
     CARD_SIZE_MAX,
     CARD_SIZE_MIN,
+    NOVELAI_ARCHITECTURE,
     architectureLabel,
     architecturePromptStyle,
     characterArchitectures,
     savedCharacters,
     type SavedCharacter,
   } from "../../stores/savedCharacters.svelte.js";
+  import { attachCharacterPreciseReferences } from "../../utils/characterPreciseRef.js";
+  import { effectiveCharacterPreciseReferences } from "../../utils/characterPreciseRefLogic.js";
+  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
   import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "../../utils/novelaiModels.js";
   import {
     interrogateGalleryImage,
@@ -56,7 +60,6 @@
   import {
     type CharacterImages,
     blobToCharacterThumbnail,
-    characterReferenceBase64,
     currentImageToCharacterThumbnail,
     outputImageToCharacterThumbnail,
   } from "../../utils/characterThumbnail.js";
@@ -88,7 +91,7 @@
   /** Card open in the editor, with the tab to start on and memory changes to review. */
   let editor = $state<{
     character: SavedCharacter;
-    tab: "details" | "memory";
+    tab: "details" | "references" | "memory";
     suggestions: MemoryChange[];
   } | null>(null);
   /** Character the prompt assistant is working into the prompt right now. */
@@ -100,8 +103,8 @@
   /** Card whose thumbnail is being made right now. */
   let thumbBusyId = $state<string | null>(null);
   let thumbPickerOpen = $state(false);
-  /** Card the portrait dialog is open for. */
-  let portraitFor = $state<SavedCharacter | null>(null);
+  /** Card and mode the portrait/reference dialog is open for. */
+  let portraitFor = $state<{ character: SavedCharacter; target: "portrait" | "reference" } | null>(null);
   let thumbFileInput = $state<HTMLInputElement | null>(null);
 
   /** What Extract found, awaiting the user's names and calls before saving. */
@@ -191,56 +194,74 @@
   );
 
   /**
-   * After Use, put the card's picture in as a Precise Reference on models
-   * that take one. Vibe Transfer and Precise Reference cannot go together, so
-   * it stays out rather than clearing vibes the user set up.
+   * After Use, attach the character's Precise Reference image(s) when opted in
+   * on models that take one. Vibe Transfer and Precise Reference cannot go
+   * together, so active vibes stay intact.
    */
   async function attachReference(character: SavedCharacter) {
-    if (!canReference || !(character.reference ?? character.thumbnail)) return;
-    const nai = generation.novelaiSettings;
-    if (nai.vibes.length > 0) {
+    if (!canReference || !character.usePreciseReference) return;
+    if (effectiveCharacterPreciseReferences(character).length === 0) return;
+    const res = await attachCharacterPreciseReferences([character], {
+      requireEnabled: true,
+      forceReplaceVibes: false,
+    });
+    if (res.skippedVibes) {
       gallery.showToast(locale.t("characters.toast.reference_vibes", { name: character.name }), "info");
       return;
     }
-    if (nai.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+    if (res.skippedFull && res.addedBase64s.length === 0) {
       gallery.showToast(locale.t("characters.toast.reference_full", { name: character.name }), "info");
       return;
     }
-    const base64 = await characterReferenceBase64(character);
-    if (!base64 || generation.novelaiSettings.director_references.some((r) => r.image === base64)) return;
-    generation.addNovelAiDirectorReference(base64);
-    gallery.showToast(locale.t("characters.toast.reference_added", { name: character.name }), "success");
+    if (res.addedBase64s.length > 0) {
+      gallery.showToast(
+        res.addedBase64s.length > 1
+          ? locale.t("characters.references.toast_attached_use", {
+              name: character.name,
+              count: String(res.addedBase64s.length),
+            })
+          : locale.t("characters.toast.reference_added", { name: character.name }),
+        "success",
+      );
+    }
   }
 
-  /** Attach the card's picture as a Precise Reference without altering the prompt. */
+  /** Attach the card's Precise Reference image(s) directly without altering the prompt. */
   async function attachReferenceOnly(character: SavedCharacter) {
     moreMenuId = null;
-    if (!canReference || !(character.reference ?? character.thumbnail)) return;
-    const nai = generation.novelaiSettings;
-    if (nai.vibes.length > 0) {
+    if (!canReference || effectiveCharacterPreciseReferences(character).length === 0) return;
+    const res = await attachCharacterPreciseReferences([character], {
+      requireEnabled: false,
+      forceReplaceVibes: false,
+    });
+    if (res.skippedVibes) {
       gallery.showToast(locale.t("characters.toast.reference_only_vibes", { name: character.name }), "info");
       return;
     }
-    if (nai.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+    if (res.addedBase64s.length > 0) {
+      gallery.showToast(
+        res.addedBase64s.length > 1
+          ? locale.t("characters.references.toast_added_count", {
+              name: character.name,
+              count: String(res.addedBase64s.length),
+            })
+          : locale.t("characters.toast.reference_only_added", { name: character.name }),
+        "success",
+      );
+      return;
+    }
+    if (res.skippedFull) {
       gallery.showToast(
         locale.t("characters.toast.reference_only_full", {
           max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
         }),
         "info",
       );
-      return;
-    }
-    const base64 = await characterReferenceBase64(character);
-    if (!base64) {
-      gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
-      return;
-    }
-    if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+    } else if (res.duplicateCount > 0) {
       gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
-      return;
+    } else if (res.failedCount > 0) {
+      gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
     }
-    generation.addNovelAiDirectorReference(base64);
-    gallery.showToast(locale.t("characters.toast.reference_only_added", { name: character.name }), "success");
   }
 
   /** Start a variant as a copy of the card and open it for editing. */
@@ -1156,7 +1177,7 @@
 
   function openEditor(
     character: SavedCharacter,
-    tab: "details" | "memory" = "details",
+    tab: "details" | "references" | "memory" = "details",
     suggestions: MemoryChange[] = [],
   ) {
     moreMenuId = null;
@@ -1252,6 +1273,35 @@
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       </button>
+      {#if canReference || character.architecture === NOVELAI_ARCHITECTURE}
+        {@const refCount = effectiveCharacterPreciseReferences(character).length}
+        {@const dedicatedCount = character.preciseReferences?.length ?? 0}
+        {@const prOn = Boolean(character.usePreciseReference) && refCount > 0}
+        <button
+          type="button"
+          class="shrink-0 h-5 px-1.5 flex items-center justify-center gap-0.5 rounded text-[10px] font-medium transition-colors {prOn
+            ? 'border border-indigo-500/50 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
+            : 'text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800'}"
+          title={prOn
+            ? locale.t("characters.references.pill_on_tip", {
+                count: String(refCount),
+                anlas: String(refCount * PRECISE_REFERENCE_COST),
+              })
+            : refCount > 0
+              ? locale.t("characters.references.pill_off_tip", { count: String(refCount) })
+              : locale.t("characters.references.pill_empty_tip")}
+          aria-pressed={prOn}
+          onclick={() => {
+            if (refCount > 0) savedCharacters.setUsePreciseReference(character.id, !character.usePreciseReference);
+            else openEditor(character, "references");
+          }}
+        >
+          <span>{locale.t("characters.references.pill_label")}</span>
+          {#if dedicatedCount > 1 || (prOn && refCount > 1)}
+            <span class="tabular-nums opacity-85">{refCount}</span>
+          {/if}
+        </button>
+      {/if}
       {#if showsMemory(character)}
         {@const memoryCount = savedCharacters.memoryOf(character).length}
         <button
@@ -1297,7 +1347,19 @@
           class="px-2 py-0.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
           onclick={() => addVariant(character)}
         >{locale.t("characters.variants.add")}</button>
-        {#if canReference && (character.reference ?? character.thumbnail)}
+        {#if canReference || character.architecture === NOVELAI_ARCHITECTURE}
+          <button
+            type="button"
+            class="px-2 py-0.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            onclick={() => openEditor(character, "references")}
+          >{locale.t("characters.editor.references")}</button>
+          <button
+            type="button"
+            class="px-2 py-0.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            onclick={() => { moreMenuId = null; portraitFor = { character, target: "reference" }; }}
+          >{locale.t("characters.references.generate_button")}</button>
+        {/if}
+        {#if canReference && effectiveCharacterPreciseReferences(character).length > 0}
           <button
             type="button"
             class="px-2 py-0.5 rounded border border-indigo-500/50 text-indigo-300 hover:bg-indigo-500/15"
@@ -1342,8 +1404,15 @@
           type="button"
           class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
           title={locale.t("characters.thumbnail.portrait_tip")}
-          onclick={() => { thumbMenuId = null; portraitFor = character; }}
+          onclick={() => { thumbMenuId = null; portraitFor = { character, target: "portrait" }; }}
         >{locale.t("characters.thumbnail.portrait")}</button>
+        {#if canReference || character.architecture === NOVELAI_ARCHITECTURE}
+          <button
+            type="button"
+            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            onclick={() => { thumbMenuId = null; portraitFor = { character, target: "reference" }; }}
+          >{locale.t("characters.references.generate_button")}</button>
+        {/if}
         <button
           type="button"
           class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
@@ -1525,19 +1594,24 @@
   />
 {/if}
 
-{#if portraitFor}
-  <CharacterPortraitModal character={portraitFor} onclose={() => { portraitFor = null; }} />
-{/if}
-
 {#if editor}
   {#key editor}
     <CharacterEditModal
       character={editor.character}
       tab={editor.tab}
       suggestions={editor.suggestions}
+      ongenerateref={(c) => { portraitFor = { character: c, target: "reference" }; }}
       onclose={() => { editor = null; }}
     />
   {/key}
+{/if}
+
+{#if portraitFor}
+  <CharacterPortraitModal
+    character={portraitFor.character}
+    target={portraitFor.target}
+    onclose={() => { portraitFor = null; }}
+  />
 {/if}
 
 {#if review}

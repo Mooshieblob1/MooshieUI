@@ -1,11 +1,18 @@
-import { generation } from "./generation.svelte.js";
+import { generation, createNovelAiCharacter, type NovelAiSettings } from "./generation.svelte.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
 import { enhanceRecipes } from "./enhanceRecipes.svelte.js";
+import { gallery } from "./gallery.svelte.js";
+import { locale } from "./locale.svelte.js";
+import { savedCharacters, type SavedCharacter } from "./savedCharacters.svelte.js";
 import { recipePromptFingerprint } from "../utils/enhanceRecipes.js";
 import { stripPromptComments } from "../utils/promptComments.js";
 import { joinPromptBoxes } from "../utils/promptSanitize.js";
-import { createNovelAiCharacter } from "./generation.svelte.js";
-import { naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
+import {
+  attachCharacterPreciseReferences,
+  removeDirectorReferencesByImages,
+} from "../utils/characterPreciseRef.js";
+import { effectiveCharacterPreciseReferences } from "../utils/characterPreciseRefLogic.js";
+import { NOVELAI_MAX_DIRECTOR_REFERENCES, naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
 import { parseNaiResponse } from "../utils/naiParse.js";
 import type { NaiParsedResponse } from "../utils/naiParse.js";
@@ -21,7 +28,6 @@ import {
   type OutfitFields,
 } from "../utils/naiOutfits.js";
 import type { NovelAiCharacter } from "../types/index.js";
-import type { NovelAiSettings } from "./generation.svelte.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
 import type { NaiCanonPriority } from "../utils/naiSavedCharacters.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
@@ -102,6 +108,10 @@ export interface NaiEnhancePending {
   base: NaiEnhanceRow;
   uc: NaiEnhanceRow;
   characters: NaiEnhanceCharacterRow[];
+  /** Saved character IDs matched on this answer whose PR images can be attached. */
+  characterRefIds: string[];
+  /** Subset of `characterRefIds` currently ticked to attach on Apply. */
+  selectedCharacterRefIds: string[];
   /** The chat answer this review came from, marked applied when it is. Absent for Isolate outfits. */
   answerAt?: number;
   /** Run once when the rewrite is applied: saves what it learned to memory. */
@@ -169,6 +179,8 @@ interface UndoSnapshot {
   positivePrompt: string;
   negativePrompt: string;
   characters: NovelAiCharacter[];
+  /** Precise Reference base64 strings attached by this Enhance apply so Undo removes only those. */
+  addedDirectorRefImages?: string[];
   /** Present only when "Curate it" changed the generation settings too. */
   curate?: {
     checkpoint: string;
@@ -264,6 +276,10 @@ export interface ChatAnswerMeta {
   updatedRecipeId?: string;
   /** Active/triggered Concept Recipes included when generating this answer. */
   appliedRecipes?: { id: string; name: string; slug: string }[];
+  /** Saved character IDs detected in this answer or its prompt request. */
+  matchedCharacterIds?: string[];
+  /** Subset of `matchedCharacterIds` unchecked by the user for PR auto-attach on this answer. */
+  disabledCharacterRefIds?: string[];
   applied?: boolean;
 }
 
@@ -708,6 +724,101 @@ class EnhanceChatStore {
     this.input = generation.positivePrompt ?? "";
   }
 
+  /** Live saved characters matched on `at` that have `usePreciseReference` enabled and an image. */
+  matchedPreciseRefCards(at: number): SavedCharacter[] {
+    const ids = this.meta[at]?.matchedCharacterIds;
+    if (!ids?.length) return [];
+    const byId = new Map(savedCharacters.characters.map((c) => [c.id, c]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter(
+        (c): c is SavedCharacter =>
+          Boolean(
+            c &&
+              c.usePreciseReference &&
+              effectiveCharacterPreciseReferences(c).length > 0,
+          ),
+      );
+  }
+
+  /** Toggle whether answer `at` should attach `characterId`'s Precise References on apply. */
+  toggleAnswerCharacterRef(at: number, characterId: string): void {
+    const m = this.meta[at] ?? {};
+    const disabled = new Set(m.disabledCharacterRefIds ?? []);
+    if (disabled.has(characterId)) disabled.delete(characterId);
+    else disabled.add(characterId);
+    this.meta = {
+      ...this.meta,
+      [at]: { ...m, disabledCharacterRefIds: [...disabled] },
+    };
+    if (this.pending?.answerAt === at) {
+      this.pending = {
+        ...this.pending,
+        selectedCharacterRefIds: this.pending.characterRefIds.filter((id) => !disabled.has(id)),
+      };
+    }
+  }
+
+  /** Toggle whether the active V5 review should attach `characterId`'s Precise References on apply. */
+  togglePendingCharacterRef(characterId: string): void {
+    const p = this.pending;
+    if (!p || !p.characterRefIds.includes(characterId)) return;
+    const selected = p.selectedCharacterRefIds.includes(characterId)
+      ? p.selectedCharacterRefIds.filter((id) => id !== characterId)
+      : [...p.selectedCharacterRefIds, characterId];
+    this.pending = { ...p, selectedCharacterRefIds: selected };
+    if (p.answerAt !== undefined) {
+      const m = this.meta[p.answerAt] ?? {};
+      const selectedSet = new Set(selected);
+      this.meta = {
+        ...this.meta,
+        [p.answerAt]: {
+          ...m,
+          disabledCharacterRefIds: p.characterRefIds.filter((id) => !selectedSet.has(id)),
+        },
+      };
+    }
+  }
+
+  private async attachPendingCharacterRefs(
+    cards: readonly SavedCharacter[],
+    snap: UndoSnapshot,
+  ): Promise<void> {
+    if (cards.length === 0) return;
+    const res = await attachCharacterPreciseReferences(cards, {
+      requireEnabled: true,
+      forceReplaceVibes: false,
+    });
+    if (this.snapshot !== snap) {
+      if (res.addedBase64s.length > 0) removeDirectorReferencesByImages(res.addedBase64s);
+      return;
+    }
+    if (res.addedBase64s.length > 0) {
+      snap.addedDirectorRefImages = [
+        ...(snap.addedDirectorRefImages ?? []),
+        ...res.addedBase64s,
+      ];
+      gallery.showToast(
+        locale.t("characters.references.toast_attached_enhance", {
+          count: String(res.addedBase64s.length),
+          names: res.attachedNames.join(", "),
+        }),
+        "success",
+      );
+      return;
+    }
+    if (res.skippedVibes) {
+      gallery.showToast(locale.t("characters.references.toast_vibes_active"), "info");
+    } else if (res.skippedFull) {
+      gallery.showToast(
+        locale.t("generation.novelai.reference.toast_full", {
+          max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+        }),
+        "info",
+      );
+    }
+  }
+
   // ---- Applying an answer ------------------------------------------------
 
   /**
@@ -717,6 +828,7 @@ class EnhanceChatStore {
   applyText(at: number, prompt: string, how: "replace" | "append"): void {
     if (!prompt.trim()) return;
     this.takeSnapshot();
+    const snap = this.snapshot!;
     const current = generation.positivePrompt?.trim();
     generation.positivePrompt = how === "append" && current ? `${current}, ${prompt}` : prompt;
     generation.saveSettings();
@@ -734,6 +846,11 @@ class EnhanceChatStore {
             active,
           ),
         );
+      }
+      if (generation.isNovelAi && generation.supportsNovelAiPreciseReference) {
+        const disabled = new Set(this.meta[at]?.disabledCharacterRefIds ?? []);
+        const refCards = this.matchedPreciseRefCards(at).filter((c) => !disabled.has(c.id));
+        if (refCards.length > 0) void this.attachPendingCharacterRefs(refCards, snap);
       }
     }
     this.markApplied(at);
@@ -761,6 +878,10 @@ class EnhanceChatStore {
     if (!parsed || !variant) return null;
     const m = this.meta[at];
     const boxes = generation.novelaiSettings.characters;
+    const disabled = new Set(m?.disabledCharacterRefIds ?? []);
+    const refCards = this.matchedPreciseRefCards(at);
+    const characterRefIds = refCards.map((c) => c.id);
+    const selectedCharacterRefIds = characterRefIds.filter((id) => !disabled.has(id));
     return {
       variant,
       language: m?.language ?? resolveNaiLanguage(generation.naiEnhanceLanguage, parsed.base),
@@ -768,6 +889,8 @@ class EnhanceChatStore {
       note: m?.note ?? "",
       problems: m?.problems ?? [],
       canon: m?.canon ?? [],
+      characterRefIds,
+      selectedCharacterRefIds,
       answerAt: at,
       onApplied: undefined,
       base: { before: generation.positivePrompt, after: parsed.base, selected: true },
@@ -903,6 +1026,8 @@ class EnhanceChatStore {
       note: "",
       problems: [],
       canon: [],
+      characterRefIds: [],
+      selectedCharacterRefIds: [],
       base: { before: base, after: base, selected: false },
       uc: { before: uc, after: uc, selected: false },
       characters: boxes.map((b, i) => ({
@@ -1012,6 +1137,23 @@ class EnhanceChatStore {
     if (this.curate) generation.applyNovelAiCurate();
     generation.saveSettings();
 
+    if (generation.isNovelAi && generation.supportsNovelAiPreciseReference && p.selectedCharacterRefIds.length > 0) {
+      const byId = new Map(savedCharacters.characters.map((c) => [c.id, c]));
+      const cards = p.selectedCharacterRefIds
+        .map((id) => byId.get(id))
+        .filter(
+          (c): c is SavedCharacter =>
+            Boolean(
+              c &&
+                c.usePreciseReference &&
+                effectiveCharacterPreciseReferences(c).length > 0,
+            ),
+        );
+      if (cards.length > 0 && this.snapshot) {
+        void this.attachPendingCharacterRefs(cards, this.snapshot);
+      }
+    }
+
     if (p.answerAt !== undefined && p.base.selected && p.uc.selected && p.characters.every((c) => c.selected)) {
       const appliedIds = new Set((this.meta[p.answerAt]?.appliedRecipes ?? []).map((r) => r.id));
       const active = enhanceRecipes.activeRecipes;
@@ -1109,6 +1251,9 @@ class EnhanceChatStore {
       generation.positivePrompt = snap.positivePrompt;
       generation.negativePrompt = snap.negativePrompt;
       generation.updateNovelAiSettings({ characters: snap.characters });
+      if (snap.addedDirectorRefImages?.length) {
+        removeDirectorReferencesByImages(snap.addedDirectorRefImages);
+      }
       generation.saveSettings();
     }
     this.clearUndo();

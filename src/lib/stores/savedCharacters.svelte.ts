@@ -2,7 +2,16 @@ import { triggerSync } from "../utils/syncTrigger.js";
 import { userScopedKey } from "../utils/ipc.js";
 import { MODEL_FAMILY_LABELS, familyUsesTagPrompts, modelFamilyLabel } from "../utils/modelFamily.js";
 import { registeredFamilies } from "../utils/architectures.js";
-import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
+import {
+  NAI_REF_CHARACTER,
+  NAI_REF_CHARACTER_MAIN_OUTFIT,
+  NAI_REF_CHARACTER_STYLE,
+  NAI_REF_CHARACTER_STYLE_ANY_OUTFIT,
+  NAI_REF_OUTFIT,
+  NAI_REF_STYLE,
+  NOVELAI_MAX_DIRECTOR_REFERENCES,
+  novelAiMaxCharacters,
+} from "../utils/novelaiModels.js";
 import type { CharacterPromptStyle } from "../utils/characterExtract.js";
 import {
   addLearnedFact,
@@ -37,6 +46,36 @@ const SAMPLE_PICTURES: Record<string, SamplePictures> = {
 /** Every NovelAI model shares one architecture bucket; their tags carry over. */
 export const NOVELAI_ARCHITECTURE = "novelai";
 
+/** A Precise Reference image saved on a character card. */
+export interface CharacterPreciseReference {
+  id: string;
+  /** Downscaled thumbnail data URL for card/preview display. */
+  thumbnail: string;
+  /** Reference-sized WebP data URL encoded to PNG base64 when sent to NovelAI. */
+  reference: string;
+  /** NovelAI wire description (`character`, `character_mainoutfit`, `style`, `character&style`, `character&style_anyoutfit`, `costume`). */
+  description?: string;
+  strength?: number;
+  fidelity?: number;
+}
+
+/** In-flight portrait or reference generation claim tied to a card. */
+export interface CharacterImageClaim {
+  cardId: string;
+  target: "portrait" | "reference";
+  description?: string;
+  enablePr?: boolean;
+}
+
+const VALID_REF_DESCRIPTIONS = new Set<string>([
+  NAI_REF_CHARACTER,
+  NAI_REF_CHARACTER_MAIN_OUTFIT,
+  NAI_REF_STYLE,
+  NAI_REF_CHARACTER_STYLE,
+  NAI_REF_CHARACTER_STYLE_ANY_OUTFIT,
+  NAI_REF_OUTFIT,
+]);
+
 /**
  * A character pulled out of a prompt and kept for reuse. Each one belongs to
  * the architecture it was saved under, because a tag prompt written for SDXL
@@ -58,6 +97,17 @@ export interface SavedCharacter {
    * image data URL, or null. Made alongside the thumbnail.
    */
   reference: string | null;
+  /**
+   * Whether `Use` and Enhance automatically attach this character's Precise
+   * Reference image(s). Opt-in because Precise Reference costs Anlas.
+   */
+  usePreciseReference?: boolean;
+  /**
+   * Dedicated Precise Reference images stored for this character (up to 8).
+   * When empty and `usePreciseReference` is enabled, falls back to the card
+   * picture (`reference ?? thumbnail`).
+   */
+  preciseReferences?: CharacterPreciseReference[];
   /**
    * The card this one is a variant of (another outfit or look of the same
    * character), or null for a character of its own. Always a top-level card:
@@ -112,6 +162,40 @@ function clampCardSize(size: number): number {
   return Math.max(CARD_SIZE_MIN, Math.min(CARD_SIZE_MAX, Math.round(size)));
 }
 
+function sanitizeRefDescription(value: unknown): string {
+  return typeof value === "string" && VALID_REF_DESCRIPTIONS.has(value) ? value : NAI_REF_CHARACTER;
+}
+
+function sanitizeRefNumber(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(min, Math.min(max, value))
+    : fallback;
+}
+
+function sanitizePreciseReferences(raw: unknown): CharacterPreciseReference[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CharacterPreciseReference[] = [];
+  for (const item of raw) {
+    if (out.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) break;
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const thumb = typeof r.thumbnail === "string" && r.thumbnail.startsWith("data:image/") ? r.thumbnail : null;
+    const ref = typeof r.reference === "string" && r.reference.startsWith("data:image/") ? r.reference : null;
+    const image = ref ?? thumb;
+    const thumbnail = thumb ?? ref;
+    if (!image || !thumbnail) continue;
+    out.push({
+      id: typeof r.id === "string" && r.id ? r.id : newId(),
+      thumbnail,
+      reference: image,
+      description: sanitizeRefDescription(r.description),
+      strength: sanitizeRefNumber(r.strength, 0, 5, 1.0),
+      fidelity: sanitizeRefNumber(r.fidelity, 0, 1, 1.0),
+    });
+  }
+  return out;
+}
+
 function sanitize(raw: unknown): SavedCharacter | null {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Record<string, unknown>;
@@ -120,6 +204,7 @@ function sanitize(raw: unknown): SavedCharacter | null {
   }
   if (!c.name.trim() || !c.architecture) return null;
   const now = Date.now();
+  const preciseReferences = sanitizePreciseReferences(c.preciseReferences);
   return {
     id: typeof c.id === "string" && c.id ? c.id : newId(),
     name: c.name,
@@ -128,6 +213,8 @@ function sanitize(raw: unknown): SavedCharacter | null {
     architecture: c.architecture,
     thumbnail: typeof c.thumbnail === "string" && c.thumbnail.startsWith("data:image/") ? c.thumbnail : null,
     reference: typeof c.reference === "string" && c.reference.startsWith("data:image/") ? c.reference : null,
+    usePreciseReference: typeof c.usePreciseReference === "boolean" ? c.usePreciseReference : false,
+    ...(preciseReferences.length > 0 ? { preciseReferences } : {}),
     parentId: typeof c.parentId === "string" && c.parentId ? c.parentId : null,
     memory: sanitizeMemory(c.memory),
     ...(typeof c.expression === "string" && c.expression.trim() ? { expression: c.expression.trim().slice(0, 200) } : {}),
@@ -157,6 +244,8 @@ export interface NewCharacter {
   negative: string;
   thumbnail?: string | null;
   reference?: string | null;
+  usePreciseReference?: boolean;
+  preciseReferences?: CharacterPreciseReference[];
   parentId?: string | null;
   memory?: CharacterMemoryFile[];
 }
@@ -164,11 +253,11 @@ export interface NewCharacter {
 class SavedCharactersStore {
   characters = $state<SavedCharacter[]>([]);
   /**
-   * Portraits being generated: prompt id to the card the picture is for.
+   * Portraits or references being generated: prompt id to the card and target.
    * Kept in memory only, like other generation claims: a queued job does not
    * outlive the app.
    */
-  portraitClaims = $state<Record<string, string>>({});
+  portraitClaims = $state<Record<string, CharacterImageClaim>>({});
   /** Side of a card's picture in the Characters tab, in pixels. */
   cardSize = $state(CARD_SIZE_DEFAULT);
   /**
@@ -247,6 +336,7 @@ class SavedCharactersStore {
       let name = item.name.trim();
       for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${item.name.trim()} ${n}`;
       taken.add(name.toLowerCase());
+      const cleanRefs = item.preciseReferences ? sanitizePreciseReferences(item.preciseReferences) : [];
       next.push({
         id: newId(),
         name,
@@ -255,6 +345,8 @@ class SavedCharactersStore {
         architecture,
         thumbnail: item.thumbnail ?? null,
         reference: item.reference ?? null,
+        usePreciseReference: typeof item.usePreciseReference === "boolean" ? item.usePreciseReference : false,
+        ...(cleanRefs.length > 0 ? { preciseReferences: cleanRefs } : {}),
         parentId: item.parentId ?? null,
         memory: item.memory ? cloneMemory(item.memory) : [],
         createdAt: now,
@@ -322,6 +414,149 @@ class SavedCharactersStore {
     this.characters = this.characters.map((c) =>
       c.id === id ? { ...c, thumbnail, reference: thumbnail ? reference : null } : c,
     );
+    this.saveSettings();
+  }
+
+  /** Enable or disable automatic Precise Reference attachment for `id` on Use & Enhance. */
+  setUsePreciseReference(id: string, enabled: boolean): void {
+    const card = this.characters.find((c) => c.id === id);
+    if (!card || Boolean(card.usePreciseReference) === enabled) return;
+    this.characters = this.characters.map((c) =>
+      c.id === id ? { ...c, usePreciseReference: enabled } : c,
+    );
+    this.saveSettings();
+  }
+
+  /**
+   * Append one or more Precise Reference images onto card `id` (up to `NOVELAI_MAX_DIRECTOR_REFERENCES`),
+   * deduplicating exact reference data URLs. Does not bump `updatedAt`.
+   */
+  addPreciseReferences(
+    id: string,
+    items: ReadonlyArray<{
+      thumbnail: string;
+      reference: string;
+      description?: string;
+      strength?: number;
+      fidelity?: number;
+    }>,
+    opts?: { enablePr?: boolean },
+  ): { added: CharacterPreciseReference[]; duplicates: number; hitCap: boolean } {
+    const card = this.characters.find((c) => c.id === id);
+    if (!card) return { added: [], duplicates: 0, hitCap: false };
+    const existing = card.preciseReferences ?? [];
+    const nextRefs = [...existing];
+    const added: CharacterPreciseReference[] = [];
+    let duplicates = 0;
+    let hitCap = false;
+    for (const item of items) {
+      if (nextRefs.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+        hitCap = true;
+        break;
+      }
+      if (!item.reference.startsWith("data:image/") || !item.thumbnail.startsWith("data:image/")) {
+        continue;
+      }
+      if (nextRefs.some((r) => r.reference === item.reference)) {
+        duplicates += 1;
+        continue;
+      }
+      const entry: CharacterPreciseReference = {
+        id: newId(),
+        thumbnail: item.thumbnail,
+        reference: item.reference,
+        description: sanitizeRefDescription(item.description),
+        strength: sanitizeRefNumber(item.strength, 0, 5, 1.0),
+        fidelity: sanitizeRefNumber(item.fidelity, 0, 1, 1.0),
+      };
+      nextRefs.push(entry);
+      added.push(entry);
+    }
+    const shouldEnable = opts?.enablePr === true && !card.usePreciseReference && added.length > 0;
+    if (added.length > 0 || shouldEnable) {
+      this.characters = this.characters.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              preciseReferences: nextRefs,
+              ...(shouldEnable ? { usePreciseReference: true } : {}),
+            }
+          : c,
+      );
+      this.saveSettings();
+    }
+    return { added, duplicates, hitCap };
+  }
+
+  updatePreciseReference(
+    id: string,
+    refId: string,
+    patch: Partial<Pick<CharacterPreciseReference, "description" | "strength" | "fidelity">>,
+  ): void {
+    const card = this.characters.find((c) => c.id === id);
+    if (!card?.preciseReferences?.some((r) => r.id === refId)) return;
+    this.characters = this.characters.map((c) => {
+      if (c.id !== id || !c.preciseReferences) return c;
+      return {
+        ...c,
+        preciseReferences: c.preciseReferences.map((r) => {
+          if (r.id !== refId) return r;
+          return {
+            ...r,
+            ...(patch.description !== undefined
+              ? { description: sanitizeRefDescription(patch.description) }
+              : {}),
+            ...(patch.strength !== undefined
+              ? { strength: sanitizeRefNumber(patch.strength, 0, 5, r.strength ?? 1.0) }
+              : {}),
+            ...(patch.fidelity !== undefined
+              ? { fidelity: sanitizeRefNumber(patch.fidelity, 0, 1, r.fidelity ?? 1.0) }
+              : {}),
+          };
+        }),
+      };
+    });
+    this.saveSettings();
+  }
+
+  removePreciseReference(id: string, refId: string): void {
+    const card = this.characters.find((c) => c.id === id);
+    if (!card?.preciseReferences?.some((r) => r.id === refId)) return;
+    this.characters = this.characters.map((c) => {
+      if (c.id !== id || !c.preciseReferences) return c;
+      const remaining = c.preciseReferences.filter((r) => r.id !== refId);
+      const next: SavedCharacter = { ...c };
+      if (remaining.length > 0) next.preciseReferences = remaining;
+      else delete next.preciseReferences;
+      return next;
+    });
+    this.saveSettings();
+  }
+
+  clearPreciseReferences(id: string): void {
+    const card = this.characters.find((c) => c.id === id);
+    if (!card?.preciseReferences?.length) return;
+    this.characters = this.characters.map((c) => {
+      if (c.id !== id) return c;
+      const next: SavedCharacter = { ...c };
+      delete next.preciseReferences;
+      return next;
+    });
+    this.saveSettings();
+  }
+
+  /** Replace card `id`'s Precise Reference list in full (for lossless Undo). */
+  setPreciseReferences(id: string, refs: readonly CharacterPreciseReference[]): void {
+    const card = this.characters.find((c) => c.id === id);
+    if (!card) return;
+    const clean = sanitizePreciseReferences(refs);
+    this.characters = this.characters.map((c) => {
+      if (c.id !== id) return c;
+      const next: SavedCharacter = { ...c };
+      if (clean.length > 0) next.preciseReferences = clean;
+      else delete next.preciseReferences;
+      return next;
+    });
     this.saveSettings();
   }
 
@@ -395,16 +630,41 @@ class SavedCharactersStore {
 
   /** Route the generation `promptId` back to card `id` as its picture when it lands. */
   claimPortrait(promptId: string, id: string): void {
-    this.portraitClaims = { ...this.portraitClaims, [promptId]: id };
+    this.portraitClaims = {
+      ...this.portraitClaims,
+      [promptId]: { cardId: id, target: "portrait" },
+    };
+  }
+
+  /** Route the generation `promptId` back to card `id` as a saved Precise Reference when it lands. */
+  claimReference(
+    promptId: string,
+    id: string,
+    opts?: { description?: string; enablePr?: boolean },
+  ): void {
+    this.portraitClaims = {
+      ...this.portraitClaims,
+      [promptId]: {
+        cardId: id,
+        target: "reference",
+        ...(opts?.description ? { description: sanitizeRefDescription(opts.description) } : {}),
+        ...(opts?.enablePr !== undefined ? { enablePr: opts.enablePr } : {}),
+      },
+    };
+  }
+
+  /** Consume and return the portrait/reference claim for `promptId`, if any. */
+  resolveImageClaim(promptId: string): CharacterImageClaim | null {
+    const claim = this.portraitClaims[promptId];
+    if (claim === undefined) return null;
+    const { [promptId]: _, ...rest } = this.portraitClaims;
+    this.portraitClaims = rest;
+    return claim;
   }
 
   /** The card a finished or failed generation was a portrait for, consuming the claim. */
   resolvePortrait(promptId: string): string | null {
-    const id = this.portraitClaims[promptId];
-    if (id === undefined) return null;
-    const { [promptId]: _, ...rest } = this.portraitClaims;
-    this.portraitClaims = rest;
-    return id;
+    return this.resolveImageClaim(promptId)?.cardId ?? null;
   }
 
   /** Forget every portrait claim (the queue was cleared). */
@@ -412,10 +672,10 @@ class SavedCharactersStore {
     if (Object.keys(this.portraitClaims).length > 0) this.portraitClaims = {};
   }
 
-  /** Prompt ids of the portraits being made for card `id`. */
+  /** Prompt ids of the portraits or references being made for card `id`. */
   portraitPromptIds(id: string): string[] {
     return Object.entries(this.portraitClaims)
-      .filter(([, card]) => card === id)
+      .filter(([, claim]) => claim.cardId === id)
       .map(([promptId]) => promptId);
   }
 
