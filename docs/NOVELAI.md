@@ -142,43 +142,69 @@ generation). `estimateNovelAiCost()` adds it through `preciseReferences`,
 which callers set only when the selected model supports Precise Reference,
 since other models drop the references from the request.
 
-#### The reference encoder only accepts three canvases
+#### Reference image preparation (V4.5 vs V5)
 
-NovelAI's character-reference encoder takes `1024x1536`, `1536x1024` or
-`1472x1472` and nothing else. Anything else comes back as
-`Error encoding v4 director references: non-200 response: 400`, which is the
-whole of issue #665. Their own client letterboxes before it uploads, so
-`novelai::reference_canvas` does the same: pick the canvas whose aspect ratio
-is closest, scale the source to fit inside it, centre it on black. Alpha is
-flattened, because a transparent border reads as content to the encoder.
+- **V4.5 (`ReferenceCanvasMode::Letterbox`)** only accepts `1024x1536`,
+  `1536x1024` or `1472x1472`. Anything else comes back as
+  `Error encoding v4 director references: non-200 response: 400`, which is the
+  whole of issue #665. `novelai::reference_canvas::letterbox_reference()` picks
+  the closest canvas, scales to fit and centres on opaque black (transparent
+  borders read as content to the encoder).
+- **V5 (`ReferenceCanvasMode::Bucket`)** replaces those three canvases with a
+  97-entry aspect-ratio bucket table (`256x4096` through `4096x256`).
+  `novelai::reference_canvas::bucket_reference()` picks the closest bucket in
+  log-aspect space, scales to cover, and centre-crops while preserving real
+  alpha transparency and scrubbing NovelAI's column-major `stealth_pngcomp`
+  alpha LSB flips (`254 -> 255`, `1 -> 0`) when present.
 
-This runs in `apply_director_references()` rather than in the file picker, so
-it also repairs references already sitting in a user's settings and ones that
-arrive through the metadata import modal. An image that is already on an
-accepted canvas is returned untouched, so nothing is re-encoded per
-generation, and an image that will not decode is passed through unchanged: the
-request fails the way it used to instead of silently dropping the reference the
-user picked.
+Both run in `apply_director_references()` rather than in the file picker, so
+references already sitting in a user's settings and ones that arrive through
+the metadata import modal are fixed on the way out instead of only newly-picked
+files. Images that already sit on an accepted size (and on V5, carry no
+stealth-PNG alpha noise) are returned untouched, and undecodable inputs pass
+through unchanged so an error surfaces rather than silently dropping the
+reference.
 
 Vibe transfer does not go through this. Vibes are encoded server-side by
 `/ai/encode-vibe`, which accepts any size.
 
-#### Fidelity, not "information extracted"
+#### V5 vs V4.5 reference controls, outfits, infill and Effort
 
-The character-reference request needs five length-matched arrays, and shipping
-four of them is also a 400. `director_reference_information_extracted` is
-pinned to `1.0`, matching NovelAI's client, and the second slider is Fidelity,
-sent inverted as `director_reference_secondary_strength_values = 1 - fidelity`.
-The panel used to label that slider "Information extracted" and send nothing
-for it, which is the vibe-transfer knob, not this one.
+- **Fidelity vs Strength.** The character-reference request always sends five
+  length-matched arrays, and shipping four of them is a 400.
+  `director_reference_information_extracted` is pinned to `1.0`. On V4.5,
+  Strength runs `0..1` and Fidelity is sent inverted as
+  `director_reference_secondary_strength_values = 1 - fidelity`. V5 removed the
+  Fidelity slider (Strength extends to `0..5.0` in the slider, plus custom
+  editable values), so V5 sends `0.0` (`fidelity = 1.0`).
+- **Outfit Reference and "Prefer same outfit" (V5 only).** V5 adds
+  `costume` (Outfit) alongside `character`, `style`, and `character&style`, plus
+  a **Prefer same outfit** toggle on Character (`character_mainoutfit` vs
+  `character`) and Character & Style (`character&style` vs
+  `character&style_anyoutfit`). On V4.5, `costume` entries are skipped and the
+  `*_mainoutfit` / `*_anyoutfit` tags downgrade back to `character` /
+  `character&style`.
+- **Inpainting (`action = "infill"`).** V5 does not support Precise Reference
+  with inpainting/outpainting yet: `apply_director_references()` omits all
+  `director_reference_*` arrays on V5 `infill`, cost estimates exclude the 5
+  Anlas surcharge there, and the UI warns when references are attached. V4.5
+  still supports Precise Reference during infill.
+- **V5 Full Medium effort.** NovelAI requires High effort while Precise
+  References are active. When active Precise References apply (i.e. non-infill),
+  both the payload builder and UI force High effort (`nai-diffusion-5-full`,
+  user steps/sampler/UC/CFG rescale) without overwriting the stored `effort`
+  setting, so removing references restores Medium automatically.
 
 ### 2.6 Model capabilities are data, not branches
 
 `models.rs` carries per-model capabilities (`v4_prompt`, `precise_reference`,
-`vibe_transfer`, `character_negatives`, `inpainting_id`, `alpha`, `auto_text`,
-`max_characters`). V5's reference features are wired but set to `false`,
-because NovelAI has not shipped them. Turning them on later is a two-boolean
-change, not a code change.
+`precise_reference_inpainting`, `precise_reference_canvas`,
+`precise_reference_fidelity`, `precise_reference_strength_max`,
+`outfit_references`, `vibe_transfer`, `character_negatives`, `inpainting_id`,
+`alpha`, `auto_text`, `max_characters`). V5 Full and V5 Curated have
+`precise_reference: true` with V5's bucketing, outfit, strength, infill, and
+fidelity capabilities; `vibe_transfer` remains `false` on V5 until NovelAI
+ships it.
 
 The same table also encodes an upstream substitution: V5 Curated's own
 inpainting model is still training, and NovelAI's client quietly uses V4.5
@@ -910,6 +936,36 @@ The following dated entries preserve implementation notes and proposed manual
 checks. They are not evidence that every listed check was run, and some describe
 behavior that later releases changed. Use sections 1–6 and the wiki for current
 behavior. Automated tests cover local logic, not live NovelAI account requests.
+
+### 2026-11-25 - Precise Reference enabled for NovelAI V5 Full and V5 Curated
+
+**What changed.** NovelAI shipped Precise Reference for V5 Full and V5 Curated on
+2026-11-24. MooshieUI now enables `precise_reference` on both V5 models with the
+V5 protocol differences verified against `novelai.net`:
+
+- 97-entry aspect-ratio bucket cover-crop (`reference_canvas::bucket_reference`)
+  with preserved alpha and stealth-PNG alpha LSB cleanup (`254 -> 255`, `1 -> 0`).
+- New **Outfit** reference (`costume`) and **Prefer same outfit** toggle
+  (`character_mainoutfit` / `character&style_anyoutfit`), downgraded or skipped
+  cleanly on V4.5.
+- Strength range expanded to `0..5.0` (with clickable numeric editing); Fidelity
+  hidden on V5 and pinned to `0.0` secondary strength.
+- Precise Reference omitted on V5 inpainting/outpainting (`infill`) with an inline
+  warning, and V5 Full Medium effort automatically forced to High effort while
+  active Precise References apply (restoring Medium once cleared).
+- `face_detail::crop_request` clears `vibes` and `director_references` so per-face
+  img2img crops never bill 5 Anlas/ref/face or receive full-body/outfit cues.
+
+**Manual check.** With a live NovelAI key on V5 Full and V5 Curated:
+1. Generate with Character + Outfit + Style references (Strength > 1.0, e.g. 2.5)
+   and toggle **Prefer same outfit**; verify 5 Anlas/ref surcharge matches NovelAI.
+2. Enable Medium effort on V5 Full with an active Precise Reference; confirm UI
+   locks Medium to High effort and generation uses `nai-diffusion-5-full` (restoring
+   Medium when the reference is removed).
+3. Switch to Inpainting with a Precise Reference attached; confirm warning appears,
+   Anlas quote drops the reference surcharge, and infill succeeds cleanly.
+4. Click **Use** on a Characters card in V5 mode and verify the portrait attaches as
+   a Precise Reference.
 
 ### 2026-10-07 - Upscale moved to the image host as a 2x V5 upscale
 

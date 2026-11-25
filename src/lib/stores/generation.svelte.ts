@@ -79,6 +79,8 @@ import {
   novelAiMaxCharacters,
   NOVELAI_MAX_VIBES,
   NOVELAI_MAX_DIRECTOR_REFERENCES,
+  novelAiActiveDirectorReferenceCount,
+  novelAiEffortForcedByPreciseReference,
 } from "../utils/novelaiModels.js";
 import { translatePromptWeightSyntax } from "../utils/promptWeightSyntax.js";
 import {
@@ -1706,12 +1708,40 @@ class GenerationStore {
     return findNovelAiModel(this.checkpoint) ?? null;
   }
 
+  /** True when the current UI mode sends NovelAI `action: "infill"`. */
+  get isNovelAiInfill(): boolean {
+    return this._mode === "inpainting" || this._mode === "outpainting";
+  }
+
+  /** Number of Precise Reference entries that will actually be sent for the current model/mode. */
+  get novelAiActiveDirectorReferenceCount(): number {
+    return novelAiActiveDirectorReferenceCount(
+      this.novelAiModel,
+      this.novelaiSettings.director_references,
+      this.isNovelAiInfill,
+    );
+  }
+
+  /** True when active Precise References override V5 Full Medium effort back to High. */
+  get novelAiEffortForcedByPreciseReference(): boolean {
+    return novelAiEffortForcedByPreciseReference(
+      this.novelAiModel,
+      this.novelaiSettings.director_references,
+      this.isNovelAiInfill,
+    );
+  }
+
   /**
    * True when this generation runs on V5 Full's Medium effort checkpoint. The
-   * stored pick is kept on other models, so it comes back with V5 Full.
+   * stored pick is kept on other models and while Precise References force High,
+   * so Medium comes back once the references are removed.
    */
   get novelAiMediumEffort(): boolean {
-    return novelAiUsesMediumEffort(this.novelAiModel, this.novelaiSettings.effort);
+    return novelAiUsesMediumEffort(
+      this.novelAiModel,
+      this.novelaiSettings.effort,
+      this.novelAiEffortForcedByPreciseReference,
+    );
   }
 
   /**

@@ -6,6 +6,17 @@
 
 use serde::Serialize;
 
+/// How a model expects Precise Reference (`director_reference_images`) inputs
+/// to be sized before upload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceCanvasMode {
+    /// V4.5: fit inside 1024x1536, 1536x1024, or 1472x1472 on opaque black.
+    Letterbox,
+    /// V5: scale-to-cover and centre-crop onto the 97-entry aspect-ratio bucket table.
+    Bucket,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct NovelAiModel {
     /// API model id.
@@ -19,6 +30,17 @@ pub struct NovelAiModel {
     pub v4_prompt: bool,
     /// Supports Precise Reference (`director_reference_*`).
     pub precise_reference: bool,
+    /// Supports Precise Reference during inpainting (`action: "infill"`).
+    pub precise_reference_inpainting: bool,
+    /// How Precise Reference images are fitted before encoding.
+    pub precise_reference_canvas: ReferenceCanvasMode,
+    /// Exposes the Fidelity slider (`director_reference_secondary_strength_values`).
+    /// V5 removed Fidelity and pins secondary strength to 0 (fidelity = 1.0).
+    pub precise_reference_fidelity: bool,
+    /// Upper bound of the Precise Reference Strength slider in the UI (1.0 on V4.5, 5.0 on V5).
+    pub precise_reference_strength_max: f64,
+    /// Supports Outfit references (`"costume"`) and "Prefer same outfit" modes.
+    pub outfit_references: bool,
     /// Supports vibe transfer.
     pub vibe_transfer: bool,
     /// Per-character negative prompts.
@@ -70,16 +92,21 @@ pub const MEDIUM_EFFORT_SAMPLER: &str = "k_euler_ancestral";
 
 /// Every NovelAI model MooshieUI offers.
 ///
-/// V5 capability flags are false because NovelAI has not shipped Precise
-/// Reference or vibe transfer for V5 yet. The UI still builds both panels and
-/// renders them disabled, so turning them on is a two-boolean change.
+/// V5 has Precise Reference enabled (with bucketing, Outfit references, no
+/// Fidelity slider, strength up to 5.0, and no inpainting support yet); Vibe
+/// Transfer remains off on V5 until NovelAI ships it.
 pub const MODELS: &[NovelAiModel] = &[
     NovelAiModel {
         id: "nai-diffusion-5-full",
         label: "NovelAI V5 Full",
         inpainting_id: Some("nai-diffusion-5-full-inpainting"),
         v4_prompt: true,
-        precise_reference: false,
+        precise_reference: true,
+        precise_reference_inpainting: false,
+        precise_reference_canvas: ReferenceCanvasMode::Bucket,
+        precise_reference_fidelity: false,
+        precise_reference_strength_max: 5.0,
+        outfit_references: true,
         vibe_transfer: false,
         character_negatives: true,
         alpha: true,
@@ -99,7 +126,12 @@ pub const MODELS: &[NovelAiModel] = &[
         // back at `nai-diffusion-5-curated-inpainting` once it ships.
         inpainting_id: Some("nai-diffusion-4-5-curated-inpainting"),
         v4_prompt: true,
-        precise_reference: false,
+        precise_reference: true,
+        precise_reference_inpainting: false,
+        precise_reference_canvas: ReferenceCanvasMode::Bucket,
+        precise_reference_fidelity: false,
+        precise_reference_strength_max: 5.0,
+        outfit_references: true,
         vibe_transfer: false,
         character_negatives: true,
         alpha: true,
@@ -114,6 +146,11 @@ pub const MODELS: &[NovelAiModel] = &[
         inpainting_id: Some("nai-diffusion-4-5-full-inpainting"),
         v4_prompt: true,
         precise_reference: true,
+        precise_reference_inpainting: true,
+        precise_reference_canvas: ReferenceCanvasMode::Letterbox,
+        precise_reference_fidelity: true,
+        precise_reference_strength_max: 1.0,
+        outfit_references: false,
         vibe_transfer: true,
         character_negatives: true,
         alpha: false,
@@ -128,6 +165,11 @@ pub const MODELS: &[NovelAiModel] = &[
         inpainting_id: Some("nai-diffusion-4-full-inpainting"),
         v4_prompt: true,
         precise_reference: false,
+        precise_reference_inpainting: false,
+        precise_reference_canvas: ReferenceCanvasMode::Letterbox,
+        precise_reference_fidelity: false,
+        precise_reference_strength_max: 1.0,
+        outfit_references: false,
         vibe_transfer: true,
         character_negatives: true,
         alpha: false,
@@ -253,12 +295,28 @@ mod tests {
     }
 
     #[test]
-    fn v5_has_reference_features_wired_but_off() {
-        let v5 = find("nai-diffusion-5-full").unwrap();
-        assert!(!v5.precise_reference);
-        assert!(!v5.vibe_transfer);
+    fn v5_enables_precise_reference_while_vibe_remains_off() {
+        for id in ["nai-diffusion-5-full", "nai-diffusion-5-curated"] {
+            let v5 = find(id).unwrap();
+            assert!(v5.precise_reference, "{id}");
+            assert!(!v5.precise_reference_inpainting, "{id}");
+            assert_eq!(
+                v5.precise_reference_canvas,
+                ReferenceCanvasMode::Bucket,
+                "{id}"
+            );
+            assert!(!v5.precise_reference_fidelity, "{id}");
+            assert_eq!(v5.precise_reference_strength_max, 5.0, "{id}");
+            assert!(v5.outfit_references, "{id}");
+            assert!(!v5.vibe_transfer, "{id}");
+        }
         let v45 = find("nai-diffusion-4-5-full").unwrap();
         assert!(v45.precise_reference);
+        assert!(v45.precise_reference_inpainting);
+        assert_eq!(v45.precise_reference_canvas, ReferenceCanvasMode::Letterbox);
+        assert!(v45.precise_reference_fidelity);
+        assert_eq!(v45.precise_reference_strength_max, 1.0);
+        assert!(!v45.outfit_references);
         assert!(v45.vibe_transfer);
     }
 

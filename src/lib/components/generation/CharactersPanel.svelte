@@ -17,7 +17,7 @@
     savedCharacters,
     type SavedCharacter,
   } from "../../stores/savedCharacters.svelte.js";
-  import { NOVELAI_MAX_DIRECTOR_REFERENCES, naiV5Variant } from "../../utils/novelaiModels.js";
+  import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "../../utils/novelaiModels.js";
   import { saveTextFile } from "../../utils/api.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import type { CharacterMergeResult } from "../../utils/characterMerge.js";
@@ -135,17 +135,15 @@
     expanded = next;
   }
 
-  /** Whether Use can attach a card's picture as a Precise Reference (not V5 yet). */
   /** More of the prompt fits beside a taller picture. */
   const promptClamp = $derived(
     savedCharacters.cardSize >= 144 ? "line-clamp-6" : savedCharacters.cardSize >= 96 ? "line-clamp-4" : "line-clamp-2",
   );
   const negativeClamp = $derived(savedCharacters.cardSize >= 96 ? "line-clamp-2" : "line-clamp-1");
 
+  /** Whether Use can attach a card's picture as a Precise Reference. */
   const canReference = $derived(
-    generation.isNovelAi &&
-      generation.supportsNovelAiPreciseReference &&
-      naiV5Variant(generation.checkpoint) === null,
+    generation.isNovelAi && generation.supportsNovelAiPreciseReference,
   );
 
   /**

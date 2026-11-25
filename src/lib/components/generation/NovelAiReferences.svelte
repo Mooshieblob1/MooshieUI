@@ -11,15 +11,23 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import {
+    NAI_REF_OUTFIT,
     NOVELAI_MAX_VIBES,
     NOVELAI_MAX_DIRECTOR_REFERENCES,
+    NOVELAI_OUTFIT_REFERENCE_OPTION,
     NOVELAI_REFERENCE_DESCRIPTIONS,
+    novelAiReferenceBaseType,
+    novelAiReferencePreferSameOutfit,
+    novelAiReferenceSupportsSameOutfit,
+    novelAiSetPreferSameOutfit,
   } from "../../utils/novelaiModels.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { VIBE_ENCODE_COST } from "../../utils/novelaiCost.js";
+  import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import type { NovelAiVibe } from "../../types/index.js";
 
+  const uid = $props.id();
   let busy = $state(false);
 
   const vibes = $derived(generation.novelaiSettings.vibes);
@@ -37,6 +45,18 @@
       (vibe.encoded_model === generation.checkpoint &&
         vibe.encoded_information_extracted === vibe.information_extracted));
   const references = $derived(generation.novelaiSettings.director_references);
+  const novelAiModel = $derived(generation.novelAiModel);
+  const supportsOutfits = $derived(novelAiModel?.outfitReferences ?? false);
+  const showFidelity = $derived(novelAiModel?.preciseReferenceFidelity ?? false);
+  const strengthMax = $derived(novelAiModel?.preciseReferenceStrengthMax ?? 1);
+  const inpaintUnsupported = $derived(
+    references.length > 0 &&
+      generation.isNovelAiInfill &&
+      !(novelAiModel?.preciseReferenceInpainting ?? false),
+  );
+  const hasUnsupportedOutfitRef = $derived(
+    !supportsOutfits && references.some((r) => r.description === NAI_REF_OUTFIT),
+  );
   const anySupported = $derived(
     generation.supportsNovelAiVibeTransfer || generation.supportsNovelAiPreciseReference,
   );
@@ -76,7 +96,7 @@
     </div>
   {:else}
     {#if generation.supportsNovelAiPreciseReference}
-      <div class="space-y-2 {vibes.length > 0 ? 'opacity-50' : ''}">
+      <div class="space-y-2 {vibes.length > 0 || inpaintUnsupported ? 'opacity-50' : ''}">
         <div class="flex items-center justify-between">
           <span class="text-xs text-neutral-400">
             {locale.t("generation.novelai.reference.title")}
@@ -100,8 +120,27 @@
           </label>
         </div>
 
+        {#if inpaintUnsupported}
+          <p class="text-[11px] text-amber-400/90">
+            {locale.t("generation.novelai.reference.inpaint_unsupported")}
+          </p>
+        {/if}
+        {#if hasUnsupportedOutfitRef}
+          <p class="text-[11px] text-amber-400/90">
+            {locale.t("generation.novelai.reference.outfit_unsupported")}
+          </p>
+        {/if}
+
         {#each references as reference, index (index)}
-          <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2 flex gap-3">
+          {@const baseDescription = novelAiReferenceBaseType(reference.description)}
+          {@const outfitSkipped = !supportsOutfits && reference.description === NAI_REF_OUTFIT}
+          {@const strengthInputId = `${uid}-ref-strength-${index}`}
+          {@const fidelityInputId = `${uid}-ref-fidelity-${index}`}
+          <div
+            class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2 flex gap-3 {outfitSkipped
+              ? 'opacity-50'
+              : ''}"
+          >
             <img
               src={novelAiBase64ToSrc(reference.image)}
               alt=""
@@ -111,56 +150,112 @@
               <div class="flex items-center gap-2">
                 <select
                   class="flex-1 px-2 py-1 text-[11px] rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
-                  value={reference.description}
-                  onchange={(e) =>
-                    generation.updateNovelAiDirectorReference(index, {
-                      description: e.currentTarget.value,
-                    })}
+                  value={baseDescription}
+                  onchange={(e) => {
+                    const next = e.currentTarget.value;
+                    if (next !== baseDescription) {
+                      generation.updateNovelAiDirectorReference(index, { description: next });
+                    }
+                  }}
                 >
                   {#each NOVELAI_REFERENCE_DESCRIPTIONS as option (option.value)}
                     <option value={option.value}>{locale.t(option.labelKey)}</option>
                   {/each}
+                  {#if supportsOutfits || reference.description === NAI_REF_OUTFIT}
+                    <option value={NOVELAI_OUTFIT_REFERENCE_OPTION.value}>
+                      {locale.t(NOVELAI_OUTFIT_REFERENCE_OPTION.labelKey)}
+                    </option>
+                  {/if}
                 </select>
                 <button
+                  type="button"
                   class="px-2 py-0.5 text-[11px] rounded-md text-neutral-400 hover:text-red-400 hover:bg-neutral-800"
                   onclick={() => generation.removeNovelAiDirectorReference(index)}
                 >
                   {locale.t("generation.novelai.reference.remove")}
                 </button>
               </div>
-              <label class="block text-[11px] text-neutral-500">
-                {locale.t("generation.novelai.reference.strength")}
-                {reference.strength.toFixed(2)}
+              {#if supportsOutfits && novelAiReferenceSupportsSameOutfit(reference.description)}
+                <label class="flex items-center gap-1.5 text-[11px] text-neutral-300">
+                  <input
+                    type="checkbox"
+                    class="accent-indigo-500"
+                    checked={novelAiReferencePreferSameOutfit(reference.description)}
+                    onchange={(e) =>
+                      generation.updateNovelAiDirectorReference(index, {
+                        description: novelAiSetPreferSameOutfit(
+                          reference.description,
+                          e.currentTarget.checked,
+                        ),
+                      })}
+                  />
+                  {locale.t("generation.novelai.reference.prefer_same_outfit")}
+                  <InfoTip text={locale.t("generation.novelai.reference.prefer_same_outfit_tip")} />
+                </label>
+              {/if}
+              <div class="space-y-0.5">
+                <div class="flex items-center justify-between text-[11px] text-neutral-500">
+                  <label for={strengthInputId}>
+                    {locale.t("generation.novelai.reference.strength")}
+                  </label>
+                  <EditableValue
+                    value={reference.strength}
+                    min={-5}
+                    max={10}
+                    step={0.05}
+                    decimals={2}
+                    onchange={(v) =>
+                      generation.updateNovelAiDirectorReference(index, { strength: v })}
+                  />
+                </div>
                 <input
+                  id={strengthInputId}
                   type="range"
                   min="0"
-                  max="1"
+                  max={strengthMax}
                   step="0.05"
                   class="w-full accent-indigo-500"
-                  value={reference.strength}
+                  value={Math.min(strengthMax, Math.max(0, reference.strength))}
                   oninput={(e) =>
                     generation.updateNovelAiDirectorReference(index, {
                       strength: Number(e.currentTarget.value),
                     })}
                 />
-              </label>
-              <label class="block text-[11px] text-neutral-500">
-                {locale.t("generation.novelai.reference.fidelity")}
-                {reference.fidelity.toFixed(2)}
-                <InfoTip text={locale.t("generation.novelai.reference.fidelity_tip")} />
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  class="w-full accent-indigo-500"
-                  value={reference.fidelity}
-                  oninput={(e) =>
-                    generation.updateNovelAiDirectorReference(index, {
-                      fidelity: Number(e.currentTarget.value),
-                    })}
-                />
-              </label>
+              </div>
+              {#if showFidelity}
+                <div class="space-y-0.5">
+                  <div class="flex items-center justify-between text-[11px] text-neutral-500">
+                    <span>
+                      <label for={fidelityInputId}>
+                        {locale.t("generation.novelai.reference.fidelity")}
+                      </label>
+                      <InfoTip text={locale.t("generation.novelai.reference.fidelity_tip")} />
+                    </span>
+                    <EditableValue
+                      value={reference.fidelity}
+                      min={-1}
+                      max={1}
+                      step={0.05}
+                      decimals={2}
+                      onchange={(v) =>
+                        generation.updateNovelAiDirectorReference(index, { fidelity: v })}
+                    />
+                  </div>
+                  <input
+                    id={fidelityInputId}
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    class="w-full accent-indigo-500"
+                    value={Math.min(1, Math.max(0, reference.fidelity))}
+                    oninput={(e) =>
+                      generation.updateNovelAiDirectorReference(index, {
+                        fidelity: Number(e.currentTarget.value),
+                      })}
+                  />
+                </div>
+              {/if}
             </div>
           </div>
         {/each}

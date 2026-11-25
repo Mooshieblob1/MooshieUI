@@ -56,4 +56,10 @@
       <InfoTip text={locale.t("generation.novelai.image.add_original_desc")} />
     </label>
   {/if}
+
+  {#if generation.isNovelAiInfill && nai.director_references.length > 0 && !(generation.novelAiModel?.preciseReferenceInpainting ?? false)}
+    <p class="text-[11px] text-amber-400/90">
+      {locale.t("generation.novelai.reference.inpaint_unsupported")}
+    </p>
+  {/if}
 </div>

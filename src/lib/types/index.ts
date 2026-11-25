@@ -149,20 +149,25 @@ export interface NovelAiVibeEncoding {
   encoded_information_extracted?: number | null;
 }
 
-/** A Precise Reference (also called character reference). V4.5 only. */
+/** A Precise Reference (also called character reference) for V4.5 and V5. */
 export interface NovelAiDirectorReference {
   /**
    * Base64 PNG at whatever size the user picked. The Rust payload builder
-   * letterboxes it onto one of NovelAI's three accepted reference canvases.
+   * prepares it for the selected model (3-canvas letterbox on V4.5, 97-bucket
+   * cover-crop on V5).
    */
   image: string;
-  /** What to take from the reference, e.g. "character" or "character&style". */
+  /**
+   * What to take from the reference: "character", "character_mainoutfit",
+   * "style", "costume", "character&style", or "character&style_anyoutfit".
+   */
   description: string;
   strength: number;
   /**
    * How closely the result tracks the reference. NovelAI takes this inverted,
    * as `director_reference_secondary_strength_values`; the inversion happens
    * in Rust so the slider reads the way NovelAI's own client labels it.
+   * V5 removed the Fidelity slider and pins this to 1.0 (0.0 secondary strength).
    */
   fidelity: number;
 }

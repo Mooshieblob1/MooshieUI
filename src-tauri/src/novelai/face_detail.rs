@@ -337,6 +337,10 @@ fn crop_request(
         nai.noise = 0.0;
         nai.characters = Vec::new();
         nai.use_coords = false;
+        // References belong to the whole scene: sending them on every face crop
+        // would charge extra Anlas per face and inject full-body/outfit cues.
+        nai.vibes.clear();
+        nai.director_references.clear();
         // Nothing downstream of the face pass runs a second time.
         nai.local_post_process = false;
         nai.face_detail = Default::default();
@@ -656,5 +660,35 @@ mod tests {
         );
         assert_eq!(body["parameters"]["use_coords"], false);
         assert_eq!(body["action"], "img2img");
+    }
+
+    #[test]
+    fn the_crop_request_clears_vibes_and_director_references() {
+        use crate::novelai::params::{NovelAiDirectorReference, NovelAiVibe};
+
+        let mut base = params();
+        let nai = base.novelai.as_mut().unwrap();
+        nai.vibes = vec![NovelAiVibe {
+            encoding: Some("encoded".into()),
+            strength: 0.6,
+            ..Default::default()
+        }];
+        nai.director_references = vec![NovelAiDirectorReference {
+            image: "refpng".into(),
+            description: "character".into(),
+            strength: 1.0,
+            fidelity: 1.0,
+        }];
+
+        let out = crop_request(&base, &plan(), "portrait, close-up", "AAAA".into(), 0);
+        let out_nai = out.novelai.as_ref().unwrap();
+        assert!(out_nai.vibes.is_empty());
+        assert!(out_nai.director_references.is_empty());
+
+        let body = build_request(&out).expect("valid request");
+        assert!(body["parameters"].get("reference_image_multiple").is_none());
+        assert!(body["parameters"]
+            .get("director_reference_images")
+            .is_none());
     }
 }

@@ -16,7 +16,13 @@
 import { generation } from "../stores/generation.svelte.js";
 import { novelai } from "../stores/novelai.svelte.js";
 import { estimateNovelAiCost } from "./novelaiCost.js";
-import { naiV5Variant } from "./novelaiModels.js";
+import {
+  NOVELAI_MEDIUM_EFFORT,
+  naiV5Variant,
+  novelAiActiveDirectorReferenceCount,
+  novelAiEffortForcedByPreciseReference,
+  novelAiUsesMediumEffort,
+} from "./novelaiModels.js";
 
 export function estimateCurrentNovelAiCost(
   nSamples: number = generation.batchSize,
@@ -24,18 +30,31 @@ export function estimateCurrentNovelAiCost(
 ): number | null {
   if (!generation.isNovelAi) return null;
   const nai = generation.novelaiSettings;
+  const model = generation.novelAiModel;
+  const isInfill = !forceTxt2ImgStrength && generation.isNovelAiInfill;
+  const activeRefs = novelAiActiveDirectorReferenceCount(
+    model,
+    nai.director_references,
+    isInfill,
+  );
+  const forcedHigh = novelAiEffortForcedByPreciseReference(
+    model,
+    nai.director_references,
+    isInfill,
+  );
+  const mediumEffort = novelAiUsesMediumEffort(model, nai.effort, forcedHigh);
+  const steps = mediumEffort ? NOVELAI_MEDIUM_EFFORT.steps : generation.steps;
   return estimateNovelAiCost({
     width: generation.width,
     height: generation.height,
-    steps: generation.novelAiSteps,
-    mediumEffort: generation.novelAiMediumEffort,
+    steps,
+    mediumEffort,
     nSamples,
     strength: forceTxt2ImgStrength || generation.mode === "txt2img" ? 1 : nai.strength,
     isOpus: novelai.isOpus,
     // V5 has no Opus unlimited: with the allowance drained it bills in full.
     opusExhausted: naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
     vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
-    // Only a model with Precise Reference sends them; others drop them.
-    preciseReferences: generation.supportsNovelAiPreciseReference ? nai.director_references.length : 0,
+    preciseReferences: activeRefs,
   });
 }
