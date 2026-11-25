@@ -49,6 +49,7 @@
   );
   const ucPresets = $derived(novelAiModel?.ucPresets ?? []);
   const mediumEffort = $derived(generation.novelAiMediumEffort);
+  const effortForcedHigh = $derived(generation.novelAiEffortForcedByPreciseReference);
   // Medium sends Heavy whatever is stored, so the dropdown shows Heavy and the
   // stored pick waits for High.
   const ucPreset = $derived(
@@ -57,8 +58,10 @@
       : effectiveNovelAiUcPreset(novelAiModel, nai.uc_preset),
   );
   const efforts = [NAI_EFFORT_MEDIUM, NAI_EFFORT_HIGH] as const;
-  // Anything but "medium" is High, as on the backend.
-  const effortChoice = $derived(nai.effort === NAI_EFFORT_MEDIUM ? NAI_EFFORT_MEDIUM : NAI_EFFORT_HIGH);
+  // Anything but "medium" (or forced High by Precise Reference) is High, as on the backend.
+  const effortChoice = $derived(
+    !effortForcedHigh && nai.effort === NAI_EFFORT_MEDIUM ? NAI_EFFORT_MEDIUM : NAI_EFFORT_HIGH,
+  );
 
   /** One dropdown over two stored fields: the on/off toggle and the stack. */
   function pickQuality(choice: QualityChoice) {
@@ -136,9 +139,11 @@
         <span class="flex items-center gap-2">
           {locale.t("generation.novelai.advanced.effort")}
           <InfoTip
-            text={mediumEffort
-              ? `${locale.t("generation.novelai.advanced.effort_desc")}\n\n${locale.t("generation.novelai.advanced.effort_medium_note")}`
-              : locale.t("generation.novelai.advanced.effort_desc")}
+            text={effortForcedHigh
+              ? `${locale.t("generation.novelai.advanced.effort_desc")}\n\n${locale.t("generation.novelai.advanced.effort_forced_high")}`
+              : mediumEffort
+                ? `${locale.t("generation.novelai.advanced.effort_desc")}\n\n${locale.t("generation.novelai.advanced.effort_medium_note")}`
+                : locale.t("generation.novelai.advanced.effort_desc")}
           />
         </span>
         <div
@@ -148,13 +153,16 @@
         >
           {#each efforts as effort (effort)}
             {@const active = effortChoice === effort}
+            {@const disabled = effort === NAI_EFFORT_MEDIUM && effortForcedHigh}
             <button
               type="button"
               role="radio"
               aria-checked={active}
+              {disabled}
+              title={disabled ? locale.t("generation.novelai.advanced.effort_forced_high") : undefined}
               class="px-2 py-1 text-xs rounded transition-colors {active
                 ? 'bg-neutral-700 text-neutral-50'
-                : 'text-neutral-300 hover:bg-neutral-800'}"
+                : 'text-neutral-300 hover:bg-neutral-800'} disabled:opacity-50 disabled:cursor-not-allowed"
               onclick={() => generation.updateNovelAiSettings({ effort })}
             >
               {locale.t(`generation.novelai.advanced.effort_${effort}`)}

@@ -19,6 +19,14 @@ export interface NovelAiModelInfo {
   v4Prompt: boolean;
   /** Precise Reference, also called character reference. */
   preciseReference: boolean;
+  /** Supports Precise Reference during inpainting / outpainting (`action: "infill"`). */
+  preciseReferenceInpainting: boolean;
+  /** Exposes the Fidelity slider (V4.5); V5 removed Fidelity and pins it to 1.0. */
+  preciseReferenceFidelity: boolean;
+  /** Max value on the Precise Reference Strength slider (1 on V4.5, 5 on V5). */
+  preciseReferenceStrengthMax: number;
+  /** Supports Outfit references ("costume") and "Prefer same outfit" modes. */
+  outfitReferences: boolean;
   vibeTransfer: boolean;
   characterNegatives: boolean;
   /**
@@ -80,8 +88,9 @@ export const NOVELAI_MEDIUM_EFFORT = {
 export function novelAiUsesMediumEffort(
   model: NovelAiModelInfo | null | undefined,
   effort: string | null | undefined,
+  forcedHigh = false,
 ): boolean {
-  return !!model?.mediumEffort && effort === NAI_EFFORT_MEDIUM;
+  return !!model?.mediumEffort && !forcedHigh && effort === NAI_EFFORT_MEDIUM;
 }
 
 /** Stored `quality_preset` values. */
@@ -99,8 +108,9 @@ const ALL_UC_PRESETS: readonly number[] = [
 /**
  * Ordered newest-first, which is the order the model dropdown shows them in.
  *
- * V5's reference features are wired but off: NovelAI has not shipped them, and
- * flipping either boolean is all that is needed once it does.
+ * V5 supports Precise Reference (with outfits, strength up to 5, no Fidelity
+ * slider, and no inpainting support yet); Vibe Transfer remains off until
+ * NovelAI ships it for V5.
  */
 export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
   {
@@ -109,7 +119,11 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     label: "NovelAI V5 Full",
     inpaintingId: "nai-diffusion-5-full-inpainting",
     v4Prompt: true,
-    preciseReference: false,
+    preciseReference: true,
+    preciseReferenceInpainting: false,
+    preciseReferenceFidelity: false,
+    preciseReferenceStrengthMax: 5,
+    outfitReferences: true,
     vibeTransfer: false,
     characterNegatives: true,
     alpha: true,
@@ -128,7 +142,11 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     // at `nai-diffusion-5-curated-inpainting` once it ships.
     inpaintingId: "nai-diffusion-4-5-curated-inpainting",
     v4Prompt: true,
-    preciseReference: false,
+    preciseReference: true,
+    preciseReferenceInpainting: false,
+    preciseReferenceFidelity: false,
+    preciseReferenceStrengthMax: 5,
+    outfitReferences: true,
     vibeTransfer: false,
     characterNegatives: true,
     alpha: true,
@@ -145,6 +163,10 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     inpaintingId: "nai-diffusion-4-5-full-inpainting",
     v4Prompt: true,
     preciseReference: true,
+    preciseReferenceInpainting: true,
+    preciseReferenceFidelity: true,
+    preciseReferenceStrengthMax: 1,
+    outfitReferences: false,
     vibeTransfer: true,
     characterNegatives: true,
     alpha: false,
@@ -161,6 +183,10 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     inpaintingId: "nai-diffusion-4-full-inpainting",
     v4Prompt: true,
     preciseReference: false,
+    preciseReferenceInpainting: false,
+    preciseReferenceFidelity: false,
+    preciseReferenceStrengthMax: 1,
+    outfitReferences: false,
     vibeTransfer: true,
     characterNegatives: true,
     alpha: false,
@@ -376,14 +402,89 @@ export function novelAiMaxCharacters(id: string | null | undefined): number {
  * costs Anlas to discover.
  */
 export const NOVELAI_MAX_VIBES = 4;
-export const NOVELAI_MAX_DIRECTOR_REFERENCES = 4;
+export const NOVELAI_MAX_DIRECTOR_REFERENCES = 8;
+
+export const NAI_REF_CHARACTER = "character";
+export const NAI_REF_CHARACTER_MAIN_OUTFIT = "character_mainoutfit";
+export const NAI_REF_STYLE = "style";
+export const NAI_REF_OUTFIT = "costume";
+export const NAI_REF_CHARACTER_STYLE = "character&style";
+export const NAI_REF_CHARACTER_STYLE_ANY_OUTFIT = "character&style_anyoutfit";
 
 /** What a Precise Reference is allowed to take from its image. */
 export const NOVELAI_REFERENCE_DESCRIPTIONS = [
-  { value: "character", labelKey: "generation.novelai.reference.desc_character" },
-  { value: "style", labelKey: "generation.novelai.reference.desc_style" },
-  { value: "character&style", labelKey: "generation.novelai.reference.desc_character_style" },
+  { value: NAI_REF_CHARACTER, labelKey: "generation.novelai.reference.desc_character" },
+  { value: NAI_REF_STYLE, labelKey: "generation.novelai.reference.desc_style" },
+  { value: NAI_REF_CHARACTER_STYLE, labelKey: "generation.novelai.reference.desc_character_style" },
 ] as const;
+
+export const NOVELAI_OUTFIT_REFERENCE_OPTION = {
+  value: NAI_REF_OUTFIT,
+  labelKey: "generation.novelai.reference.desc_outfit",
+} as const;
+
+/** Map a stored description wire value to its dropdown base type. */
+export function novelAiReferenceBaseType(description: string): string {
+  if (description === NAI_REF_CHARACTER_MAIN_OUTFIT) return NAI_REF_CHARACTER;
+  if (description === NAI_REF_CHARACTER_STYLE_ANY_OUTFIT) return NAI_REF_CHARACTER_STYLE;
+  return description;
+}
+
+/** True for Character and Character & Style modes, which carry "Prefer same outfit" on V5. */
+export function novelAiReferenceSupportsSameOutfit(description: string): boolean {
+  const base = novelAiReferenceBaseType(description);
+  return base === NAI_REF_CHARACTER || base === NAI_REF_CHARACTER_STYLE;
+}
+
+/** Whether "Prefer same outfit" is currently active for this description wire value. */
+export function novelAiReferencePreferSameOutfit(description: string): boolean {
+  return (
+    description === NAI_REF_CHARACTER_MAIN_OUTFIT ||
+    description === NAI_REF_CHARACTER_STYLE
+  );
+}
+
+/** Apply the "Prefer same outfit" toggle while keeping the base reference type intact. */
+export function novelAiSetPreferSameOutfit(description: string, prefer: boolean): string {
+  const base = novelAiReferenceBaseType(description);
+  if (base === NAI_REF_CHARACTER) {
+    return prefer ? NAI_REF_CHARACTER_MAIN_OUTFIT : NAI_REF_CHARACTER;
+  }
+  if (base === NAI_REF_CHARACTER_STYLE) {
+    return prefer ? NAI_REF_CHARACTER_STYLE : NAI_REF_CHARACTER_STYLE_ANY_OUTFIT;
+  }
+  return description;
+}
+
+/** Count references that will actually be sent for the given model and action. */
+export function novelAiActiveDirectorReferenceCount(
+  model: NovelAiModelInfo | null | undefined,
+  references: readonly { image?: string; description: string }[],
+  isInfill: boolean,
+): number {
+  if (!model?.preciseReference || (isInfill && !model.preciseReferenceInpainting)) {
+    return 0;
+  }
+  let count = 0;
+  for (const r of references) {
+    if (r.image !== undefined && r.image.length === 0) continue;
+    if (!model.outfitReferences && r.description === NAI_REF_OUTFIT) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/** True when active Precise References force High effort on a Medium-effort-capable model. */
+export function novelAiEffortForcedByPreciseReference(
+  model: NovelAiModelInfo | null | undefined,
+  references: readonly { image?: string; description: string }[],
+  isInfill: boolean,
+): boolean {
+  return (
+    !!model?.mediumEffort &&
+    novelAiActiveDirectorReferenceCount(model, references, isInfill) > 0
+  );
+}
 
 /**
  * How close two character centres may sit before NovelAI calls them stacked.

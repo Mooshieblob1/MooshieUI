@@ -80,22 +80,25 @@ pub struct NovelAiVibe {
     pub encoded_information_extracted: Option<f64>,
 }
 
-/// A Precise Reference (`director_reference_*`) entry. V4.5 only.
+/// A Precise Reference (`director_reference_*`) entry (V4.5 and V5).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NovelAiDirectorReference {
     /// Base64 PNG at whatever size the user picked. `reference_canvas`
-    /// letterboxes it onto one of NovelAI's three accepted canvases while the
-    /// payload is built; the output canvas is unaffected.
+    /// prepares it according to the model (`letterbox` on V4.5, 97-bucket
+    /// cover-crop on V5) while the payload is built; the output canvas is
+    /// unaffected.
     #[serde(default)]
     pub image: String,
-    /// What to take from the reference, e.g. "character" or "character&style".
+    /// What to take from the reference: `"character"`, `"character_mainoutfit"`,
+    /// `"style"`, `"costume"`, `"character&style"`, or `"character&style_anyoutfit"`.
     #[serde(default = "default_reference_description")]
     pub description: String,
     #[serde(default = "default_reference_strength")]
     pub strength: f64,
     /// How closely the result tracks the reference. Reaches NovelAI inverted,
     /// as `director_reference_secondary_strength_values`, which is the form
-    /// their own client sends.
+    /// their own client sends. V5 removed the Fidelity slider and pins this
+    /// to 1.0 (`0.0` secondary strength).
     #[serde(default = "default_reference_fidelity")]
     pub fidelity: f64,
 }

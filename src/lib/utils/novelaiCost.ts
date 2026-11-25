@@ -39,8 +39,8 @@ export interface NovelAiCostInput {
    */
   mediumEffort?: boolean;
   /**
-   * Precise Reference images sent with the request (V4.5 only). Each one adds
-   * a flat charge to every image, Opus or not. Defaults to 0.
+   * Active Precise Reference images sent with the request (V4.5 and V5). Each
+   * one adds a flat charge to every image, Opus or not. Defaults to 0.
    */
   preciseReferences?: number;
 }

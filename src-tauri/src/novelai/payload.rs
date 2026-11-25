@@ -7,9 +7,15 @@
 use serde_json::{json, Map, Value};
 
 use super::models::{self, NovelAiModel};
-use super::params::{NovelAiCharacter, NovelAiParams};
+use super::params::{NovelAiCharacter, NovelAiDirectorReference, NovelAiParams};
 use super::presets::{self, QualityPreset, UcPreset};
 use super::reference_canvas;
+
+const REF_DESC_CHARACTER: &str = "character";
+const REF_DESC_CHARACTER_MAIN_OUTFIT: &str = "character_mainoutfit";
+const REF_DESC_OUTFIT: &str = "costume";
+const REF_DESC_CHARACTER_STYLE: &str = "character&style";
+const REF_DESC_CHARACTER_STYLE_ANY_OUTFIT: &str = "character&style_anyoutfit";
 
 /// The generic half of a generation, extracted from `GenerationParams`.
 #[derive(Debug, Clone, Default)]
@@ -36,14 +42,18 @@ pub fn build(
     nai: &NovelAiParams,
     model: &NovelAiModel,
 ) -> Result<Value, String> {
+    let action = normalise_action(&nai.action, input);
+    let has_active_refs = !active_director_references(nai, model, &action).is_empty();
+    // Precise Reference requires High effort; ignore Medium when active references
+    // apply so the user's stored effort setting does not need to be overwritten.
+    let medium_effort = models::uses_medium_effort(model, &nai.effort) && !has_active_refs;
     let medium;
-    let (input, nai) = if models::uses_medium_effort(model, &nai.effort) {
+    let (input, nai) = if medium_effort {
         medium = with_medium_effort(input, nai);
         (&medium.0, &medium.1)
     } else {
         (input, nai)
     };
-    let action = normalise_action(&nai.action, input);
     // Own-line first, then auto-text, transparency and quality, so the `Text:`
     // block ends up last and on its own line: the API wants it at the very end
     // of the prompt, after every tag, and reads `, Text:` as a comma to render.
@@ -183,12 +193,17 @@ pub fn build(
     }
 
     apply_vibes(&mut parameters, nai, model);
-    apply_director_references(&mut parameters, nai, model);
+    apply_director_references(&mut parameters, nai, model, &action);
     apply_image_action(&mut parameters, input, nai, &action)?;
 
+    let effective_effort = if medium_effort {
+        models::EFFORT_MEDIUM
+    } else {
+        models::EFFORT_HIGH
+    };
     Ok(json!({
         "input": positive_prompt,
-        "model": models::resolve_id(model, &action, &nai.effort),
+        "model": models::resolve_id(model, &action, effective_effort),
         "action": action,
         "parameters": Value::Object(parameters),
     }))
@@ -563,12 +578,41 @@ fn normalize_strengths(strengths: &mut [f64]) {
     }
 }
 
+fn active_director_references<'a>(
+    nai: &'a NovelAiParams,
+    model: &NovelAiModel,
+    action: &str,
+) -> Vec<&'a NovelAiDirectorReference> {
+    if !model.precise_reference || (action == "infill" && !model.precise_reference_inpainting) {
+        return Vec::new();
+    }
+    nai.director_references
+        .iter()
+        .filter(|r| {
+            !r.image.is_empty() && (model.outfit_references || r.description != REF_DESC_OUTFIT)
+        })
+        .collect()
+}
+
+fn normalise_reference_description<'a>(description: &'a str, model: &NovelAiModel) -> &'a str {
+    if model.outfit_references {
+        return description;
+    }
+    match description {
+        REF_DESC_CHARACTER_MAIN_OUTFIT => REF_DESC_CHARACTER,
+        REF_DESC_CHARACTER_STYLE_ANY_OUTFIT => REF_DESC_CHARACTER_STYLE,
+        _ => description,
+    }
+}
+
 fn apply_director_references(
     parameters: &mut Map<String, Value>,
     nai: &NovelAiParams,
     model: &NovelAiModel,
+    action: &str,
 ) {
-    if !model.precise_reference || nai.director_references.is_empty() {
+    let active = active_director_references(nai, model, action);
+    if active.is_empty() {
         return;
     }
     // NovelAI rejects a request carrying both systems, so the UI makes them
@@ -577,19 +621,14 @@ fn apply_director_references(
     parameters.remove("reference_strength_multiple");
     parameters.remove("normalize_reference_strength_multiple");
 
-    let active: Vec<_> = nai
-        .director_references
-        .iter()
-        .filter(|r| !r.image.is_empty())
-        .collect();
-    if active.is_empty() {
-        return;
-    }
     parameters.insert(
         "director_reference_images".into(),
         json!(active
             .iter()
-            .map(|r| json!(reference_canvas::letterbox_reference(&r.image)))
+            .map(|r| json!(reference_canvas::prepare_reference(
+                strip_data_url(&r.image),
+                model.precise_reference_canvas
+            )))
             .collect::<Vec<_>>()),
     );
     parameters.insert(
@@ -598,7 +637,7 @@ fn apply_director_references(
             .iter()
             .map(|r| json!({
                 "caption": {
-                    "base_caption": r.description,
+                    "base_caption": normalise_reference_description(&r.description, model),
                     "char_captions": [],
                 },
                 "legacy_uc": false,
@@ -617,12 +656,17 @@ fn apply_director_references(
         json!(active.iter().map(|r| json!(r.strength)).collect::<Vec<_>>()),
     );
     // NovelAI sends Fidelity inverted, and rejects the request outright when
-    // the array is missing.
+    // the array is missing. Models without Fidelity (V5) pin fidelity to 1.0
+    // (secondary strength = 0.0).
     parameters.insert(
         "director_reference_secondary_strength_values".into(),
         json!(active
             .iter()
-            .map(|r| json!(1.0 - r.fidelity))
+            .map(|r| json!(if model.precise_reference_fidelity {
+                1.0 - r.fidelity
+            } else {
+                0.0
+            }))
             .collect::<Vec<_>>()),
     );
 }
@@ -1756,5 +1800,218 @@ mod tests {
         let body = build(&input(), &n, v5()).unwrap();
         assert_eq!(body["model"], "nai-diffusion-5-full");
         assert_eq!(body["parameters"]["steps"], 23);
+    }
+
+    #[test]
+    fn v5_precise_reference_supports_outfits_strength_5_buckets_and_pins_fidelity() {
+        use image::{DynamicImage, ImageFormat, RgbImage};
+        use std::io::Cursor;
+
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(RgbImage::new(1024, 683))
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+        let engine = base64::engine::general_purpose::STANDARD;
+        let encoded = engine.encode(png.into_inner());
+
+        for model_id in ["nai-diffusion-5-full", "nai-diffusion-5-curated"] {
+            let model = models::find(model_id).unwrap();
+            let mut n = nai();
+            n.director_references = vec![
+                NovelAiDirectorReference {
+                    image: encoded.clone(),
+                    description: REF_DESC_OUTFIT.into(),
+                    strength: 2.5,
+                    fidelity: 0.25,
+                },
+                NovelAiDirectorReference {
+                    image: "refpng".into(),
+                    description: REF_DESC_CHARACTER_MAIN_OUTFIT.into(),
+                    strength: 1.5,
+                    fidelity: 0.4,
+                },
+                NovelAiDirectorReference {
+                    image: "refpng".into(),
+                    description: REF_DESC_CHARACTER_STYLE_ANY_OUTFIT.into(),
+                    strength: 3.0,
+                    fidelity: 0.0,
+                },
+            ];
+            let p = &build(&input(), &n, model).unwrap()["parameters"];
+            let sent = p["director_reference_images"][0].as_str().unwrap();
+            let decoded = image::load_from_memory(&engine.decode(sent).unwrap()).unwrap();
+            assert_eq!(
+                (decoded.width(), decoded.height()),
+                reference_canvas::choose_v5_bucket(1024, 683),
+                "{model_id}"
+            );
+            assert_eq!(
+                p["director_reference_descriptions"][0]["caption"]["base_caption"],
+                "costume"
+            );
+            assert_eq!(
+                p["director_reference_descriptions"][1]["caption"]["base_caption"],
+                "character_mainoutfit"
+            );
+            assert_eq!(
+                p["director_reference_descriptions"][2]["caption"]["base_caption"],
+                "character&style_anyoutfit"
+            );
+            assert_eq!(
+                p["director_reference_strength_values"],
+                json!([2.5, 1.5, 3.0])
+            );
+            assert_eq!(
+                p["director_reference_secondary_strength_values"],
+                json!([0.0, 0.0, 0.0])
+            );
+        }
+    }
+
+    #[test]
+    fn v5_infill_omits_precise_references() {
+        let mut n = nai();
+        n.action = "infill".into();
+        n.director_references = vec![NovelAiDirectorReference {
+            image: "refpng".into(),
+            description: REF_DESC_CHARACTER.into(),
+            strength: 1.0,
+            fidelity: 1.0,
+        }];
+        let mut i = input();
+        i.input_image = Some("AAAA".into());
+        i.mask_image = Some("BBBB".into());
+        let body = build(&i, &n, v5()).unwrap();
+        let p = &body["parameters"];
+        assert!(p.get("director_reference_images").is_none());
+        assert!(p.get("director_reference_descriptions").is_none());
+        assert!(p.get("director_reference_strength_values").is_none());
+        assert!(p
+            .get("director_reference_secondary_strength_values")
+            .is_none());
+    }
+
+    #[test]
+    fn v5_medium_effort_forces_high_while_precise_reference_is_active() {
+        let mut n = medium(presets_on(1));
+        n.sampler = "k_dpmpp_2m".into();
+        n.cfg_rescale = 0.4;
+        n.characters = vec![NovelAiCharacter {
+            prompt: "girl".into(),
+            negative_prompt: "hat".into(),
+            center: NovelAiCoord::from_grid(2, 2),
+            enabled: true,
+        }];
+        n.director_references = vec![NovelAiDirectorReference {
+            image: "refpng".into(),
+            description: REF_DESC_OUTFIT.into(),
+            strength: 1.2,
+            fidelity: 0.5,
+        }];
+        let mut i = input();
+        i.sampler = "k_dpmpp_2m".into();
+
+        // txt2img forces High effort and keeps user steps/sampler/UC/cfg_rescale.
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-5-full");
+        let p = &body["parameters"];
+        assert_eq!(p["steps"], 23);
+        assert_eq!(p["sampler"], "k_dpmpp_2m");
+        assert_eq!(p["cfg_rescale"], 0.4);
+        assert_eq!(p["characterPrompts"][0]["uc"], "hat");
+        assert!(p.get("director_reference_images").is_some());
+
+        // img2img also forces High effort.
+        n.action = "img2img".into();
+        i.input_image = Some("AAAA".into());
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-5-full");
+        assert_eq!(body["parameters"]["steps"], 23);
+        assert!(body["parameters"]
+            .get("director_reference_images")
+            .is_some());
+
+        // infill drops Precise Reference on V5, so Medium effort remains active.
+        n.action = "infill".into();
+        i.mask_image = Some("BBBB".into());
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-5-full-medium-inpainting");
+        assert_eq!(body["parameters"]["steps"], 14);
+        assert!(body["parameters"]
+            .get("director_reference_images")
+            .is_none());
+    }
+
+    #[test]
+    fn v45_skips_outfits_downgrades_same_outfit_flags_and_keeps_infill() {
+        let mut n = nai();
+        n.vibes = vec![NovelAiVibe {
+            encoding: Some("cached".into()),
+            ..Default::default()
+        }];
+        n.director_references = vec![
+            NovelAiDirectorReference {
+                image: "outfitpng".into(),
+                description: REF_DESC_OUTFIT.into(),
+                strength: 1.0,
+                fidelity: 0.5,
+            },
+            NovelAiDirectorReference {
+                image: "charpng".into(),
+                description: REF_DESC_CHARACTER_MAIN_OUTFIT.into(),
+                strength: 0.9,
+                fidelity: 0.75,
+            },
+            NovelAiDirectorReference {
+                image: "bothpng".into(),
+                description: REF_DESC_CHARACTER_STYLE_ANY_OUTFIT.into(),
+                strength: 0.8,
+                fidelity: 0.5,
+            },
+        ];
+        n.action = "infill".into();
+        let mut i = input();
+        i.input_image = Some("AAAA".into());
+        i.mask_image = Some("BBBB".into());
+
+        let body = build(&i, &n, v45()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-4-5-full-inpainting");
+        let p = &body["parameters"];
+        assert!(p.get("reference_image_multiple").is_none());
+        assert_eq!(
+            p["director_reference_images"],
+            json!(["charpng", "bothpng"])
+        );
+        assert_eq!(
+            p["director_reference_descriptions"][0]["caption"]["base_caption"],
+            "character"
+        );
+        assert_eq!(
+            p["director_reference_descriptions"][1]["caption"]["base_caption"],
+            "character&style"
+        );
+        assert_eq!(
+            p["director_reference_secondary_strength_values"],
+            json!([0.25, 0.5])
+        );
+    }
+
+    #[test]
+    fn v45_with_only_outfit_reference_keeps_vibe_and_omits_director_arrays() {
+        let mut n = nai();
+        n.vibes = vec![NovelAiVibe {
+            encoding: Some("cached".into()),
+            strength: 0.6,
+            ..Default::default()
+        }];
+        n.director_references = vec![NovelAiDirectorReference {
+            image: "outfitpng".into(),
+            description: REF_DESC_OUTFIT.into(),
+            strength: 1.0,
+            fidelity: 1.0,
+        }];
+        let p = &build(&input(), &n, v45()).unwrap()["parameters"];
+        assert_eq!(p["reference_image_multiple"], json!(["cached"]));
+        assert!(p.get("director_reference_images").is_none());
     }
 }

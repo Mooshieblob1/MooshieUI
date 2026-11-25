@@ -9,7 +9,13 @@ import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
 import { matchInstalledModel, parseLoraField } from "./imageInfoFields.js";
 import { models } from "../stores/models.svelte.js";
 import type { NovelAiCharacter } from "../types/index.js";
-import { NAI_EFFORT_HIGH, NAI_EFFORT_MEDIUM, novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
+import {
+  NAI_EFFORT_HIGH,
+  NAI_EFFORT_MEDIUM,
+  findNovelAiModel,
+  novelAiMaxCharacters,
+  isNovelAiModel,
+} from "./novelaiModels.js";
 import { novelaiImport } from "../stores/novelaiImport.svelte.js";
 import { NAI_QUALITY_FILLER } from "./naiPrompt.js";
 import type { ModelFamily } from "./modelFamily.js";
@@ -19,8 +25,10 @@ import type {
   NovelAiImportSource,
 } from "../stores/novelaiImport.svelte.js";
 
-/** The newest NovelAI model that still has vibe transfer and precise reference. */
+/** The newest NovelAI model that supports Vibe Transfer. */
 export const NOVELAI_REFERENCE_FALLBACK_MODEL = "nai-diffusion-4-5-full";
+/** The newest NovelAI model that supports Precise Reference. */
+export const NOVELAI_PRECISE_REFERENCE_FALLBACK_MODEL = "nai-diffusion-5-full";
 
 /** Section IDs that accept metadata drops */
 export type DroppableSectionId =
@@ -624,25 +632,30 @@ export function applyNovelAiSelection(
 }
 
 /**
- * Switch to a model that supports vibe transfer and precise reference.
+ * Switch to a model that supports the requested reference system.
  *
- * V5 dropped both, so picking either from the dialog moves the panel to V4.5
- * Full, which is the newest model that still has them. A model that already
- * supports the feature is left alone.
+ * V5 supports Precise Reference but not Vibe Transfer, so picking Vibe Transfer
+ * on V5 moves to V4.5 Full while Precise Reference moves non-supporting models
+ * to V5 Full. A model that already supports the feature is left alone. Returns
+ * the new model's label when switched, or null when left unchanged.
  */
-export function ensureNovelAiReferenceModel(kind: "vibe" | "precise"): boolean {
+export function ensureNovelAiReferenceModel(kind: "vibe" | "precise"): string | null {
   const supported =
     kind === "vibe"
       ? generation.supportsNovelAiVibeTransfer
       : generation.supportsNovelAiPreciseReference;
-  if (supported) return false;
+  if (supported) return null;
+  const target =
+    kind === "precise"
+      ? NOVELAI_PRECISE_REFERENCE_FALLBACK_MODEL
+      : NOVELAI_REFERENCE_FALLBACK_MODEL;
   if (isNovelAiModel(generation.checkpoint)) {
-    generation.checkpoint = NOVELAI_REFERENCE_FALLBACK_MODEL;
+    generation.checkpoint = target;
     generation.saveSettings();
   } else {
-    generation.selectNovelAiModel(NOVELAI_REFERENCE_FALLBACK_MODEL);
+    generation.selectNovelAiModel(target);
   }
-  return true;
+  return findNovelAiModel(target)?.label ?? target;
 }
 
 /** Extract PNG bytes from a File or DataTransferItem. */

@@ -422,6 +422,45 @@ fn log_character_summary(body: &serde_json::Value) {
     );
 }
 
+/// One line per Precise Reference-carrying request; image bytes are never logged.
+fn log_director_reference_summary(body: &serde_json::Value) {
+    let Some(parameters) = body.get("parameters") else {
+        return;
+    };
+    let Some(images) = parameters
+        .get("director_reference_images")
+        .and_then(|v| v.as_array())
+    else {
+        return;
+    };
+    let null = serde_json::Value::Null;
+    let descs: Vec<&str> = parameters
+        .get("director_reference_descriptions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|d| {
+                    d.pointer("/caption/base_caption")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("?")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    log::info!(
+        "NovelAI precise reference: model={} count={} descriptions={:?} strengths={} secondary_strengths={}",
+        body.get("model").unwrap_or(&null),
+        images.len(),
+        descs,
+        parameters
+            .get("director_reference_strength_values")
+            .unwrap_or(&null),
+        parameters
+            .get("director_reference_secondary_strength_values")
+            .unwrap_or(&null)
+    );
+}
+
 /// Hand the freshly minted tokens back to the client that asked for them.
 ///
 /// The client stores them next to the image it sent, so the same vibe costs
@@ -994,6 +1033,7 @@ async fn run_inner(
     let body = build_request(resolved)?;
     log_vibe_summary(&body);
     log_character_summary(&body);
+    log_director_reference_summary(&body);
     // Read off the body rather than `params`: Medium effort pins its own step
     // count, and the bar has to fill at the step NovelAI actually stops on.
     let steps = body

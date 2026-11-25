@@ -79,9 +79,9 @@
         gallery.showToast(locale.t("metadata.toast.read_failed"), "error");
         return;
       }
-      // V5 has neither feature, so picking one moves the panel to V4.5 Full
-      // before the image is attached, or the reference lists stay hidden.
-      const switched = ensureNovelAiReferenceModel(kind);
+      // Move to a model supporting the requested reference type if the active
+      // model lacks it (V5 supports Precise Reference; Vibe Transfer moves to V4.5 Full).
+      const switchedModel = ensureNovelAiReferenceModel(kind);
       const base64 = await fileToNovelAiBase64(file);
       if (!base64) {
         gallery.showToast(locale.t("metadata.toast.read_failed"), "error");
@@ -89,8 +89,11 @@
       }
       if (kind === "vibe") generation.addNovelAiVibe(base64);
       else generation.addNovelAiDirectorReference(base64);
-      if (switched) {
-        gallery.showToast(locale.t("novelai.import.toast.switched_model"), "info");
+      if (switchedModel) {
+        gallery.showToast(
+          locale.t("novelai.import.toast.switched_model_named", { model: switchedModel }),
+          "info",
+        );
       }
       novelaiImport.close();
     } catch (err) {

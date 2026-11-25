@@ -38,7 +38,13 @@
     loadOutputImageForGenerationInput,
   } from "../../utils/galleryActions.js";
   import { estimateNovelAiCost, novelAiUpscaleCost } from "../../utils/novelaiCost.js";
-  import { naiV5Variant } from "../../utils/novelaiModels.js";
+  import {
+    NOVELAI_MEDIUM_EFFORT,
+    naiV5Variant,
+    novelAiActiveDirectorReferenceCount,
+    novelAiEffortForcedByPreciseReference,
+    novelAiUsesMediumEffort,
+  } from "../../utils/novelaiModels.js";
   import {
     MAGNITUDE_MAX,
     MAGNITUDE_MIN,
@@ -142,20 +148,28 @@
     samples = 1,
   ): number {
     if (!(size.width > 0 && size.height > 0)) return 0;
+    const model = generation.novelAiModel;
+    const refs = generation.novelaiSettings.director_references;
+    // Enhance and Variations submit as img2img, never infill.
+    const activeRefs = novelAiActiveDirectorReferenceCount(model, refs, false);
+    const forcedHigh = novelAiEffortForcedByPreciseReference(model, refs, false);
+    const mediumEffort = novelAiUsesMediumEffort(
+      model,
+      generation.novelaiSettings.effort,
+      forcedHigh,
+    );
     return estimateNovelAiCost({
       width: size.width,
       height: size.height,
-      steps: generation.novelAiSteps,
-      mediumEffort: generation.novelAiMediumEffort,
+      steps: mediumEffort ? NOVELAI_MEDIUM_EFFORT.steps : generation.steps,
+      mediumEffort,
       nSamples: samples,
       strength,
       isOpus: novelai.isOpus,
       opusExhausted:
         naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
       vibeEncodes: generation.novelaiSettings.vibes.filter((v) => !v.encoding).length,
-      preciseReferences: generation.supportsNovelAiPreciseReference
-        ? generation.novelaiSettings.director_references.length
-        : 0,
+      preciseReferences: activeRefs,
     });
   }
 

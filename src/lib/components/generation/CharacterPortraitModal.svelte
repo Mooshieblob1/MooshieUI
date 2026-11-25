@@ -35,7 +35,11 @@
   import { defaultExpression, negativeForExpression, withExpression } from "../../utils/portraitExpression.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
-  import { naiV5Variant } from "../../utils/novelaiModels.js";
+  import {
+    NOVELAI_MEDIUM_EFFORT,
+    naiV5Variant,
+    novelAiUsesMediumEffort,
+  } from "../../utils/novelaiModels.js";
 
   interface Props {
     character: SavedCharacter;
@@ -128,11 +132,16 @@
   /** Anlas for the portrait on NovelAI, or null elsewhere. */
   const anlas = $derived.by(() => {
     if (!generation.isNovelAi) return null;
+    // Portraits clear director_references, so panel references do not force High effort here.
+    const portraitMedium = novelAiUsesMediumEffort(
+      generation.novelAiModel,
+      generation.novelaiSettings.effort,
+    );
     return estimateNovelAiCost({
       width: size.width,
       height: size.height,
-      steps: generation.novelAiSteps,
-      mediumEffort: generation.novelAiMediumEffort,
+      steps: portraitMedium ? NOVELAI_MEDIUM_EFFORT.steps : generation.steps,
+      mediumEffort: portraitMedium,
       nSamples: 1,
       strength: 1,
       isOpus: novelai.isOpus,
