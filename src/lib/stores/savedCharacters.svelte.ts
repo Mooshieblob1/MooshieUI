@@ -28,6 +28,11 @@ import { sanitizeSeen, withSamples, type SamplePictures } from "../utils/sampleC
 import yueThumbnail from "../assets/characters/yue-thumbnail.webp?inline";
 import yueReference from "../assets/characters/yue-reference.webp?inline";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
+import {
+  patchAttachedCharacterReference,
+  removeAttachedCharacterReferences,
+  syncAttachedCharacterReferences,
+} from "../utils/characterPreciseRef.js";
 
 const STORAGE_KEY = "mooshieui.savedCharacters.v1";
 /** Per-device view setting, kept out of the synced cards. */
@@ -411,10 +416,15 @@ class SavedCharactersStore {
   }
 
   setThumbnail(id: string, thumbnail: string | null, reference: string | null = null): void {
+    const prevCard = this.characters.find((c) => c.id === id);
     this.characters = this.characters.map((c) =>
       c.id === id ? { ...c, thumbnail, reference: thumbnail ? reference : null } : c,
     );
     this.saveSettings();
+    const updated = this.characters.find((c) => c.id === id);
+    if (prevCard && updated) {
+      void syncAttachedCharacterReferences(updated, { previousSources: [prevCard] });
+    }
   }
 
   /** Enable or disable automatic Precise Reference attachment for `id` on Use & Enhance. */
@@ -425,6 +435,11 @@ class SavedCharactersStore {
       c.id === id ? { ...c, usePreciseReference: enabled } : c,
     );
     this.saveSettings();
+    if (!enabled) {
+      void removeAttachedCharacterReferences(id, {
+        legacySources: [card, ...(card.preciseReferences ?? [])],
+      });
+    }
   }
 
   /**
@@ -444,6 +459,7 @@ class SavedCharactersStore {
   ): { added: CharacterPreciseReference[]; duplicates: number; hitCap: boolean } {
     const card = this.characters.find((c) => c.id === id);
     if (!card) return { added: [], duplicates: 0, hitCap: false };
+    const previousSources = [card, ...(card.preciseReferences ?? [])];
     const existing = card.preciseReferences ?? [];
     const nextRefs = [...existing];
     const added: CharacterPreciseReference[] = [];
@@ -484,6 +500,10 @@ class SavedCharactersStore {
           : c,
       );
       this.saveSettings();
+      const updated = this.characters.find((c) => c.id === id);
+      if (updated) {
+        void syncAttachedCharacterReferences(updated, { previousSources });
+      }
     }
     return { added, duplicates, hitCap };
   }
@@ -517,11 +537,13 @@ class SavedCharactersStore {
       };
     });
     this.saveSettings();
+    patchAttachedCharacterReference(id, refId, patch);
   }
 
   removePreciseReference(id: string, refId: string): void {
     const card = this.characters.find((c) => c.id === id);
-    if (!card?.preciseReferences?.some((r) => r.id === refId)) return;
+    const removed = card?.preciseReferences?.find((r) => r.id === refId);
+    if (!card || !removed) return;
     this.characters = this.characters.map((c) => {
       if (c.id !== id || !c.preciseReferences) return c;
       const remaining = c.preciseReferences.filter((r) => r.id !== refId);
@@ -531,11 +553,13 @@ class SavedCharactersStore {
       return next;
     });
     this.saveSettings();
+    void removeAttachedCharacterReferences(id, { refId, legacySources: [removed] });
   }
 
   clearPreciseReferences(id: string): void {
     const card = this.characters.find((c) => c.id === id);
     if (!card?.preciseReferences?.length) return;
+    const prevRefs = [...card.preciseReferences];
     this.characters = this.characters.map((c) => {
       if (c.id !== id) return c;
       const next: SavedCharacter = { ...c };
@@ -543,12 +567,14 @@ class SavedCharactersStore {
       return next;
     });
     this.saveSettings();
+    void removeAttachedCharacterReferences(id, { legacySources: prevRefs });
   }
 
   /** Replace card `id`'s Precise Reference list in full (for lossless Undo). */
   setPreciseReferences(id: string, refs: readonly CharacterPreciseReference[]): void {
     const card = this.characters.find((c) => c.id === id);
     if (!card) return;
+    const previousSources = [card, ...(card.preciseReferences ?? [])];
     const clean = sanitizePreciseReferences(refs);
     this.characters = this.characters.map((c) => {
       if (c.id !== id) return c;
@@ -558,6 +584,10 @@ class SavedCharactersStore {
       return next;
     });
     this.saveSettings();
+    const updated = this.characters.find((c) => c.id === id);
+    if (updated) {
+      void syncAttachedCharacterReferences(updated, { previousSources });
+    }
   }
 
   /**
@@ -684,7 +714,8 @@ class SavedCharactersStore {
    * copy of the memory they were sharing.
    */
   remove(id: string): void {
-    const memory = this.characters.find((c) => c.id === id)?.memory ?? [];
+    const removedCard = this.characters.find((c) => c.id === id);
+    const memory = removedCard?.memory ?? [];
     this.characters = this.characters
       .filter((c) => c.id !== id)
       .map((c) =>
@@ -693,6 +724,11 @@ class SavedCharactersStore {
           : c,
       );
     this.saveSettings();
+    if (removedCard) {
+      void removeAttachedCharacterReferences(id, {
+        legacySources: [removedCard, ...(removedCard.preciseReferences ?? [])],
+      });
+    }
   }
 
   /** Variants of a top-level card, oldest first. */

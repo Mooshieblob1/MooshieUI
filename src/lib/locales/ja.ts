@@ -4983,6 +4983,7 @@ const ja: Record<string, string> = {
   "generation.novelai.reference.image_enhance_active": "Precise Reference が有効です（{count} 件: {modes}）。この処理にも含まれます（+{anlas} Anlas）。",
   "generation.novelai.reference.style_creator_active": "Precise Reference が有効です（{count} 件）。各カードに適用されます（カードごとに +{anlas} Anlas）。",
   "generation.novelai.reference.forced_high_note": "Precise Reference が有効な間は High effort が必須になります。",
+  "generation.novelai.reference.from_character_tip": "保存済みキャラクターから添付: {name}",
   "characters.editor.references": "リファレンス",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "Precise Reference 自動添付が有効です（{count} 枚、+{anlas} Anlas）。クリックでオフ。",

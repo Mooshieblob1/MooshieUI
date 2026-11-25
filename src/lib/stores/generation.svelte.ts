@@ -2757,7 +2757,14 @@ class GenerationStore {
   addNovelAiDirectorReference(
     image: string,
     description = "character",
-    opts?: { strength?: number; fidelity?: number; enabled?: boolean },
+    opts?: {
+      strength?: number;
+      fidelity?: number;
+      enabled?: boolean;
+      sourceCharacterId?: string;
+      sourceRefId?: string;
+      autoAttached?: boolean;
+    },
   ) {
     if (this.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) return;
     const strengthMax = this.novelAiModel?.preciseReferenceStrengthMax ?? 1;
@@ -2772,6 +2779,9 @@ class GenerationStore {
           strength: Math.max(0, Math.min(strengthMax, rawStrength)),
           fidelity: Math.max(0, Math.min(1, rawFidelity)),
           enabled: opts?.enabled ?? true,
+          ...(opts?.sourceCharacterId ? { source_character_id: opts.sourceCharacterId } : {}),
+          ...(opts?.sourceRefId ? { source_ref_id: opts.sourceRefId } : {}),
+          ...(opts?.autoAttached !== undefined ? { auto_attached: opts.autoAttached } : {}),
         },
       ],
       vibes: [],
@@ -4026,6 +4036,15 @@ class GenerationStore {
           : "generate";
     return {
       ...this.novelaiSettings,
+      director_references: this.novelaiSettings.director_references.map(
+        ({ image, description, strength, fidelity, enabled }) => ({
+          image,
+          description,
+          strength,
+          fidelity,
+          enabled,
+        }),
+      ),
       face_detail: {
         ...this.novelaiSettings.face_detail,
         steps: this.novelAiFaceDetailSteps,

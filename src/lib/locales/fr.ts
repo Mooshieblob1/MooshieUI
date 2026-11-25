@@ -4984,6 +4984,7 @@ const fr: Record<string, string> = {
   "generation.novelai.reference.image_enhance_active": "Precise Reference est actif ({count} : {modes}) et inclus dans cette passe (+{anlas} Anlas).",
   "generation.novelai.reference.style_creator_active": "Precise Reference est actif ({count}) sur chaque carte (+{anlas} Anlas par carte).",
   "generation.novelai.reference.forced_high_note": "High effort est requis lorsque Precise Reference est actif.",
+  "generation.novelai.reference.from_character_tip": "Joint depuis le personnage enregistré : {name}",
   "characters.editor.references": "Références",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "Ajout auto Precise Reference activé ({count} image(s), +{anlas} Anlas). Cliquer pour désactiver.",
