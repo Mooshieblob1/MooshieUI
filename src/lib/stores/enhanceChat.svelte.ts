@@ -154,6 +154,17 @@ function rowPositions(p: NaiEnhancePending): (string | null)[] {
   });
 }
 
+interface CurateSettingsSnapshot {
+  effort: string;
+  quality_toggle: boolean;
+  quality_preset: number;
+  uc_preset: number;
+  sampler: string;
+  noise_schedule: string;
+  cfg_rescale: number;
+  variety_plus: boolean;
+}
+
 interface UndoSnapshot {
   positivePrompt: string;
   negativePrompt: string;
@@ -166,7 +177,8 @@ interface UndoSnapshot {
     width: number;
     height: number;
     batchSize: number;
-    novelaiSettings: NovelAiSettings;
+    /** Only the Curate-managed NovelAI fields so Undo never overwrites Precise References or Vibes. */
+    novelaiFields: CurateSettingsSnapshot;
   };
 }
 
@@ -1042,7 +1054,16 @@ class EnhanceChatStore {
             width: generation.width,
             height: generation.height,
             batchSize: generation.batchSize,
-            novelaiSettings: $state.snapshot(generation.novelaiSettings),
+            novelaiFields: {
+              effort: generation.novelaiSettings.effort,
+              quality_toggle: generation.novelaiSettings.quality_toggle,
+              quality_preset: generation.novelaiSettings.quality_preset,
+              uc_preset: generation.novelaiSettings.uc_preset,
+              sampler: generation.novelaiSettings.sampler,
+              noise_schedule: generation.novelaiSettings.noise_schedule,
+              cfg_rescale: generation.novelaiSettings.cfg_rescale,
+              variety_plus: generation.novelaiSettings.variety_plus,
+            },
           }
         : undefined,
     };
@@ -1083,7 +1104,7 @@ class EnhanceChatStore {
         generation.width = prev.width;
         generation.height = prev.height;
         generation.batchSize = prev.batchSize;
-        generation.updateNovelAiSettings(prev.novelaiSettings);
+        generation.updateNovelAiSettings(prev.novelaiFields);
       }
       generation.positivePrompt = snap.positivePrompt;
       generation.negativePrompt = snap.negativePrompt;

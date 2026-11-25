@@ -34,13 +34,13 @@
   import LayerPanel from "../canvas/layers/LayerPanel.svelte";
   import { canvas } from "../../stores/canvas.svelte.js";
   import { uploadImage, uploadImageBytes, getOutputImage, readClipboardImageSafe } from "../../utils/api.js";
-  import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
+  import { addOutputImageAsPreciseReference, uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import {
     normalizeGenerationInputBytes,
     prepareOutputImageForEditMode,
     type NormalizedInputImage,
   } from "../../utils/editImagePreparation.js";
-  import { gallery } from "../../stores/gallery.svelte.js";
+  import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
   import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
@@ -863,6 +863,9 @@
       ...(directorToolsAvailable()
         ? [{ label: locale.t('novelai.director.action'), action: () => directorTools.open(image, image.thumbnailUrl || image.url || null) }]
         : []),
+      ...(generation.isNovelAi && generation.supportsNovelAiPreciseReference && !isVideoImage(image)
+        ? [{ label: locale.t('generation.novelai.reference.send_to'), action: () => void addOutputImageAsPreciseReference(image) }]
+        : []),
       { label: "", action: () => {}, separator: true },
       { label: comparePinLabel(image), action: () => gallery.toggleComparePin(image) },
       { label: "", action: () => {}, separator: true },
@@ -1527,7 +1530,8 @@
         metadataDropTarget = null;
         metadataDropCounters = {};
 
-        const imgPath = payload.paths.find(isImagePath);
+        const imgPaths = payload.paths.filter(isImagePath);
+        const imgPath = imgPaths[0];
         if (!imgPath) return;
 
         if (section) {
@@ -1554,10 +1558,10 @@
             } else if (zone === "mask-input") {
               await handleMaskDropPath(imgPath, filename);
             } else {
-              // Dispatch custom event for child components with file path
+              // Dispatch custom event for child components with file path(s)
               zoneEl.dispatchEvent(new CustomEvent("tauri-file-drop", {
                 bubbles: false,
-                detail: { path: imgPath, filename },
+                detail: { path: imgPath, paths: imgPaths, filename },
               }));
             }
           } catch (err) {

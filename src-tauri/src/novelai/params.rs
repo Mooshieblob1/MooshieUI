@@ -81,7 +81,7 @@ pub struct NovelAiVibe {
 }
 
 /// A Precise Reference (`director_reference_*`) entry (V4.5 and V5).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NovelAiDirectorReference {
     /// Base64 PNG at whatever size the user picked. `reference_canvas`
     /// prepares it according to the model (`letterbox` on V4.5, 97-bucket
@@ -101,6 +101,22 @@ pub struct NovelAiDirectorReference {
     /// to 1.0 (`0.0` secondary strength).
     #[serde(default = "default_reference_fidelity")]
     pub fidelity: f64,
+    /// Whether this entry is included when generating. Disabled entries stay
+    /// in the UI with their settings without being sent or billed.
+    #[serde(default = "default_reference_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for NovelAiDirectorReference {
+    fn default() -> Self {
+        Self {
+            image: String::new(),
+            description: default_reference_description(),
+            strength: default_reference_strength(),
+            fidelity: default_reference_fidelity(),
+            enabled: default_reference_enabled(),
+        }
+    }
 }
 
 /// The NovelAI-mode face detailer block.
@@ -407,6 +423,10 @@ fn default_reference_fidelity() -> f64 {
 
 fn default_reference_description() -> String {
     "character".to_string()
+}
+
+fn default_reference_enabled() -> bool {
+    true
 }
 
 fn default_img2img_strength() -> f64 {

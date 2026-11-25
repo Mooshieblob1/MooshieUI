@@ -168,6 +168,37 @@
     gallery.showToast(locale.t("characters.toast.reference_added", { name: character.name }), "success");
   }
 
+  /** Attach the card's picture as a Precise Reference without altering the prompt. */
+  async function attachReferenceOnly(character: SavedCharacter) {
+    moreMenuId = null;
+    if (!canReference || !(character.reference ?? character.thumbnail)) return;
+    const nai = generation.novelaiSettings;
+    if (nai.vibes.length > 0) {
+      gallery.showToast(locale.t("characters.toast.reference_only_vibes", { name: character.name }), "info");
+      return;
+    }
+    if (nai.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+      gallery.showToast(
+        locale.t("characters.toast.reference_only_full", {
+          max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+        }),
+        "info",
+      );
+      return;
+    }
+    const base64 = await characterReferenceBase64(character);
+    if (!base64) {
+      gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+      return;
+    }
+    if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+      gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+      return;
+    }
+    generation.addNovelAiDirectorReference(base64);
+    gallery.showToast(locale.t("characters.toast.reference_only_added", { name: character.name }), "success");
+  }
+
   /** Start a variant as a copy of the card and open it for editing. */
   function addVariant(character: SavedCharacter) {
     moreMenuId = null;
@@ -808,6 +839,13 @@
           class="px-2 py-0.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
           onclick={() => addVariant(character)}
         >{locale.t("characters.variants.add")}</button>
+        {#if canReference && (character.reference ?? character.thumbnail)}
+          <button
+            type="button"
+            class="px-2 py-0.5 rounded border border-indigo-500/50 text-indigo-300 hover:bg-indigo-500/15"
+            onclick={() => void attachReferenceOnly(character)}
+          >{locale.t("characters.use_as_reference")}</button>
+        {/if}
         <label class="flex items-center gap-1 text-neutral-400">
           {locale.t("characters.variants.of")}
           <select

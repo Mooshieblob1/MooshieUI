@@ -12,8 +12,10 @@ import {
   NOVELAI_MODELS,
   findNovelAiModel,
   novelAiActiveDirectorReferenceCount,
+  novelAiActiveDirectorReferenceSummary,
   novelAiEffortForcedByPreciseReference,
   novelAiReferenceBaseType,
+  novelAiReferenceLabelKey,
   novelAiReferencePreferSameOutfit,
   novelAiReferenceSupportsSameOutfit,
   novelAiSetPreferSameOutfit,
@@ -100,6 +102,22 @@ test("active reference counting respects V5 infill drop and V4.5 outfit skip", (
   assert.equal(novelAiActiveDirectorReferenceCount(v45, refs, false), 1);
   assert.equal(novelAiActiveDirectorReferenceCount(v45, refs, true), 1);
   assert.equal(novelAiActiveDirectorReferenceCount(v4, refs, false), 0);
+});
+
+test("disabled Precise References are skipped across counts, summaries, and Medium effort forcing", () => {
+  const v5Full = findNovelAiModel("nai-diffusion-5-full");
+  const refs = [
+    { image: "img1", description: NAI_REF_CHARACTER_MAIN_OUTFIT, enabled: false },
+    { image: "img2", description: NAI_REF_OUTFIT, enabled: true },
+    { image: "img3", description: NAI_REF_STYLE },
+  ];
+
+  const summary = novelAiActiveDirectorReferenceSummary(v5Full, refs, false);
+  assert.equal(summary.count, 2);
+  assert.deepEqual(summary.modes, [NAI_REF_OUTFIT, NAI_REF_STYLE]);
+  assert.equal(novelAiReferenceLabelKey(summary.modes[0]), "generation.novelai.reference.desc_outfit");
+  assert.equal(novelAiEffortForcedByPreciseReference(v5Full, [refs[0]], false), false);
+  assert.equal(novelAiEffortForcedByPreciseReference(v5Full, refs, false), true);
 });
 
 test("V5 Full Medium effort is forced to High only when active Precise References apply", () => {

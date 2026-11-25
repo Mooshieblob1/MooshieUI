@@ -589,7 +589,9 @@ fn active_director_references<'a>(
     nai.director_references
         .iter()
         .filter(|r| {
-            !r.image.is_empty() && (model.outfit_references || r.description != REF_DESC_OUTFIT)
+            r.enabled
+                && !r.image.is_empty()
+                && (model.outfit_references || r.description != REF_DESC_OUTFIT)
         })
         .collect()
 }
@@ -1004,6 +1006,7 @@ mod tests {
             description: "character&style".into(),
             strength: 0.8,
             fidelity: 1.0,
+            enabled: true,
         }];
         let body = build(&input(), &n, v45()).unwrap();
         let p = &body["parameters"];
@@ -1025,6 +1028,7 @@ mod tests {
             description: "character".into(),
             strength: 1.0,
             fidelity: 0.75,
+            enabled: true,
         }];
         let p = &build(&input(), &n, v45()).unwrap()["parameters"];
         // Missing this array is one of the two things #665 got wrong. Fidelity
@@ -1823,18 +1827,21 @@ mod tests {
                     description: REF_DESC_OUTFIT.into(),
                     strength: 2.5,
                     fidelity: 0.25,
+                    enabled: true,
                 },
                 NovelAiDirectorReference {
                     image: "refpng".into(),
                     description: REF_DESC_CHARACTER_MAIN_OUTFIT.into(),
                     strength: 1.5,
                     fidelity: 0.4,
+                    enabled: true,
                 },
                 NovelAiDirectorReference {
                     image: "refpng".into(),
                     description: REF_DESC_CHARACTER_STYLE_ANY_OUTFIT.into(),
                     strength: 3.0,
                     fidelity: 0.0,
+                    enabled: true,
                 },
             ];
             let p = &build(&input(), &n, model).unwrap()["parameters"];
@@ -1877,6 +1884,7 @@ mod tests {
             description: REF_DESC_CHARACTER.into(),
             strength: 1.0,
             fidelity: 1.0,
+            enabled: true,
         }];
         let mut i = input();
         i.input_image = Some("AAAA".into());
@@ -1907,6 +1915,7 @@ mod tests {
             description: REF_DESC_OUTFIT.into(),
             strength: 1.2,
             fidelity: 0.5,
+            enabled: true,
         }];
         let mut i = input();
         i.sampler = "k_dpmpp_2m".into();
@@ -1955,18 +1964,21 @@ mod tests {
                 description: REF_DESC_OUTFIT.into(),
                 strength: 1.0,
                 fidelity: 0.5,
+                enabled: true,
             },
             NovelAiDirectorReference {
                 image: "charpng".into(),
                 description: REF_DESC_CHARACTER_MAIN_OUTFIT.into(),
                 strength: 0.9,
                 fidelity: 0.75,
+                enabled: true,
             },
             NovelAiDirectorReference {
                 image: "bothpng".into(),
                 description: REF_DESC_CHARACTER_STYLE_ANY_OUTFIT.into(),
                 strength: 0.8,
                 fidelity: 0.5,
+                enabled: true,
             },
         ];
         n.action = "infill".into();
@@ -2009,9 +2021,63 @@ mod tests {
             description: REF_DESC_OUTFIT.into(),
             strength: 1.0,
             fidelity: 1.0,
+            enabled: true,
         }];
         let p = &build(&input(), &n, v45()).unwrap()["parameters"];
         assert_eq!(p["reference_image_multiple"], json!(["cached"]));
         assert!(p.get("director_reference_images").is_none());
+    }
+
+    #[test]
+    fn disabled_director_references_are_skipped_and_allow_v5_medium_effort() {
+        let parsed: NovelAiDirectorReference =
+            serde_json::from_str(r#"{"image":"legacy","description":"character"}"#).unwrap();
+        assert!(parsed.enabled);
+
+        let mut n = medium(presets_on(1));
+        n.director_references = vec![
+            NovelAiDirectorReference {
+                image: "muted".into(),
+                description: REF_DESC_CHARACTER.into(),
+                strength: 1.5,
+                fidelity: 1.0,
+                enabled: false,
+            },
+            NovelAiDirectorReference {
+                image: "active".into(),
+                description: "style".into(),
+                strength: 2.0,
+                fidelity: 1.0,
+                enabled: true,
+            },
+        ];
+        let body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-5-full");
+        let p = &body["parameters"];
+        assert_eq!(p["director_reference_images"], json!(["active"]));
+        assert_eq!(p["director_reference_strength_values"], json!([2.0]));
+
+        // When all entries are disabled, V5 Medium effort stays active and V4.5 keeps vibes.
+        n.director_references[1].enabled = false;
+        let medium_body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(medium_body["model"], "nai-diffusion-5-full-medium");
+        assert_eq!(medium_body["parameters"]["steps"], 14);
+        assert!(medium_body["parameters"]
+            .get("director_reference_images")
+            .is_none());
+
+        n.vibes = vec![NovelAiVibe {
+            encoding: Some("cached".into()),
+            strength: 0.6,
+            ..Default::default()
+        }];
+        let v45_body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(
+            v45_body["parameters"]["reference_image_multiple"],
+            json!(["cached"])
+        );
+        assert!(v45_body["parameters"]
+            .get("director_reference_images")
+            .is_none());
     }
 }

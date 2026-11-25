@@ -193,7 +193,15 @@ Vibe transfer does not go through this. Vibes are encoded server-side by
   References are active. When active Precise References apply (i.e. non-infill),
   both the payload builder and UI force High effort (`nai-diffusion-5-full`,
   user steps/sampler/UC/CFG rescale) without overwriting the stored `effort`
-  setting, so removing references restores Medium automatically.
+  setting, so removing or disabling references restores Medium automatically.
+- **Per-reference enable, uploader, and send-to parity.** Each
+  `NovelAiDirectorReference` carries `enabled` (default `true`; muted entries
+  stay in the panel without sending or billing). `NovelAiReferences.svelte`
+  provides multi-file drag-drop, clipboard paste, browse, and gallery pick
+  alongside **Add to Precise Reference** actions in gallery, lightbox, session,
+  live preview, Model Hub, and Characters; V5 Prompt Enhance, Image Enhance, and
+  Style Creator keep references attached (including across Curate Undo) and warn
+  when active references apply.
 
 ### 2.6 Model capabilities are data, not branches
 
