@@ -10,6 +10,11 @@ on:
     paths:
       - 'src-tauri/**'
       - '.github/workflows/rust-checks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/rust-checks.yml'
 
 permissions:
   contents: read
@@ -46,7 +51,8 @@ jobs:
         uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           workspaces: src-tauri
-          key: rust-checks-desktop
+          shared-key: rust-checks-desktop
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # tauri::generate_context! needs frontendDist (../dist) to exist at compile
       # time. The Rust checks don't use the frontend, so an empty folder is enough.
@@ -88,7 +94,8 @@ jobs:
         uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           workspaces: src-tauri
-          key: rust-checks-server
+          shared-key: rust-checks-server
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The server binary is built without tauri. Anything that uses tauri
       # outside a `desktop` feature gate compiles fine in the desktop build and

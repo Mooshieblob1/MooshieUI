@@ -1,0 +1,149 @@
+name: Warm Release Caches
+
+# Maintains warm `main`-scoped Rust and npm caches when dependencies change so
+# subsequent PRs and `v*` tag builds can hit `main` caches instead of compiling
+# from cold storage. Release version-bump commits (`vX.Y.Z: ...`) are skipped so
+# they never compete with `Build & Release` for GitHub runners.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'package-lock.json'
+      - '.github/workflows/warm-release-caches.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-release-caches
+  cancel-in-progress: true
+
+jobs:
+  macos-release:
+    name: Warm macOS release cache
+    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'v') }}
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
+        with:
+          workspaces: src-tauri
+          shared-key: macos-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install frontend dependencies
+        run: npm ci --ignore-scripts
+
+      # tauri::generate_context!() checks that frontendDist (../dist) exists.
+      - name: Placeholder frontend dist
+        run: mkdir -p dist
+
+      - name: Warm Rust release cache
+        run: cargo build --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin --features tauri/custom-protocol
+
+  desktop-release:
+    name: Warm desktop release cache
+    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'v') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
+        with:
+          workspaces: src-tauri
+          shared-key: release-desktop
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install frontend dependencies
+        run: npm ci --ignore-scripts
+
+      # tauri::generate_context!() checks that frontendDist (../dist) exists.
+      - name: Placeholder frontend dist
+        shell: bash
+        run: mkdir -p dist
+
+      - name: Warm Rust release cache
+        run: cargo build --manifest-path src-tauri/Cargo.toml --locked --release --target ${{ matrix.target }} --features tauri/custom-protocol
+
+  server-release:
+    name: Warm server release cache
+    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'v') }}
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+
+      - uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
+        with:
+          workspaces: src-tauri
+          shared-key: release-server
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Warm Rust server cache
+        run: cargo build --manifest-path src-tauri/Cargo.toml --locked --release --no-default-features --features server --bin mooshieui-server
