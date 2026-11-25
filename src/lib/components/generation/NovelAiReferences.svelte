@@ -12,10 +12,17 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
-  import { readClipboardImageSafe } from "../../utils/api.js";
+  import {
+    readClipboardImageSafe,
+    readImageMetadata,
+    readImageMetadataBytes,
+  } from "../../utils/api.js";
+  import { matchImageToSavedCharacter } from "../../utils/characterPreciseRef.js";
+  import { detectSingleCharacterFromMetadata } from "../../utils/characterPreciseRefLogic.js";
   import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import {
     NAI_REF_OUTFIT,
+    NAI_REF_STYLE,
     NOVELAI_MAX_VIBES,
     NOVELAI_MAX_DIRECTOR_REFERENCES,
     NOVELAI_OUTFIT_REFERENCE_OPTION,
@@ -82,7 +89,11 @@
       : Math.max(1, NOVELAI_MAX_VIBES - vibes.length),
   );
 
-  async function addBlobs(blobs: readonly Blob[], target: "vibe" | "reference") {
+  async function addBlobs(
+    blobs: readonly Blob[],
+    target: "vibe" | "reference",
+    hints?: ReadonlyArray<Pick<OutputImage, "metadata" | "gallery_filename">>,
+  ) {
     if (blobs.length === 0 || busy) return;
     busy = true;
     try {
@@ -90,7 +101,8 @@
       let hadDecodeFailure = false;
       let duplicateCount = 0;
       let hitCap = false;
-      for (const blob of blobs) {
+      for (let i = 0; i < blobs.length; i++) {
+        const blob = blobs[i];
         if (target === "vibe" && generation.novelaiSettings.vibes.length >= NOVELAI_MAX_VIBES) {
           hitCap = true;
           break;
@@ -115,7 +127,39 @@
             duplicateCount += 1;
             continue;
           }
-          generation.addNovelAiDirectorReference(base64);
+          const visual = await matchImageToSavedCharacter(
+            base64,
+            savedCharacters.characters,
+            savedCharacters.currentArchitecture,
+          );
+          let sourceCharacterId: string | undefined = visual?.characterId;
+          const sourceRefId: string | undefined = visual?.refId;
+          if (!sourceCharacterId) {
+            const hint = hints?.[i];
+            let meta = hint?.metadata ?? null;
+            if (!meta && hint?.gallery_filename) {
+              meta = await readImageMetadata(hint.gallery_filename).catch(() => null);
+            } else if (!meta && !hint && blob.size <= 25 * 1024 * 1024) {
+              meta = await readImageMetadataBytes(
+                Array.from(new Uint8Array(await blob.arrayBuffer())),
+              ).catch(() => null);
+            }
+            const card = detectSingleCharacterFromMetadata(meta, savedCharacters.currentCharacters);
+            if (card) sourceCharacterId = card.id;
+          }
+          if (generation.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+            hitCap = true;
+            break;
+          }
+          if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+            duplicateCount += 1;
+            continue;
+          }
+          generation.addNovelAiDirectorReference(
+            base64,
+            "character",
+            sourceCharacterId ? { sourceCharacterId, sourceRefId, autoAttached: false } : undefined,
+          );
           addedCount += 1;
         }
       }
@@ -172,17 +216,19 @@
     busy = true;
     try {
       const blobs: Blob[] = [];
+      const hints: OutputImage[] = [];
       for (const image of images) {
         try {
           const { bytes } = await loadOutputImageForGenerationInput(image, "reference.png");
           blobs.push(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+          hints.push(image);
         } catch (err) {
           console.error("Failed to load gallery image for NovelAI reference:", err);
         }
       }
       busy = false;
       if (blobs.length > 0) {
-        await addBlobs(blobs, target);
+        await addBlobs(blobs, target, hints);
       } else if (target === "reference") {
         gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
       }
@@ -439,16 +485,32 @@
                   {locale.t("generation.novelai.reference.remove")}
                 </button>
               </div>
-              {#if sourceChar}
+              {#if baseDescription !== NAI_REF_STYLE && (savedCharacters.currentCharacters.length > 0 || sourceChar)}
                 <div class="flex items-center gap-1.5">
-                  <span
-                    class="inline-block max-w-[12rem] truncate rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-px text-[10px] text-indigo-200"
-                    title={locale.t("generation.novelai.reference.from_character_tip", {
-                      name: sourceChar.name,
-                    })}
+                  <select
+                    class="max-w-full min-w-0 truncate rounded border px-1.5 py-0.5 text-[10px] focus:outline-none {sourceChar
+                      ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200 focus:border-indigo-400'
+                      : 'border-neutral-800 bg-neutral-950 text-neutral-400 focus:border-indigo-600'}"
+                    value={reference.source_character_id ?? ""}
+                    title={locale.t("generation.novelai.reference.link_character_tip")}
+                    aria-label={locale.t("generation.novelai.reference.link_character_tip")}
+                    onchange={(e) => {
+                      const val = e.currentTarget.value;
+                      generation.updateNovelAiDirectorReference(index, {
+                        source_character_id: val || undefined,
+                        source_ref_id: undefined,
+                        ...(val ? {} : { auto_attached: false }),
+                      });
+                    }}
                   >
-                    {sourceChar.name}
-                  </span>
+                    <option value="">{locale.t("generation.novelai.reference.character_unassigned")}</option>
+                    {#each savedCharacters.currentCharacters as char (char.id)}
+                      <option value={char.id}>{char.name}</option>
+                    {/each}
+                    {#if sourceChar && !savedCharacters.currentCharacters.some((c) => c.id === sourceChar.id)}
+                      <option value={sourceChar.id}>{sourceChar.name}</option>
+                    {/if}
+                  </select>
                 </div>
               {/if}
               {#if supportsOutfits && novelAiReferenceSupportsSameOutfit(reference.description)}

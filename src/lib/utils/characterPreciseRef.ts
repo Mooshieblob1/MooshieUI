@@ -8,15 +8,24 @@ import type { NovelAiDirectorReference } from "../types/index.js";
 import {
   clampCharacterReferenceFidelity,
   clampCharacterReferenceStrength,
+  computeDHashFromRgba,
   effectiveCharacterPreciseReferences,
+  matchDirectorRefCandidate,
   normalizeCharacterReferenceDescription,
   patchCharacterDirectorReference,
   pruneAutoAttachedCharacterReferences,
   reconcileCharacterDirectorReferences,
   removeCharacterDirectorReferences,
+  type DirectorRefMatchCandidate,
+  type ImageFingerprint,
 } from "./characterPreciseRefLogic.js";
 import { characterReferenceBase64 } from "./characterThumbnail.js";
-import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "./novelaiModels.js";
+import { novelAiBase64ToSrc } from "./novelaiImage.js";
+import {
+  NAI_REF_STYLE,
+  NOVELAI_MAX_DIRECTOR_REFERENCES,
+  novelAiReferenceBaseType,
+} from "./novelaiModels.js";
 
 export interface AttachCharacterReferencesResult {
   addedBase64s: string[];
@@ -370,4 +379,189 @@ export function removeDirectorReferencesByImages(images: readonly string[]): voi
   generation.updateNovelAiSettings({
     director_references: current.filter((r) => !targets.has(r.image)),
   });
+}
+
+const MAX_FINGERPRINT_CACHE = 256;
+const fingerprintCache = new Map<string, ImageFingerprint | null>();
+const base64Cache = new Map<string, string | null>();
+
+function setBoundedCache<T>(cache: Map<string, T>, key: string, value: T): void {
+  if (cache.size >= MAX_FINGERPRINT_CACHE) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(key, value);
+}
+
+async function cachedReferenceBase64(source: LegacySourceLike): Promise<string | null> {
+  const key = source.reference ?? source.thumbnail ?? "";
+  if (!key) return null;
+  if (base64Cache.has(key)) return base64Cache.get(key) ?? null;
+  const encoded = await characterReferenceBase64(source);
+  if (encoded) setBoundedCache(base64Cache, key, encoded);
+  return encoded;
+}
+
+/**
+ * Decode an image data/blob URL into a 9x8 offscreen canvas and compute its
+ * 64-bit dHash + source aspect ratio for visual matching across resolutions.
+ */
+export async function computeImageFingerprint(src: string): Promise<ImageFingerprint | null> {
+  if (!src || typeof document === "undefined" || typeof Image === "undefined") return null;
+  if (fingerprintCache.has(src)) return fingerprintCache.get(src) ?? null;
+
+  const fp = await new Promise<ImageFingerprint | null>((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const origW = img.naturalWidth || img.width;
+        const origH = img.naturalHeight || img.height;
+        const canvas = document.createElement("canvas");
+        canvas.width = 9;
+        canvas.height = 8;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, 9, 8);
+        const rgba = ctx.getImageData(0, 0, 9, 8).data;
+        resolve(computeDHashFromRgba(rgba, 9, 8, origW, origH));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+
+  if (fp) setBoundedCache(fingerprintCache, src, fp);
+  return fp;
+}
+
+/**
+ * Match a bare base64 PNG Precise Reference against saved characters via exact
+ * base64 equality first, then visual 64-bit dHash similarity across resolutions.
+ */
+export async function matchImageToSavedCharacter(
+  base64: string,
+  characters: readonly SavedCharacter[],
+  preferredArch?: string | null,
+): Promise<{ characterId: string; refId: string } | null> {
+  if (!base64 || characters.length === 0) return null;
+
+  interface CandidateSource {
+    characterId: string;
+    refId: string;
+    preferred: boolean;
+    source: LegacySourceLike;
+    fpSrc: string | null;
+  }
+
+  const sources: CandidateSource[] = [];
+  for (const card of characters) {
+    const preferred = Boolean(preferredArch && card.architecture === preferredArch);
+    for (const ref of card.preciseReferences ?? []) {
+      sources.push({
+        characterId: card.id,
+        refId: ref.id,
+        preferred,
+        source: { thumbnail: ref.thumbnail, reference: ref.reference },
+        fpSrc: ref.thumbnail ?? ref.reference,
+      });
+    }
+    if (card.reference ?? card.thumbnail) {
+      sources.push({
+        characterId: card.id,
+        refId: "__card__",
+        preferred,
+        source: { thumbnail: card.thumbnail, reference: card.reference },
+        fpSrc: card.thumbnail ?? card.reference,
+      });
+    }
+  }
+  if (sources.length === 0) return null;
+
+  const encodedList = await Promise.all(sources.map((s) => cachedReferenceBase64(s.source)));
+  const exactCandidates: DirectorRefMatchCandidate[] = sources.map((s, i) => ({
+    characterId: s.characterId,
+    refId: s.refId,
+    preferred: s.preferred,
+    base64: encodedList[i],
+  }));
+  const exactMatch = matchDirectorRefCandidate({ base64 }, exactCandidates);
+  if (exactMatch) return exactMatch;
+
+  const targetFp = await computeImageFingerprint(novelAiBase64ToSrc(base64));
+  if (!targetFp) return null;
+
+  const fps = await Promise.all(
+    sources.map((s) => (s.fpSrc ? computeImageFingerprint(s.fpSrc) : Promise.resolve(null))),
+  );
+  const visualCandidates: DirectorRefMatchCandidate[] = sources.map((s, i) => ({
+    characterId: s.characterId,
+    refId: s.refId,
+    preferred: s.preferred,
+    base64: encodedList[i],
+    fingerprint: fps[i],
+  }));
+  return matchDirectorRefCandidate({ base64, fingerprint: targetFp }, visualCandidates);
+}
+
+/**
+ * Automatically backfill `source_character_id` / `source_ref_id` on active
+ * non-Style Precise References that lack valid provenance (for example refs
+ * persisted from older builds or added manually matching a saved character).
+ */
+export async function reconcileUntaggedDirectorReferences(
+  characters: readonly SavedCharacter[],
+  preferredArch?: string | null,
+): Promise<number> {
+  if (characters.length === 0) return 0;
+  const current = generation.novelaiSettings.director_references;
+  if (current.length === 0) return 0;
+
+  const validIds = new Set(characters.map((c) => c.id));
+  const uniqueImages = new Set<string>();
+  for (const r of current) {
+    if (!r.image) continue;
+    if (novelAiReferenceBaseType(r.description) === NAI_REF_STYLE) continue;
+    if (r.source_character_id && validIds.has(r.source_character_id)) continue;
+    uniqueImages.add(r.image);
+  }
+  if (uniqueImages.size === 0) return 0;
+
+  const resolvedByImage = new Map<string, { characterId: string; refId: string }>();
+  await Promise.all(
+    [...uniqueImages].map(async (image) => {
+      const match = await matchImageToSavedCharacter(image, characters, preferredArch);
+      if (match) resolvedByImage.set(image, match);
+    }),
+  );
+  if (resolvedByImage.size === 0) return 0;
+
+  const latest = generation.novelaiSettings.director_references;
+  const latestValidIds = new Set(characters.map((c) => c.id));
+  let updated = 0;
+  const next = latest.map((r) => {
+    if (
+      !r.image ||
+      novelAiReferenceBaseType(r.description) === NAI_REF_STYLE ||
+      (r.source_character_id && latestValidIds.has(r.source_character_id))
+    ) {
+      return r;
+    }
+    const match = resolvedByImage.get(r.image);
+    if (!match) return r;
+    updated += 1;
+    return {
+      ...r,
+      source_character_id: match.characterId,
+      source_ref_id: match.refId,
+    };
+  });
+  if (updated > 0) {
+    generation.updateNovelAiSettings({ director_references: next });
+  }
+  return updated;
 }

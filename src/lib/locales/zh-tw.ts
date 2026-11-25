@@ -4968,6 +4968,8 @@ const zhTw: Record<string, string> = {
   "generation.novelai.reference.hover_manual": "手動參考圖",
   "generation.novelai.reference.hover_click_open": "點擊開啟 Precise Reference",
   "generation.novelai.reference.hover_click_remove": "點擊移除",
+  "generation.novelai.reference.character_unassigned": "未關聯角色",
+  "generation.novelai.reference.link_character_tip": "將此參考圖關聯到已儲存角色，以便在 PR 徽章上顯示角色名稱",
   "characters.editor.references": "參考圖",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "{name} 的 PR 已開啟（{count} 張，+{anlas} Anlas）。點擊關閉。",

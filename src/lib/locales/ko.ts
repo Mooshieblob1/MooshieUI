@@ -4968,6 +4968,8 @@ const ko: Record<string, string> = {
   "generation.novelai.reference.hover_manual": "수동 레퍼런스",
   "generation.novelai.reference.hover_click_open": "클릭하여 Precise Reference 열기",
   "generation.novelai.reference.hover_click_remove": "클릭하여 제거",
+  "generation.novelai.reference.character_unassigned": "연결된 캐릭터 없음",
+  "generation.novelai.reference.link_character_tip": "PR 배지에 캐릭터 이름이 표시되도록 저장된 캐릭터와 연결",
   "characters.editor.references": "레퍼런스",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "{name}에 PR 켜짐({count}장, +{anlas} Anlas). 클릭하여 끄기.",

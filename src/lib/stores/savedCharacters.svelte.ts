@@ -30,6 +30,7 @@ import yueReference from "../assets/characters/yue-reference.webp?inline";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
 import {
   patchAttachedCharacterReference,
+  reconcileUntaggedDirectorReferences,
   removeAttachedCharacterReferences,
   syncAttachedCharacterReferences,
 } from "../utils/characterPreciseRef.js";
@@ -439,6 +440,8 @@ class SavedCharactersStore {
       void removeAttachedCharacterReferences(id, {
         legacySources: [card, ...(card.preciseReferences ?? [])],
       });
+    } else {
+      void reconcileUntaggedDirectorReferences(this.characters, this.currentArchitecture);
     }
   }
 
