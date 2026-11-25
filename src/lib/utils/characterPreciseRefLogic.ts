@@ -7,6 +7,7 @@
  */
 import { namesCharacter } from "./contentSafety.js";
 import { detectCharacters, prepareCards, type DetectCard } from "./galleryCharacters.js";
+import { PRECISE_REFERENCE_COST } from "./novelaiCost.js";
 import {
   NAI_REF_CHARACTER,
   NAI_REF_CHARACTER_MAIN_OUTFIT,
@@ -15,6 +16,9 @@ import {
   NAI_REF_OUTFIT,
   NAI_REF_STYLE,
   NOVELAI_MAX_DIRECTOR_REFERENCES,
+  type NovelAiModelInfo,
+  novelAiReferenceBaseType,
+  novelAiReferencePreferSameOutfit,
 } from "./novelaiModels.js";
 
 /** Structural slice of an active Precise Reference entry on the generation panel. */
@@ -340,4 +344,134 @@ export function pruneAutoAttachedCharacterReferences<T extends DirectorRefEntry>
     }
   }
   return { next, removed };
+}
+
+/** An active Precise Reference slot enriched with optional saved-character target info. */
+export interface ActivePreciseRefItem {
+  /** Index inside `director_references`, preserved so UI controls can remove the exact slot. */
+  index: number;
+  image: string;
+  description: string;
+  baseType: string;
+  preferSameOutfit: boolean;
+  strength: number;
+  characterId: string | null;
+  characterName: string | null;
+}
+
+/** Active Precise References summary with resolved character names and total Anlas cost. */
+export interface ActivePreciseRefSummary {
+  items: ActivePreciseRefItem[];
+  count: number;
+  anlas: number;
+  characterIds: string[];
+  characterNames: string[];
+}
+
+/**
+ * Describe active Precise References that will be sent for `model` and `isInfill`,
+ * resolving `source_character_id` against saved `characters` in slot order.
+ */
+export function describeActiveNovelAiDirectorReferences(
+  model: NovelAiModelInfo | null | undefined,
+  references: readonly DirectorRefEntry[],
+  isInfill: boolean,
+  characters: readonly { id: string; name: string }[],
+): ActivePreciseRefSummary {
+  if (!model?.preciseReference || (isInfill && !model.preciseReferenceInpainting)) {
+    return { items: [], count: 0, anlas: 0, characterIds: [], characterNames: [] };
+  }
+  const charNameById = new Map<string, string>();
+  for (const ch of characters) {
+    const cleanName = ch.name.trim();
+    if (cleanName) charNameById.set(ch.id, cleanName);
+  }
+
+  const items: ActivePreciseRefItem[] = [];
+  const characterIds: string[] = [];
+  const characterNames: string[] = [];
+  const seenCharIds = new Set<string>();
+  const seenCharNames = new Set<string>();
+
+  references.forEach((r, index) => {
+    if (r.enabled === false) return;
+    if (!r.image) return;
+    if (!model.outfitReferences && r.description === NAI_REF_OUTFIT) return;
+    const baseType = novelAiReferenceBaseType(r.description);
+    const preferSameOutfit = novelAiReferencePreferSameOutfit(r.description);
+    const characterId = r.source_character_id ?? null;
+    const characterName = characterId ? (charNameById.get(characterId) || null) : null;
+    items.push({
+      index,
+      image: r.image,
+      description: r.description,
+      baseType,
+      preferSameOutfit,
+      strength: r.strength,
+      characterId,
+      characterName,
+    });
+    if (characterId && !seenCharIds.has(characterId)) {
+      seenCharIds.add(characterId);
+      characterIds.push(characterId);
+    }
+    if (characterName && !seenCharNames.has(characterName)) {
+      seenCharNames.add(characterName);
+      characterNames.push(characterName);
+    }
+  });
+
+  return {
+    items,
+    count: items.length,
+    anlas: items.length * PRECISE_REFERENCE_COST,
+    characterIds,
+    characterNames,
+  };
+}
+
+/**
+ * Group active Precise References into compact (`short`) and mode-annotated
+ * (`detailed`) target labels preserving slot appearance order.
+ */
+export function formatActivePreciseRefTargets(
+  items: readonly Pick<ActivePreciseRefItem, "characterId" | "characterName" | "baseType">[],
+  labelForMode: (baseType: string) => string,
+): { short: string; detailed: string } {
+  const groups: { name: string; isCharacter: boolean; count: number; modes: string[] }[] = [];
+  const groupByKey = new Map<string, number>();
+
+  for (const item of items) {
+    const isCharacter = Boolean(item.characterId && item.characterName);
+    const key = isCharacter ? `char:${item.characterId}` : `mode:${item.baseType}`;
+    const modeLabel = labelForMode(item.baseType);
+    let idx = groupByKey.get(key);
+    if (idx === undefined) {
+      idx = groups.length;
+      groupByKey.set(key, idx);
+      groups.push({
+        name: isCharacter ? (item.characterName as string) : modeLabel,
+        isCharacter,
+        count: 0,
+        modes: [],
+      });
+    }
+    const group = groups[idx];
+    group.count += 1;
+    if (modeLabel && !group.modes.includes(modeLabel)) {
+      group.modes.push(modeLabel);
+    }
+  }
+
+  const short = groups
+    .map((g) => (g.count > 1 ? `${g.name} ×${g.count}` : g.name))
+    .join(", ");
+  const detailed = groups
+    .map((g) => {
+      if (g.isCharacter) return `${g.name} (${g.modes.join(", ")})`;
+      return g.count > 1 ? `${g.name} ×${g.count}` : g.name;
+    })
+    .join(", ");
+
+  return { short, detailed };
 }

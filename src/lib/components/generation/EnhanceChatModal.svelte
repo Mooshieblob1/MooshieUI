@@ -22,7 +22,11 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
-  import { effectiveCharacterPreciseReferences } from "../../utils/characterPreciseRefLogic.js";
+  import {
+    describeActiveNovelAiDirectorReferences,
+    effectiveCharacterPreciseReferences,
+    formatActivePreciseRefTargets,
+  } from "../../utils/characterPreciseRefLogic.js";
   import { canSend, redoLast, sendMessage } from "../../utils/enhanceChatRunner.js";
   import { parseNaiResponse } from "../../utils/naiParse.js";
   import { NAI_LANGUAGES } from "../../utils/naiLanguage.js";
@@ -31,7 +35,6 @@
   import type { NaiCanonPriority } from "../../utils/naiSavedCharacters.js";
   import {
     naiV5Variant,
-    novelAiActiveDirectorReferenceSummary,
     novelAiReferenceLabelKey,
   } from "../../utils/novelaiModels.js";
   import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
@@ -111,20 +114,26 @@
     !!variant && generation.novelaiSettings.characters.filter((c) => c.prompt.trim()).length >= 2,
   );
   const activeRefSummary = $derived(
-    isNai
-      ? novelAiActiveDirectorReferenceSummary(
+    isNai || (isGeneral && generation.isNovelAi)
+      ? describeActiveNovelAiDirectorReferences(
           generation.novelAiModel,
           generation.novelaiSettings.director_references,
           generation.isNovelAiInfill,
+          savedCharacters.characters,
         )
-      : { count: 0, modes: [] },
+      : { items: [], count: 0, anlas: 0, characterIds: [], characterNames: [] },
+  );
+  const activeRefTargets = $derived(
+    formatActivePreciseRefTargets(activeRefSummary.items, (baseType) =>
+      locale.t(novelAiReferenceLabelKey(baseType)),
+    ),
   );
   const activeRefNotice = $derived(
     activeRefSummary.count > 0
       ? locale.t("generation.novelai.reference.enhance_active", {
           count: String(activeRefSummary.count),
-          modes: activeRefSummary.modes.map((m) => locale.t(novelAiReferenceLabelKey(m))).join(", "),
-          anlas: String(activeRefSummary.count * PRECISE_REFERENCE_COST),
+          modes: activeRefTargets.detailed,
+          anlas: String(activeRefSummary.anlas),
         })
       : "",
   );
@@ -593,11 +602,12 @@
           {/if}
           {#if activeRefSummary.count > 0}
             <span
-              class="shrink-0 rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-200"
+              class="max-w-52 shrink-0 truncate rounded border border-amber-500/45 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
               title={activeRefNotice}
             >
               {locale.t("generation.novelai.reference.enhance_badge", {
                 count: String(activeRefSummary.count),
+                targets: activeRefTargets.short,
               })}
             </span>
           {/if}
@@ -807,7 +817,7 @@
             </p>
           {/if}
           {#if activeRefNotice}
-            <p class="mt-1 text-[10px] text-indigo-300/90">
+            <p class="mt-1 text-[10px] text-amber-300/90">
               {activeRefNotice}
             </p>
           {/if}

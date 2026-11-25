@@ -324,7 +324,7 @@
     </div>
   {:else}
     {#if generation.supportsNovelAiPreciseReference}
-      <div class="space-y-2 {vibes.length > 0 || inpaintUnsupported ? 'opacity-50' : ''}">
+      <div data-precise-references class="space-y-2 {vibes.length > 0 || inpaintUnsupported ? 'opacity-50' : ''}">
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-neutral-400 flex items-center gap-1.5">
             {locale.t("generation.novelai.reference.title")}

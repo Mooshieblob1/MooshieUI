@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   clampCharacterReferenceFidelity,
   clampCharacterReferenceStrength,
+  describeActiveNovelAiDirectorReferences,
   effectiveCharacterPreciseReferences,
+  formatActivePreciseRefTargets,
   matchCharacterCardsInText,
   normalizeCharacterReferenceDescription,
   patchCharacterDirectorReference,
@@ -19,6 +21,7 @@ import {
   NAI_REF_CHARACTER_STYLE_ANY_OUTFIT,
   NAI_REF_OUTFIT,
   NAI_REF_STYLE,
+  NOVELAI_MODELS,
 } from "../../src/lib/utils/novelaiModels.ts";
 
 test("effectiveCharacterPreciseReferences prefers dedicated entries and falls back to card picture", () => {
@@ -360,5 +363,124 @@ test("patchCharacterDirectorReference and pruneAutoAttachedCharacterReferences k
   assert.deepEqual(
     pruned.next.map((r) => r.image),
     ["MANUAL", "BOB_MANUAL"],
+  );
+});
+
+test("describeActiveNovelAiDirectorReferences resolves character names, filters inactive/unsupported refs, and preserves indices", () => {
+  const v5Full = NOVELAI_MODELS.find((m) => m.id === "nai-diffusion-5-full");
+  const v45Full = NOVELAI_MODELS.find((m) => m.id === "nai-diffusion-4-5-full");
+  assert.ok(v5Full);
+  assert.ok(v45Full);
+
+  const refs: DirectorRefEntry[] = [
+    {
+      image: "IMG_DISABLED",
+      description: NAI_REF_CHARACTER,
+      strength: 1,
+      fidelity: 1,
+      enabled: false,
+      source_character_id: "alice",
+    },
+    {
+      image: "IMG_ALICE_1",
+      description: NAI_REF_CHARACTER_MAIN_OUTFIT,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      source_character_id: "alice",
+    },
+    {
+      image: "IMG_ALICE_OUTFIT",
+      description: NAI_REF_OUTFIT,
+      strength: 1.5,
+      fidelity: 1,
+      source_character_id: "alice",
+    },
+    {
+      image: "IMG_DELETED_CHAR",
+      description: NAI_REF_CHARACTER,
+      strength: 1,
+      fidelity: 1,
+      source_character_id: "missing_id",
+    },
+    {
+      image: "IMG_MANUAL_STYLE",
+      description: NAI_REF_STYLE,
+      strength: 0.8,
+      fidelity: 1,
+    },
+  ];
+  const chars = [
+    { id: "alice", name: "Alice" },
+    { id: "bob", name: "Bob" },
+  ];
+
+  // V5 supports outfit refs -> 4 active items (disabled index 0 skipped), original indices kept.
+  const v5Summary = describeActiveNovelAiDirectorReferences(v5Full, refs, false, chars);
+  assert.equal(v5Summary.count, 4);
+  assert.equal(v5Summary.anlas, 20);
+  assert.deepEqual(
+    v5Summary.items.map((item) => ({ index: item.index, name: item.characterName, base: item.baseType })),
+    [
+      { index: 1, name: "Alice", base: NAI_REF_CHARACTER },
+      { index: 2, name: "Alice", base: NAI_REF_OUTFIT },
+      { index: 3, name: null, base: NAI_REF_CHARACTER },
+      { index: 4, name: null, base: NAI_REF_STYLE },
+    ],
+  );
+  assert.deepEqual(v5Summary.characterIds, ["alice", "missing_id"]);
+  assert.deepEqual(v5Summary.characterNames, ["Alice"]);
+
+  // V5 infill does not support Precise Reference -> empty summary.
+  const infillSummary = describeActiveNovelAiDirectorReferences(v5Full, refs, true, chars);
+  assert.equal(infillSummary.count, 0);
+  assert.equal(infillSummary.anlas, 0);
+
+  // V4.5 skips NAI_REF_OUTFIT (index 2).
+  const v45Summary = describeActiveNovelAiDirectorReferences(v45Full, refs, false, chars);
+  assert.deepEqual(
+    v45Summary.items.map((item) => item.index),
+    [1, 3, 4],
+  );
+  assert.equal(v45Summary.anlas, 15);
+});
+
+test("formatActivePreciseRefTargets formats single, multi-slot character, and manual refs cleanly", () => {
+  const modeLabel = (baseType: string): string => {
+    if (baseType === NAI_REF_CHARACTER) return "Character";
+    if (baseType === NAI_REF_OUTFIT) return "Outfit";
+    if (baseType === NAI_REF_STYLE) return "Style";
+    return baseType;
+  };
+
+  assert.deepEqual(
+    formatActivePreciseRefTargets(
+      [{ characterId: "alice", characterName: "Alice", baseType: NAI_REF_CHARACTER }],
+      modeLabel,
+    ),
+    { short: "Alice", detailed: "Alice (Character)" },
+  );
+
+  assert.deepEqual(
+    formatActivePreciseRefTargets(
+      [
+        { characterId: "alice", characterName: "Alice", baseType: NAI_REF_CHARACTER },
+        { characterId: "alice", characterName: "Alice", baseType: NAI_REF_OUTFIT },
+      ],
+      modeLabel,
+    ),
+    { short: "Alice ×2", detailed: "Alice (Character, Outfit)" },
+  );
+
+  assert.deepEqual(
+    formatActivePreciseRefTargets(
+      [
+        { characterId: "alice", characterName: "Alice", baseType: NAI_REF_CHARACTER },
+        { characterId: null, characterName: null, baseType: NAI_REF_STYLE },
+        { characterId: "missing", characterName: null, baseType: NAI_REF_STYLE },
+      ],
+      modeLabel,
+    ),
+    { short: "Alice, Style ×2", detailed: "Alice (Character), Style ×2" },
   );
 });

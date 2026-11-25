@@ -2,6 +2,12 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { compare } from "../../stores/compare.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import {
+    describeActiveNovelAiDirectorReferences,
+    formatActivePreciseRefTargets,
+  } from "../../utils/characterPreciseRefLogic.js";
+  import { novelAiReferenceLabelKey } from "../../utils/novelaiModels.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { wheelScrollLock } from "../../utils/wheelScrollLock.js";
   import PromptInputs from "./PromptInputs.svelte";
@@ -458,6 +464,22 @@
   let naiFaceDetailSectionOpen = $state(savedCollapse.naiFaceDetail !== false);
   let facefixSectionOpen = $state(savedCollapse.facefix !== false);
   let postSectionOpen = $state(savedCollapse.upscaleHistory !== false);
+
+  const activeNovelAiPrSummary = $derived(
+    generation.isNovelAi
+      ? describeActiveNovelAiDirectorReferences(
+          generation.novelAiModel,
+          generation.novelaiSettings.director_references,
+          generation.isNovelAiInfill,
+          savedCharacters.characters,
+        )
+      : { items: [], count: 0, anlas: 0, characterIds: [], characterNames: [] },
+  );
+  const activeNovelAiPrTargets = $derived(
+    formatActivePreciseRefTargets(activeNovelAiPrSummary.items, (baseType) =>
+      locale.t(novelAiReferenceLabelKey(baseType)),
+    ),
+  );
 
   let collapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
@@ -1074,6 +1096,17 @@
       rightCollapsed = true;
     }
     savePanelLayout();
+  }
+
+  async function openPreciseReferences() {
+    novelaiSectionOpen = true;
+    const side = sectionSides.novelai;
+    if (side === "left" && leftCollapsed) toggleLeftPanel();
+    else if (side === "right" && rightCollapsed) toggleRightPanel();
+    await tick();
+    document
+      .querySelector("[data-precise-references]")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   function toggleBottomPanel() {
@@ -1744,12 +1777,24 @@
     <div class="flex items-stretch w-full rounded-t-xl transition-colors hover:bg-neutral-800/40 {open ? '' : 'rounded-b-xl'}">
       {@render dragHandle(section)}
       <button
-        class="flex-1 min-w-0 py-2.5 pr-1 text-left text-[13px] font-semibold text-neutral-200 hover:text-white focus:outline-none"
+        class="flex flex-1 min-w-0 items-center gap-1.5 py-2.5 pr-1 text-left text-[13px] font-semibold text-neutral-200 hover:text-white focus:outline-none"
         onclick={toggle}
         aria-expanded={open}
         title={toggleTitle}
       >
-        <span class="block truncate">{label}</span>
+        <span class="truncate">{label}</span>
+        {#if section === "novelai" && activeNovelAiPrSummary.count > 0}
+          <span
+            class="inline-flex max-w-44 shrink-0 items-center truncate rounded-full border border-amber-500/50 bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-200"
+            title={locale.t("generation.novelai.reference.active_header_tip", {
+              count: String(activeNovelAiPrSummary.count),
+              targets: activeNovelAiPrTargets.detailed,
+              anlas: String(activeNovelAiPrSummary.anlas),
+            })}
+          >
+            {locale.t("characters.references.pill_label")}: {activeNovelAiPrTargets.short} (+{activeNovelAiPrSummary.anlas})
+          </span>
+        {/if}
       </button>
       {#if !mobileFriendly}
         {@const moveTitle = sectionSides[section] === "left" ? locale.t('generation.layout.move_right') : locale.t('generation.layout.move_left')}
@@ -2519,7 +2564,7 @@
 
         {#if controlsSide === "left" && !mobileFriendly}
           <div class="sticky bottom-0 z-20 mt-auto -mx-2.5 border-t border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] px-3.5 pt-3 pb-3.5">
-            <GenerateButton canvasEditorRef={canvasEditorRef} />
+            <GenerateButton canvasEditorRef={canvasEditorRef} onOpenPreciseReferences={openPreciseReferences} />
           </div>
         {/if}
         </div>
@@ -2654,7 +2699,7 @@
 
         {#if controlsSide === "right" && !mobileFriendly}
           <div class="sticky bottom-0 z-20 mt-auto -mx-2.5 border-t border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] px-3.5 pt-3 pb-3.5">
-            <GenerateButton canvasEditorRef={canvasEditorRef} />
+            <GenerateButton canvasEditorRef={canvasEditorRef} onOpenPreciseReferences={openPreciseReferences} />
           </div>
         {/if}
         </div>
@@ -2676,7 +2721,7 @@
             {@render mobileDockButton("bottom", locale.t("mobile.dock.library"), "library", !bottomCollapsed, toggleBottomPanel)}
           </div>
           <div class="min-w-0 flex-1">
-            <GenerateButton canvasEditorRef={canvasEditorRef} compact />
+            <GenerateButton canvasEditorRef={canvasEditorRef} compact onOpenPreciseReferences={openPreciseReferences} />
           </div>
         </div>
       </div>

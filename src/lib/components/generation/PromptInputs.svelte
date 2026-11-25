@@ -22,9 +22,13 @@
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
   import H3PromptGuide from "../video/H3PromptGuide.svelte";
-  import { naiV5Variant } from "../../utils/novelaiModels.js";
+  import { naiV5Variant, NAI_REF_CHARACTER, novelAiReferenceLabelKey } from "../../utils/novelaiModels.js";
   import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
   import { enhanceRecipes } from "../../stores/enhanceRecipes.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import { describeActiveNovelAiDirectorReferences } from "../../utils/characterPreciseRefLogic.js";
+  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
+  import { novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
 
   interface Props {
     showHistory?: boolean;
@@ -62,6 +66,16 @@
       !generation.isNovelAi &&
       generation.autoQualityTags &&
       (generation.usesAnimaQualityTags || generation.isIllustrious || generation.isPony || generation.isNanosaur),
+  );
+  const activePreciseRefs = $derived(
+    isVideoMode || !generation.isNovelAi
+      ? []
+      : describeActiveNovelAiDirectorReferences(
+          generation.novelAiModel,
+          generation.novelaiSettings.director_references,
+          generation.isNovelAiInfill,
+          savedCharacters.characters,
+        ).items,
   );
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
@@ -255,6 +269,32 @@
         </button>
       {/each}
       {#if !isVideoMode}
+        {#each activePreciseRefs as refItem (refItem.index)}
+          {@const modeLabel = locale.t(novelAiReferenceLabelKey(refItem.baseType))}
+          {@const targetLabel = refItem.characterName ?? modeLabel}
+          {@const displayTarget =
+            refItem.characterName && refItem.baseType !== NAI_REF_CHARACTER
+              ? `${refItem.characterName} (${modeLabel})`
+              : targetLabel}
+          <button
+            type="button"
+            onclick={() => generation.removeNovelAiDirectorReference(refItem.index)}
+            class="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/15 text-amber-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
+            title={locale.t("generation.novelai.reference.active_pill_remove_tip", {
+              target: targetLabel,
+              mode: modeLabel,
+              anlas: String(PRECISE_REFERENCE_COST),
+            })}
+            aria-label={locale.t("generation.novelai.reference.remove_aria", {
+              target: targetLabel,
+            })}
+          >
+            <img src={novelAiBase64ToSrc(refItem.image)} alt="" class="h-3.5 w-3.5 rounded-sm object-cover" />
+            <span class="font-semibold">{locale.t("characters.references.pill_label")}</span>
+            <span class="max-w-28 truncate">{displayTarget}</span>
+            <span class="font-mono text-[9px] text-amber-300/80">+{PRECISE_REFERENCE_COST}</span>
+          </button>
+        {/each}
         {#each enhanceRecipes.activeRecipes as recipe (recipe.id)}
           {@const modeLabel = locale.t(recipe.applyMode === 'ai' ? 'prompt_assistant.recipe_mode_ai' : 'prompt_assistant.recipe_mode_tags')}
           <button

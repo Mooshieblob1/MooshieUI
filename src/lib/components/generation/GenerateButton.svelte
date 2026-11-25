@@ -15,6 +15,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { shortcuts } from "../../stores/shortcuts.svelte.js";
+  import ActivePreciseRefsStrip from "./ActivePreciseRefsStrip.svelte";
   import NovelAiUsage from "./NovelAiUsage.svelte";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
@@ -47,9 +48,10 @@
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
     /** Phone dock: tighter gaps so Generate keeps its width beside the panel buttons. */
     compact?: boolean;
+    onOpenPreciseReferences?: () => void;
   }
 
-  let { canvasEditorRef, compact = false }: Props = $props();
+  let { canvasEditorRef, compact = false, onOpenPreciseReferences }: Props = $props();
   let errorMsg = $state<string | null>(null);
   let isSubmitting = $state(false);
   let orderedRunPromptIds = $state<string[]>([]);
@@ -840,6 +842,8 @@
 {#if generation.showNovelaiUsage}
   <NovelAiUsage />
 {/if}
+
+<ActivePreciseRefsStrip {compact} onJumpToPreciseRef={onOpenPreciseReferences} />
 
 <div class="relative flex items-center {compact ? 'gap-1.5' : 'gap-2'}">
   {#if !compact && generation.mode !== "video"}
