@@ -18,7 +18,10 @@
     savedCharacters,
     type SavedCharacter,
   } from "../../stores/savedCharacters.svelte.js";
-  import { attachCharacterPreciseReferences } from "../../utils/characterPreciseRef.js";
+  import {
+    attachCharacterPreciseReferences,
+    removeAttachedCharacterReferences,
+  } from "../../utils/characterPreciseRef.js";
   import { effectiveCharacterPreciseReferences } from "../../utils/characterPreciseRefLogic.js";
   import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
   import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "../../utils/novelaiModels.js";
@@ -199,17 +202,24 @@
    * together, so active vibes stay intact.
    */
   async function attachReference(character: SavedCharacter) {
-    if (!canReference || !character.usePreciseReference) return;
+    if (!canReference) return;
+    if (!character.usePreciseReference) {
+      void removeAttachedCharacterReferences(character.id, {
+        legacySources: [character, ...(character.preciseReferences ?? [])],
+      });
+      return;
+    }
     if (effectiveCharacterPreciseReferences(character).length === 0) return;
     const res = await attachCharacterPreciseReferences([character], {
       requireEnabled: true,
       forceReplaceVibes: false,
+      autoAttached: true,
     });
     if (res.skippedVibes) {
       gallery.showToast(locale.t("characters.toast.reference_vibes", { name: character.name }), "info");
       return;
     }
-    if (res.skippedFull && res.addedBase64s.length === 0) {
+    if (res.skippedFull && res.addedBase64s.length === 0 && res.replacedCount === 0) {
       gallery.showToast(locale.t("characters.toast.reference_full", { name: character.name }), "info");
       return;
     }
@@ -233,6 +243,7 @@
     const res = await attachCharacterPreciseReferences([character], {
       requireEnabled: false,
       forceReplaceVibes: false,
+      autoAttached: false,
     });
     if (res.skippedVibes) {
       gallery.showToast(locale.t("characters.toast.reference_only_vibes", { name: character.name }), "info");
@@ -250,16 +261,16 @@
       );
       return;
     }
-    if (res.skippedFull) {
+    if (res.skippedFull && res.replacedCount === 0) {
       gallery.showToast(
         locale.t("characters.toast.reference_only_full", {
           max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
         }),
         "info",
       );
-    } else if (res.duplicateCount > 0) {
+    } else if (res.duplicateCount > 0 && res.replacedCount === 0) {
       gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
-    } else if (res.failedCount > 0) {
+    } else if (res.failedCount > 0 && res.replacedCount === 0) {
       gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
     }
   }

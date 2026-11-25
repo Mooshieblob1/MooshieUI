@@ -4997,6 +4997,7 @@ const pl: Record<string, string> = {
   "generation.novelai.reference.image_enhance_active": "Precise Reference jest włączone ({count}: {modes}) i uwzględniane w tym przebiegu (+{anlas} Anlas).",
   "generation.novelai.reference.style_creator_active": "Precise Reference jest włączone ({count}) na każdej karcie (+{anlas} Anlas na kartę).",
   "generation.novelai.reference.forced_high_note": "High effort jest wymagany, gdy Precise Reference jest aktywne.",
+  "generation.novelai.reference.from_character_tip": "Dołączono z zapisanej postaci: {name}",
   "characters.editor.references": "Referencje",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "Automatyczne dołączanie Precise Reference włączone ({count} obraz(y), +{anlas} Anlas). Kliknij, aby wyłączyć.",

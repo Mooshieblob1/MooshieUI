@@ -4958,6 +4958,7 @@ const zhTw: Record<string, string> = {
   "generation.novelai.reference.image_enhance_active": "已啟用 Precise Reference（{count} 個：{modes}），本次處理將一併套用（+{anlas} Anlas）。",
   "generation.novelai.reference.style_creator_active": "每張卡片均已啟用 Precise Reference（{count} 個，每張卡片 +{anlas} Anlas）。",
   "generation.novelai.reference.forced_high_note": "啟用 Precise Reference 時需要 High effort。",
+  "generation.novelai.reference.from_character_tip": "來自已儲存角色：{name}",
   "characters.editor.references": "參考圖",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "已開啟 Precise Reference 自動附加（{count} 張，+{anlas} Anlas）。點擊關閉。",

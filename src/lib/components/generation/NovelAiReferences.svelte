@@ -11,6 +11,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
   import { readClipboardImageSafe } from "../../utils/api.js";
   import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import {
@@ -375,6 +376,9 @@
           {@const baseDescription = novelAiReferenceBaseType(reference.description)}
           {@const refEnabled = reference.enabled !== false}
           {@const outfitSkipped = !supportsOutfits && reference.description === NAI_REF_OUTFIT}
+          {@const sourceChar = reference.source_character_id
+            ? savedCharacters.characters.find((c) => c.id === reference.source_character_id) ?? null
+            : null}
           {@const strengthInputId = `${uid}-ref-strength-${index}`}
           {@const fidelityInputId = `${uid}-ref-fidelity-${index}`}
           <div
@@ -435,6 +439,18 @@
                   {locale.t("generation.novelai.reference.remove")}
                 </button>
               </div>
+              {#if sourceChar}
+                <div class="flex items-center gap-1.5">
+                  <span
+                    class="inline-block max-w-[12rem] truncate rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-px text-[10px] text-indigo-200"
+                    title={locale.t("generation.novelai.reference.from_character_tip", {
+                      name: sourceChar.name,
+                    })}
+                  >
+                    {sourceChar.name}
+                  </span>
+                </div>
+              {/if}
               {#if supportsOutfits && novelAiReferenceSupportsSameOutfit(reference.description)}
                 <label class="flex items-center gap-1.5 text-[11px] text-neutral-300">
                   <input

@@ -4958,6 +4958,7 @@ const ru: Record<string, string> = {
   "generation.novelai.reference.image_enhance_active": "Precise Reference включён ({count}: {modes}) и участвует в этом проходе (+{anlas} Anlas).",
   "generation.novelai.reference.style_creator_active": "Precise Reference включён ({count}) для каждой карточки (+{anlas} Anlas за карточку).",
   "generation.novelai.reference.forced_high_note": "High effort обязателен при активном Precise Reference.",
+  "generation.novelai.reference.from_character_tip": "Прикреплено из сохранённого персонажа: {name}",
   "characters.editor.references": "Референсы",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "Автоприкрепление Precise Reference включено ({count} изобр., +{anlas} Anlas). Нажмите, чтобы отключить.",

@@ -4944,6 +4944,7 @@ const en: Record<string, string> = {
   "generation.novelai.reference.image_enhance_active": "Precise Reference is enabled ({count}: {modes}) and included on this pass (+{anlas} Anlas).",
   "generation.novelai.reference.style_creator_active": "Precise Reference is enabled ({count}) on every card (+{anlas} Anlas per card).",
   "generation.novelai.reference.forced_high_note": "High effort is required whenever Precise Reference is active.",
+  "generation.novelai.reference.from_character_tip": "Attached from saved character: {name}",
   "generation.novelai.vibe.title": "Vibe Transfer",
   "generation.novelai.vibe.tip": "Carries the mood, palette and style of a reference image into the result.",
   "generation.novelai.vibe.add": "Add image",

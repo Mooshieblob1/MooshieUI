@@ -4958,6 +4958,7 @@ const ko: Record<string, string> = {
   "generation.novelai.reference.image_enhance_active": "Precise Reference가 활성화되어 있으며({count}개: {modes}) 이 작업에 포함됩니다(+{anlas} Anlas).",
   "generation.novelai.reference.style_creator_active": "Precise Reference가 활성화되어({count}개) 모든 카드에 적용됩니다(카드당 +{anlas} Anlas).",
   "generation.novelai.reference.forced_high_note": "Precise Reference가 활성화되면 High effort가 필요합니다.",
+  "generation.novelai.reference.from_character_tip": "저장된 캐릭터에서 첨부됨: {name}",
   "characters.editor.references": "레퍼런스",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "Precise Reference 자동 첨부 켜짐({count}장, +{anlas} Anlas). 클릭하여 끄기.",

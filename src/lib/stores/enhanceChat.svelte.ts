@@ -9,7 +9,9 @@ import { stripPromptComments } from "../utils/promptComments.js";
 import { joinPromptBoxes } from "../utils/promptSanitize.js";
 import {
   attachCharacterPreciseReferences,
+  pruneUnselectedAutoCharacterReferences,
   removeDirectorReferencesByImages,
+  restoreDirectorReferences,
 } from "../utils/characterPreciseRef.js";
 import { effectiveCharacterPreciseReferences } from "../utils/characterPreciseRefLogic.js";
 import { NOVELAI_MAX_DIRECTOR_REFERENCES, naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
@@ -27,7 +29,7 @@ import {
   positionFromX,
   type OutfitFields,
 } from "../utils/naiOutfits.js";
-import type { NovelAiCharacter } from "../types/index.js";
+import type { NovelAiCharacter, NovelAiDirectorReference } from "../types/index.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
 import type { NaiCanonPriority } from "../utils/naiSavedCharacters.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
@@ -181,6 +183,8 @@ interface UndoSnapshot {
   characters: NovelAiCharacter[];
   /** Precise Reference base64 strings attached by this Enhance apply so Undo removes only those. */
   addedDirectorRefImages?: string[];
+  /** Stale auto-attached character references pruned on this Enhance apply, restored on Undo. */
+  removedCharacterRefs?: NovelAiDirectorReference[];
   /** Present only when "Curate it" changed the generation settings too. */
   curate?: {
     checkpoint: string;
@@ -783,14 +787,22 @@ class EnhanceChatStore {
   private async attachPendingCharacterRefs(
     cards: readonly SavedCharacter[],
     snap: UndoSnapshot,
+    pruneStale: boolean,
   ): Promise<void> {
+    const keepIds = new Set(cards.map((c) => c.id));
+    const pruned = pruneStale ? pruneUnselectedAutoCharacterReferences(keepIds) : [];
+    if (pruned.length > 0) {
+      snap.removedCharacterRefs = [...(snap.removedCharacterRefs ?? []), ...pruned];
+    }
     if (cards.length === 0) return;
     const res = await attachCharacterPreciseReferences(cards, {
       requireEnabled: true,
       forceReplaceVibes: false,
+      autoAttached: true,
     });
     if (this.snapshot !== snap) {
       if (res.addedBase64s.length > 0) removeDirectorReferencesByImages(res.addedBase64s);
+      if (pruned.length > 0) restoreDirectorReferences(pruned);
       return;
     }
     if (res.addedBase64s.length > 0) {
@@ -809,7 +821,7 @@ class EnhanceChatStore {
     }
     if (res.skippedVibes) {
       gallery.showToast(locale.t("characters.references.toast_vibes_active"), "info");
-    } else if (res.skippedFull) {
+    } else if (res.skippedFull && res.replacedCount === 0) {
       gallery.showToast(
         locale.t("generation.novelai.reference.toast_full", {
           max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
@@ -850,7 +862,9 @@ class EnhanceChatStore {
       if (generation.isNovelAi && generation.supportsNovelAiPreciseReference) {
         const disabled = new Set(this.meta[at]?.disabledCharacterRefIds ?? []);
         const refCards = this.matchedPreciseRefCards(at).filter((c) => !disabled.has(c.id));
-        if (refCards.length > 0) void this.attachPendingCharacterRefs(refCards, snap);
+        if (refCards.length > 0 || how === "replace") {
+          void this.attachPendingCharacterRefs(refCards, snap, how === "replace");
+        }
       }
     }
     this.markApplied(at);
@@ -1137,7 +1151,7 @@ class EnhanceChatStore {
     if (this.curate) generation.applyNovelAiCurate();
     generation.saveSettings();
 
-    if (generation.isNovelAi && generation.supportsNovelAiPreciseReference && p.selectedCharacterRefIds.length > 0) {
+    if (generation.isNovelAi && generation.supportsNovelAiPreciseReference && this.snapshot) {
       const byId = new Map(savedCharacters.characters.map((c) => [c.id, c]));
       const cards = p.selectedCharacterRefIds
         .map((id) => byId.get(id))
@@ -1149,9 +1163,7 @@ class EnhanceChatStore {
                 effectiveCharacterPreciseReferences(c).length > 0,
             ),
         );
-      if (cards.length > 0 && this.snapshot) {
-        void this.attachPendingCharacterRefs(cards, this.snapshot);
-      }
+      void this.attachPendingCharacterRefs(cards, this.snapshot, true);
     }
 
     if (p.answerAt !== undefined && p.base.selected && p.uc.selected && p.characters.every((c) => c.selected)) {
@@ -1253,6 +1265,9 @@ class EnhanceChatStore {
       generation.updateNovelAiSettings({ characters: snap.characters });
       if (snap.addedDirectorRefImages?.length) {
         removeDirectorReferencesByImages(snap.addedDirectorRefImages);
+      }
+      if (snap.removedCharacterRefs?.length) {
+        restoreDirectorReferences(snap.removedCharacterRefs);
       }
       generation.saveSettings();
     }

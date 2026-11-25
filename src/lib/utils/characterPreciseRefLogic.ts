@@ -14,7 +14,20 @@ import {
   NAI_REF_CHARACTER_STYLE_ANY_OUTFIT,
   NAI_REF_OUTFIT,
   NAI_REF_STYLE,
+  NOVELAI_MAX_DIRECTOR_REFERENCES,
 } from "./novelaiModels.js";
+
+/** Structural slice of an active Precise Reference entry on the generation panel. */
+export interface DirectorRefEntry {
+  image: string;
+  description: string;
+  strength: number;
+  fidelity: number;
+  enabled?: boolean;
+  source_character_id?: string;
+  source_ref_id?: string;
+  auto_attached?: boolean;
+}
 
 /** Structural slice of a saved Precise Reference entry on a character card. */
 export interface CharacterPreciseReferenceData {
@@ -208,4 +221,123 @@ export function matchCharacterCardsInText<T extends DetectCard>(
   return [...bestByFamily.values()]
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map((entry) => entry.card);
+}
+
+/**
+ * Remove Precise Reference entries belonging to `characterId` (and optionally
+ * only a specific `refId` on that character), also matching untagged legacy
+ * entries whose base64 `image` sits in `legacyImages`.
+ */
+export function removeCharacterDirectorReferences<T extends DirectorRefEntry>(
+  refs: readonly T[],
+  characterId: string,
+  opts?: { refId?: string; legacyImages?: ReadonlySet<string> },
+): { next: T[]; removed: T[] } {
+  const next: T[] = [];
+  const removed: T[] = [];
+  for (const r of refs) {
+    const taggedMatch =
+      r.source_character_id === characterId &&
+      (opts?.refId === undefined || r.source_ref_id === opts.refId);
+    const legacyMatch = !r.source_character_id && Boolean(opts?.legacyImages?.has(r.image));
+    if (taggedMatch || legacyMatch) removed.push(r);
+    else next.push(r);
+  }
+  return { next, removed };
+}
+
+/**
+ * Replace any existing entries owned by `characterId` (or matching untagged
+ * `legacyImages`) in place with `replacements`, skipping duplicates owned by
+ * other entries and stopping at `max`.
+ */
+export function reconcileCharacterDirectorReferences<T extends DirectorRefEntry>(
+  refs: readonly T[],
+  characterId: string,
+  replacements: readonly T[],
+  opts?: { max?: number; legacyImages?: ReadonlySet<string> },
+): { next: T[]; added: T[]; skippedFull: boolean; duplicateCount: number } {
+  const max = opts?.max ?? NOVELAI_MAX_DIRECTOR_REFERENCES;
+  const remaining: T[] = [];
+  let insertAt = -1;
+  for (const r of refs) {
+    const taggedMatch = r.source_character_id === characterId;
+    const legacyMatch = !r.source_character_id && Boolean(opts?.legacyImages?.has(r.image));
+    if (taggedMatch || legacyMatch) {
+      if (insertAt === -1) insertAt = remaining.length;
+    } else {
+      remaining.push(r);
+    }
+  }
+  if (insertAt === -1) insertAt = remaining.length;
+
+  const existingImages = new Set(remaining.map((r) => r.image));
+  const added: T[] = [];
+  let skippedFull = false;
+  let duplicateCount = 0;
+
+  for (const item of replacements) {
+    if (existingImages.has(item.image)) {
+      duplicateCount += 1;
+      continue;
+    }
+    if (remaining.length + added.length >= max) {
+      skippedFull = true;
+      break;
+    }
+    existingImages.add(item.image);
+    added.push(item);
+  }
+
+  const next = [...remaining];
+  next.splice(insertAt, 0, ...added);
+  return { next, added, skippedFull, duplicateCount };
+}
+
+/** Update description, strength, or fidelity on attached entries matching `(characterId, refId)`. */
+export function patchCharacterDirectorReference<T extends DirectorRefEntry>(
+  refs: readonly T[],
+  characterId: string,
+  refId: string,
+  patch: Partial<Pick<DirectorRefEntry, "description" | "strength" | "fidelity">>,
+): { next: T[]; changed: boolean } {
+  let changed = false;
+  const next = refs.map((r) => {
+    if (r.source_character_id !== characterId || r.source_ref_id !== refId) return r;
+    const updated = { ...r, ...patch };
+    if (
+      updated.description !== r.description ||
+      updated.strength !== r.strength ||
+      updated.fidelity !== r.fidelity
+    ) {
+      changed = true;
+      return updated;
+    }
+    return r;
+  });
+  return { next, changed };
+}
+
+/**
+ * Remove stale `auto_attached` character entries not present in `keepCharacterIds`.
+ * Manual uploads (`!source_character_id`) and manual `auto_attached === false` entries stay.
+ */
+export function pruneAutoAttachedCharacterReferences<T extends DirectorRefEntry>(
+  refs: readonly T[],
+  keepCharacterIds: ReadonlySet<string>,
+): { next: T[]; removed: T[] } {
+  const next: T[] = [];
+  const removed: T[] = [];
+  for (const r of refs) {
+    if (
+      r.source_character_id !== undefined &&
+      r.auto_attached === true &&
+      !keepCharacterIds.has(r.source_character_id)
+    ) {
+      removed.push(r);
+    } else {
+      next.push(r);
+    }
+  }
+  return { next, removed };
 }

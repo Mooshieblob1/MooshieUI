@@ -6,6 +6,11 @@ import {
   effectiveCharacterPreciseReferences,
   matchCharacterCardsInText,
   normalizeCharacterReferenceDescription,
+  patchCharacterDirectorReference,
+  pruneAutoAttachedCharacterReferences,
+  reconcileCharacterDirectorReferences,
+  removeCharacterDirectorReferences,
+  type DirectorRefEntry,
 } from "../../src/lib/utils/characterPreciseRefLogic.ts";
 import {
   NAI_REF_CHARACTER,
@@ -180,4 +185,180 @@ test("matchCharacterCardsInText matches names, short/CJK names, variant qualifie
     characters: ["1girl, silver hair, blue eyes, mage hat, warm smile"],
   });
   assert.deepEqual(followupHit.map((c) => c.id), ["other"]);
+});
+
+test("reconcileCharacterDirectorReferences replaces prior owned and legacy entries in place without doubling", () => {
+  const manual: DirectorRefEntry = {
+    image: "MANUAL_IMG",
+    description: NAI_REF_STYLE,
+    strength: 1.0,
+    fidelity: 1.0,
+    enabled: true,
+  };
+  const oldLegacyCardPic: DirectorRefEntry = {
+    image: "CARD_FALLBACK_IMG",
+    description: NAI_REF_CHARACTER,
+    strength: 1.0,
+    fidelity: 1.0,
+    enabled: true,
+  };
+  const bobRef: DirectorRefEntry = {
+    image: "BOB_IMG",
+    description: NAI_REF_CHARACTER_MAIN_OUTFIT,
+    strength: 1.0,
+    fidelity: 1.0,
+    enabled: true,
+    source_character_id: "bob",
+    source_ref_id: "r_bob",
+    auto_attached: true,
+  };
+  const replacementAlice: DirectorRefEntry = {
+    image: "NEW_ALICE_PR_IMG",
+    description: NAI_REF_CHARACTER_MAIN_OUTFIT,
+    strength: 1.25,
+    fidelity: 1.0,
+    enabled: true,
+    source_character_id: "alice",
+    source_ref_id: "r_alice_1",
+    auto_attached: true,
+  };
+
+  // Alice's legacy untagged card picture sits at index 0 ahead of manual & bob.
+  const initial = [oldLegacyCardPic, manual, bobRef];
+  const res = reconcileCharacterDirectorReferences(initial, "alice", [replacementAlice], {
+    legacyImages: new Set(["CARD_FALLBACK_IMG"]),
+  });
+  assert.equal(res.added.length, 1);
+  assert.deepEqual(
+    res.next.map((r) => ({ image: r.image, desc: r.description })),
+    [
+      { image: "NEW_ALICE_PR_IMG", desc: NAI_REF_CHARACTER_MAIN_OUTFIT },
+      { image: "MANUAL_IMG", desc: NAI_REF_STYLE },
+      { image: "BOB_IMG", desc: NAI_REF_CHARACTER_MAIN_OUTFIT },
+    ],
+  );
+
+  // Re-attaching Alice's updated ref replaces NEW_ALICE_PR_IMG cleanly, never creating count=2.
+  const replacementAlice2: DirectorRefEntry = {
+    ...replacementAlice,
+    image: "ALICE_V2_IMG",
+    description: NAI_REF_CHARACTER,
+  };
+  const res2 = reconcileCharacterDirectorReferences(res.next, "alice", [replacementAlice2]);
+  assert.equal(res2.next.length, 3);
+  assert.equal(res2.next[0].image, "ALICE_V2_IMG");
+  assert.equal(res2.next[0].description, NAI_REF_CHARACTER);
+
+  // Duplicate against manual ref is skipped, and cap=2 skips overflow.
+  const capped = reconcileCharacterDirectorReferences(
+    [manual, bobRef],
+    "alice",
+    [
+      { ...replacementAlice, image: "MANUAL_IMG" },
+      { ...replacementAlice, image: "ALICE_3" },
+    ],
+    { max: 2 },
+  );
+  assert.equal(capped.duplicateCount, 1);
+  assert.equal(capped.skippedFull, true);
+  assert.equal(capped.next.length, 2);
+});
+
+test("removeCharacterDirectorReferences removes by character id, refId, and legacy image while sparing manual refs", () => {
+  const manual: DirectorRefEntry = {
+    image: "MANUAL_IMG",
+    description: NAI_REF_STYLE,
+    strength: 1,
+    fidelity: 1,
+  };
+  const legacyUntagged: DirectorRefEntry = {
+    image: "LEGACY_CARD_IMG",
+    description: NAI_REF_CHARACTER,
+    strength: 1,
+    fidelity: 1,
+  };
+  const alice1: DirectorRefEntry = {
+    image: "A1",
+    description: NAI_REF_CHARACTER,
+    strength: 1,
+    fidelity: 1,
+    source_character_id: "alice",
+    source_ref_id: "ref1",
+    auto_attached: true,
+  };
+  const alice2: DirectorRefEntry = {
+    image: "A2",
+    description: NAI_REF_OUTFIT,
+    strength: 2,
+    fidelity: 1,
+    source_character_id: "alice",
+    source_ref_id: "ref2",
+    auto_attached: true,
+  };
+
+  const singleRemoved = removeCharacterDirectorReferences([manual, alice1, alice2], "alice", {
+    refId: "ref1",
+  });
+  assert.equal(singleRemoved.removed.length, 1);
+  assert.deepEqual(
+    singleRemoved.next.map((r) => r.image),
+    ["MANUAL_IMG", "A2"],
+  );
+
+  const allRemoved = removeCharacterDirectorReferences(
+    [manual, legacyUntagged, alice1, alice2],
+    "alice",
+    { legacyImages: new Set(["LEGACY_CARD_IMG"]) },
+  );
+  assert.equal(allRemoved.removed.length, 3);
+  assert.deepEqual(
+    allRemoved.next.map((r) => r.image),
+    ["MANUAL_IMG"],
+  );
+});
+
+test("patchCharacterDirectorReference and pruneAutoAttachedCharacterReferences keep live state aligned", () => {
+  const manual: DirectorRefEntry = {
+    image: "MANUAL",
+    description: NAI_REF_STYLE,
+    strength: 1,
+    fidelity: 1,
+  };
+  const manualCharRef: DirectorRefEntry = {
+    image: "BOB_MANUAL",
+    description: NAI_REF_CHARACTER,
+    strength: 1,
+    fidelity: 1,
+    source_character_id: "bob",
+    source_ref_id: "__card__",
+    auto_attached: false,
+  };
+  const autoAlice: DirectorRefEntry = {
+    image: "ALICE_AUTO",
+    description: NAI_REF_CHARACTER,
+    strength: 1,
+    fidelity: 1,
+    source_character_id: "alice",
+    source_ref_id: "r1",
+    auto_attached: true,
+  };
+
+  const patched = patchCharacterDirectorReference([manual, autoAlice], "alice", "r1", {
+    description: NAI_REF_CHARACTER_MAIN_OUTFIT,
+    strength: 2.5,
+  });
+  assert.equal(patched.changed, true);
+  assert.equal(patched.next[1].description, NAI_REF_CHARACTER_MAIN_OUTFIT);
+  assert.equal(patched.next[1].strength, 2.5);
+
+  const pruned = pruneAutoAttachedCharacterReferences(
+    [manual, manualCharRef, patched.next[1]],
+    new Set(),
+  );
+  assert.equal(pruned.removed.length, 1);
+  assert.equal(pruned.removed[0].image, "ALICE_AUTO");
+  assert.deepEqual(
+    pruned.next.map((r) => r.image),
+    ["MANUAL", "BOB_MANUAL"],
+  );
 });

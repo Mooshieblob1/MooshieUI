@@ -175,6 +175,12 @@ export interface NovelAiDirectorReference {
    * disabled entries stay in the panel with their settings without being sent or billed.
    */
   enabled?: boolean;
+  /** Frontend-only provenance: saved character id when attached from Characters. */
+  source_character_id?: string;
+  /** Frontend-only provenance: entry id (`ref.id` or `"__card__"`) on that character card. */
+  source_ref_id?: string;
+  /** Frontend-only: true when auto-attached via Use/Enhance (eligible for Enhance scene prune). */
+  auto_attached?: boolean;
 }
 
 /**
