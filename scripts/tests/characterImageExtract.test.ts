@@ -155,3 +155,57 @@ test("partitionExtracted separates fresh, differing matches, and exact duplicate
   assert.equal(matches[0].saved.id, "2");
   assert.equal(matches[0].item.prompt, "hakurei reimu, brown hair, red bow");
 });
+
+test("combined prompt + imageTags requests enrich details while holding to prompt and negative exclusions", () => {
+  const prompt = "1girl, silver knight, forest";
+  const negative = "blue eyes, lowres";
+  const imageTags = "silver hair, plate armor, blue cape, blue eyes, masterpiece, 1girl";
+  const saved = [
+    { name: "Silver Knight", prompt: "silver hair, plate armor" },
+    { name: "Cape Girl", prompt: "blue cape, twintails" },
+  ];
+
+  const req = characterExtractRequest(prompt, negative, saved, "tags", imageTags);
+  assert.match(req.system, /tags observed by an image tagger/i);
+  assert.match(req.prompt, /Observed image tags[\s\S]*plate armor/);
+  assert.ok(req.prompt.includes("Cape Girl"));
+
+  // Keeps prompt + observed image details, drops hallucinated traits and UC-excluded blue eyes.
+  const grounded = groundExtracted(
+    [
+      found(
+        "Silver Knight",
+        "1girl, silver hair, plate armor, blue cape, blue eyes, magic wings, masterpiece",
+        "blue eyes, lowres",
+      ),
+    ],
+    prompt,
+    negative,
+    "tags",
+    imageTags,
+  );
+  assert.equal(grounded.length, 1);
+  assert.equal(grounded[0].prompt, "silver hair, plate armor, blue cape");
+  assert.equal(grounded[0].negative, "blue eyes");
+
+  // Natural-language targets still keep prose when imageTags are provided.
+  const naturalItems = [found("Silver Knight", "knight with silver hair and steel plate armor")];
+  assert.deepEqual(groundExtracted(naturalItems, prompt, negative, "natural", imageTags), naturalItems);
+
+  // NovelAI character box isolation still prevents leaking another box's tags even with imageTags.
+  const boxPrompt = "2girls\nCharacter 1: girl, red hair\nCharacter 2: girl, blonde hair, glasses";
+  const boxGrounded = groundExtracted(
+    [
+      found("Red Girl", "girl, red hair, glasses"),
+      found("Blonde Girl", "girl, blonde hair, glasses"),
+    ],
+    boxPrompt,
+    "",
+    "tags",
+    "red hair, blonde hair, glasses",
+  );
+  assert.deepEqual(
+    boxGrounded.map((c) => c.prompt),
+    ["girl, red hair", "girl, blonde hair, glasses"],
+  );
+});

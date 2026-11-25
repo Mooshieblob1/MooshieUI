@@ -52,7 +52,7 @@
   import { applyCharacterExtractDecisions } from "../../utils/characterExtractFlow.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import { progress } from "../../stores/progress.svelte.js";
-  import type { OutputImage } from "../../types/index.js";
+  import type { InterrogationResult, OutputImage } from "../../types/index.js";
   import {
     type CharacterImages,
     blobToCharacterThumbnail,
@@ -78,8 +78,9 @@
 
   let search = $state("");
   let extracting = $state(false);
-  let imageExtracting = $state(false);
+  let extractPhase = $state<"idle" | "interrogating" | "extracting">("idle");
   let switchingToInterrogator = $state(false);
+  let switchingToPromptOnly = $state(false);
   let imagePickerOpen = $state(false);
   let imageGalleryPickerOpen = $state(false);
   let imagePickerDragOver = $state(false);
@@ -111,6 +112,7 @@
     sourceKind?: ExtractSourceKind;
     sourceImages?: CharacterImages | null;
     captured?: CapturedImageSource;
+    canPromptOnly?: boolean;
   } | null>(null);
 
   /** Top-level cards whose variants are showing. */
@@ -404,66 +406,213 @@
     }));
   }
 
-  async function extract() {
-    const arch = architecture;
-    if (!arch || extracting || imageExtracting) return;
-    const activeBoxes = generation.isNovelAi
+  const hasCurrentImage = $derived(
+    Boolean(progress.lastOutputImage || gallery.sessionImages.some((image) => !isVideoImage(image))),
+  );
+  const hasCurrentPrompt = $derived(Boolean(extractionSource()));
+
+  function activePromptBoxes(): { prompt: string; negative: string }[] {
+    return generation.isNovelAi
       ? generation.activeNovelAiCharacters.map((c) => ({
           prompt: c.prompt,
           negative: c.negative_prompt,
         }))
       : [];
-    const hasBoxes = activeBoxes.some((c) => c.prompt.trim());
-    if (!hasBoxes && !promptAssistant.isAvailable) {
-      promptAssistant.setupModalOpen = true;
+  }
+
+  function handleExtractError(e: unknown) {
+    console.error("Character extraction failed:", e);
+    const msg = String(e);
+    gallery.showToast(
+      msg.includes("invalid_character_extract")
+        ? locale.t("characters.toast.invalid_reply")
+        : mapLlmError(msg),
+      "error",
+    );
+  }
+
+  function finishExtracted(
+    found: ExtractedCharacter[],
+    saved: SavedCharacter[],
+    opts: {
+      arch: string;
+      sourceKind: ExtractSourceKind;
+      sourceImages?: CharacterImages | null;
+      captured?: CapturedImageSource;
+      canPromptOnly?: boolean;
+      clearOnEmpty?: boolean;
+    },
+  ) {
+    if (found.length === 0) {
+      if (opts.clearOnEmpty) extractReview = null;
+      gallery.showToast(locale.t("characters.toast.none_found"), "info");
       return;
     }
+    const { matches, fresh } = partitionExtracted(found, saved);
+    if (fresh.length === 0 && matches.length === 0) {
+      if (opts.clearOnEmpty) extractReview = null;
+      gallery.showToast(locale.t("characters.toast.already_saved"), "info");
+      return;
+    }
+    extractReview = {
+      arch: opts.arch,
+      fresh,
+      matches,
+      sourceKind: opts.sourceKind,
+      sourceImages: opts.sourceImages ?? null,
+      captured: opts.captured,
+      canPromptOnly: opts.canPromptOnly ?? false,
+    };
+  }
+
+  async function performPromptExtraction(
+    arch: string,
+    opts?: {
+      sourceImages?: CharacterImages | null;
+      captured?: CapturedImageSource;
+      clearOnEmpty?: boolean;
+    },
+  ) {
+    const activeBoxes = activePromptBoxes();
+    const hasBoxes = activeBoxes.some((c) => c.prompt.trim());
     const source = extractionSource();
     if (!source) {
       gallery.showToast(locale.t("characters.toast.empty_prompt"), "error");
       return;
     }
-    extracting = true;
-    try {
-      const negative = extractionNegative();
-      const saved = savedCharacters.currentCharacters;
-      const found =
-        (hasBoxes ? await charactersFromBoxes(saved, activeBoxes) : null) ??
-        (await promptAssistant.extractCharacters(source, negative, saved));
-      if (found.length === 0) {
-        gallery.showToast(locale.t("characters.toast.none_found"), "info");
-        return;
-      }
-      const { matches, fresh } = partitionExtracted(found, saved);
-      if (fresh.length === 0 && matches.length === 0) {
-        gallery.showToast(locale.t("characters.toast.already_saved"), "info");
-        return;
-      }
-      extractReview = { arch, fresh, matches };
-    } catch (e) {
-      console.error("Character extraction failed:", e);
-      const msg = String(e);
-      gallery.showToast(
-        msg.includes("invalid_character_extract")
-          ? locale.t("characters.toast.invalid_reply")
-          : mapLlmError(msg),
-        "error",
-      );
-    } finally {
-      extracting = false;
-    }
+    const negative = extractionNegative();
+    const saved = savedCharacters.currentCharacters;
+    const targetStyle = architecturePromptStyle(arch);
+    const found =
+      (hasBoxes ? await charactersFromBoxes(saved, activeBoxes) : null) ??
+      (await promptAssistant.extractCharacters(source, negative, saved, targetStyle));
+    finishExtracted(found, saved, {
+      arch,
+      sourceKind: "prompt",
+      sourceImages: opts?.sourceImages,
+      captured: opts?.captured,
+      clearOnEmpty: opts?.clearOnEmpty,
+    });
   }
 
-  const hasCurrentImage = $derived(
-    Boolean(progress.lastOutputImage || gallery.sessionImages.some((image) => !isVideoImage(image))),
-  );
-
-  function openImagePicker() {
-    if (!architecture || extracting || imageExtracting) return;
-    if (!promptAssistant.isAvailable) {
+  async function extractPromptOnly(opts?: {
+    asSwitch?: boolean;
+    sourceImages?: CharacterImages | null;
+    captured?: CapturedImageSource;
+  }) {
+    const arch = architecture;
+    if (!arch) return;
+    imagePickerOpen = false;
+    const hasBoxes = activePromptBoxes().some((c) => c.prompt.trim());
+    if (!hasBoxes && !promptAssistant.isAvailable) {
       promptAssistant.setupModalOpen = true;
       return;
     }
+    if (!extractionSource()) {
+      gallery.showToast(locale.t("characters.toast.empty_prompt"), "error");
+      return;
+    }
+    if (opts?.asSwitch) {
+      if (switchingToPromptOnly || switchingToInterrogator) return;
+      switchingToPromptOnly = true;
+    } else {
+      if (extracting) return;
+      extracting = true;
+      extractPhase = "extracting";
+    }
+    try {
+      await performPromptExtraction(arch, {
+        sourceImages: opts?.sourceImages,
+        captured: opts?.captured,
+        clearOnEmpty: opts?.asSwitch,
+      });
+    } catch (e) {
+      handleExtractError(e);
+    } finally {
+      if (opts?.asSwitch) {
+        switchingToPromptOnly = false;
+      } else {
+        extracting = false;
+        extractPhase = "idle";
+      }
+    }
+  }
+
+  async function extract() {
+    const arch = architecture;
+    if (!arch || extracting) return;
+    const hasPrompt = Boolean(extractionSource());
+    const hasCurrent = hasCurrentImage;
+
+    if (!hasPrompt && !hasCurrent) {
+      if (!promptAssistant.isAvailable) {
+        promptAssistant.setupModalOpen = true;
+      } else {
+        imagePickerOpen = true;
+      }
+      return;
+    }
+    if (!hasPrompt && hasCurrent) {
+      await extractFromCurrentImage();
+      return;
+    }
+    if (hasPrompt && !hasCurrent) {
+      await extractPromptOnly();
+      return;
+    }
+
+    const activeBoxes = activePromptBoxes();
+    const hasBoxes = activeBoxes.some((c) => c.prompt.trim());
+    if (!hasBoxes && !promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+
+    extracting = true;
+    extractPhase = hasBoxes ? "extracting" : "interrogating";
+    try {
+      const captured = await captureCurrentImage({ quietNoCurrent: true }).catch(() => null);
+      if (!hasBoxes && captured) {
+        const interrogated = await interrogateCaptured(captured).catch(() => null);
+        const tagSrc = interrogated ? tagsToExtractSource(interrogated) : null;
+        if (tagSrc) {
+          extractPhase = "extracting";
+          const source = extractionSource();
+          const negative = extractionNegative();
+          const saved = savedCharacters.currentCharacters;
+          const targetStyle = architecturePromptStyle(arch);
+          const found = await promptAssistant.extractCharacters(
+            source,
+            negative,
+            saved,
+            targetStyle,
+            tagSrc.prompt,
+          );
+          finishExtracted(found, saved, {
+            arch,
+            sourceKind: "combined",
+            sourceImages: captured.images,
+            captured,
+            canPromptOnly: true,
+          });
+          return;
+        }
+      }
+      extractPhase = "extracting";
+      await performPromptExtraction(arch, {
+        sourceImages: captured?.images ?? null,
+        captured: captured ?? undefined,
+      });
+    } catch (e) {
+      handleExtractError(e);
+    } finally {
+      extracting = false;
+      extractPhase = "idle";
+    }
+  }
+
+  function openImagePicker() {
+    if (!architecture || extracting) return;
     imagePickerOpen = true;
   }
 
@@ -478,18 +627,65 @@
     return clientMeta && Object.keys(clientMeta).length > 0 ? clientMeta : null;
   }
 
+  function interrogateCaptured(captured: CapturedImageSource): Promise<InterrogationResult> {
+    if (captured.kind === "gallery") return interrogateGalleryImage(captured.filename);
+    if (captured.path) return interrogateImagePath(captured.path);
+    return interrogateImage(captured.base64);
+  }
+
+  async function captureCurrentImage(options?: {
+    quietNoCurrent?: boolean;
+  }): Promise<CapturedImageSource | null> {
+    const latest = gallery.sessionImages.find((image) => !isVideoImage(image)) ?? null;
+    const displayUrl = progress.lastOutputImage;
+    if (!displayUrl && !latest) {
+      if (!options?.quietNoCurrent) {
+        gallery.showToast(locale.t("characters.thumbnail.no_current"), "info");
+      }
+      return null;
+    }
+    const images = await currentImageToCharacterThumbnail(displayUrl, latest);
+    if (latest?.gallery_filename) {
+      const meta = await readImageMetadata(latest.gallery_filename).catch(() => null);
+      return { kind: "gallery", filename: latest.gallery_filename, images, meta };
+    }
+    let uint8: Uint8Array | null = null;
+    if (latest) {
+      const bytes = await gallery.resolveImagePngBytes(latest).catch(() => null);
+      if (bytes && bytes.length > 0) {
+        uint8 = new Uint8Array(bytes);
+      } else {
+        const loaded = await loadOutputImageForGenerationInput(latest).catch(() => null);
+        if (loaded) uint8 = new Uint8Array(loaded.bytes);
+      }
+    }
+    if (!uint8 && displayUrl) {
+      const resp = await fetch(displayUrl).catch(() => null);
+      if (resp?.ok) uint8 = new Uint8Array(await resp.arrayBuffer());
+    }
+    if (!uint8 || uint8.length === 0) return null;
+    const meta = await readMetaFromBytes(uint8);
+    return {
+      kind: "bytes",
+      base64: imageBytesToBase64(Array.from(uint8)),
+      images,
+      meta,
+    };
+  }
+
   async function runImageExtraction(captured: CapturedImageSource, forceInterrogator = false) {
     const arch = architecture;
     if (!arch) return;
-    if (!forceInterrogator && imageExtracting) return;
-    if (forceInterrogator && switchingToInterrogator) return;
+    if (!forceInterrogator && extracting) return;
+    if (forceInterrogator && (switchingToInterrogator || switchingToPromptOnly)) return;
 
     imagePickerOpen = false;
     imageGalleryPickerOpen = false;
     if (forceInterrogator) {
       switchingToInterrogator = true;
     } else {
-      imageExtracting = true;
+      extracting = true;
+      extractPhase = "interrogating";
     }
     try {
       const saved = savedCharacters.currentCharacters;
@@ -498,7 +694,23 @@
       let sourceKind: ExtractSourceKind = "interrogator";
 
       const metaSrc = forceInterrogator ? null : metadataToExtractSource(captured.meta);
-      if (metaSrc) {
+      const interrogated = await interrogateCaptured(captured).catch((err) => {
+        if (metaSrc) return null;
+        throw err;
+      });
+      const tagSrc = interrogated ? tagsToExtractSource(interrogated) : null;
+
+      if (!forceInterrogator) extractPhase = "extracting";
+      if (metaSrc && tagSrc) {
+        sourceKind = "combined";
+        found = await promptAssistant.extractCharacters(
+          metaSrc.prompt,
+          metaSrc.negative,
+          saved,
+          targetStyle,
+          tagSrc.prompt,
+        );
+      } else if (metaSrc) {
         sourceKind = "metadata";
         if (metaSrc.boxes?.length && targetStyle === "tags") {
           found = (await charactersFromBoxes(saved, metaSrc.boxes)) ?? [];
@@ -510,115 +722,59 @@
             targetStyle,
           );
         }
-      } else {
-        const result =
-          captured.kind === "gallery"
-            ? await interrogateGalleryImage(captured.filename)
-            : captured.path
-              ? await interrogateImagePath(captured.path)
-              : await interrogateImage(captured.base64);
-
-        const tagSrc = tagsToExtractSource(result);
-        if (tagSrc) {
-          sourceKind = "interrogator";
-          found = await promptAssistant.extractCharacters(tagSrc.prompt, "", saved, targetStyle);
-        } else if (result.image_token) {
-          sourceKind = "describe";
-          const prose = await promptAssistant.describe(result.image_token, "detailed");
-          if (prose.trim()) {
-            found = await promptAssistant.extractCharacters(prose, "", saved, targetStyle);
-          }
+      } else if (tagSrc) {
+        sourceKind = "interrogator";
+        found = await promptAssistant.extractCharacters(tagSrc.prompt, "", saved, targetStyle);
+      } else if (interrogated?.image_token) {
+        sourceKind = "describe";
+        const prose = await promptAssistant.describe(interrogated.image_token, "detailed");
+        if (prose.trim()) {
+          found = await promptAssistant.extractCharacters(prose, "", saved, targetStyle);
         }
       }
 
-      if (found.length === 0) {
-        if (forceInterrogator) extractReview = null;
-        gallery.showToast(locale.t("characters.toast.none_found"), "info");
-        return;
-      }
-
-      const { matches, fresh } = partitionExtracted(found, saved);
-      if (fresh.length === 0 && matches.length === 0) {
-        if (forceInterrogator) extractReview = null;
-        gallery.showToast(locale.t("characters.toast.already_saved"), "info");
-        return;
-      }
-
-      extractReview = {
+      finishExtracted(found, saved, {
         arch,
-        fresh,
-        matches,
         sourceKind,
         sourceImages: captured.images,
         captured,
-      };
+        clearOnEmpty: forceInterrogator,
+      });
     } catch (e) {
-      console.error("Image character extraction failed:", e);
-      const msg = String(e);
-      gallery.showToast(
-        msg.includes("invalid_character_extract")
-          ? locale.t("characters.toast.invalid_reply")
-          : mapLlmError(msg),
-        "error",
-      );
+      handleExtractError(e);
     } finally {
       if (forceInterrogator) {
         switchingToInterrogator = false;
       } else {
-        imageExtracting = false;
+        extracting = false;
+        extractPhase = "idle";
       }
     }
   }
 
   async function extractFromCurrentImage() {
-    if (!architecture || imageExtracting || extracting) return;
-    const latest = gallery.sessionImages.find((image) => !isVideoImage(image)) ?? null;
-    const displayUrl = progress.lastOutputImage;
-    if (!displayUrl && !latest) {
-      gallery.showToast(locale.t("characters.thumbnail.no_current"), "info");
+    if (!architecture || extracting) return;
+    if (!promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
       return;
     }
     imagePickerOpen = false;
-    imageExtracting = true;
+    extracting = true;
+    extractPhase = "interrogating";
     let captured: CapturedImageSource | null = null;
     try {
-      const images = await currentImageToCharacterThumbnail(displayUrl, latest);
-      if (latest?.gallery_filename) {
-        const meta = await readImageMetadata(latest.gallery_filename).catch(() => null);
-        captured = { kind: "gallery", filename: latest.gallery_filename, images, meta };
-      } else {
-        let uint8: Uint8Array | null = null;
-        if (latest) {
-          const bytes = await gallery.resolveImagePngBytes(latest).catch(() => null);
-          if (bytes && bytes.length > 0) {
-            uint8 = new Uint8Array(bytes);
-          } else {
-            const loaded = await loadOutputImageForGenerationInput(latest).catch(() => null);
-            if (loaded) uint8 = new Uint8Array(loaded.bytes);
-          }
-        }
-        if (!uint8 && displayUrl) {
-          const resp = await fetch(displayUrl).catch(() => null);
-          if (resp?.ok) uint8 = new Uint8Array(await resp.arrayBuffer());
-        }
-        if (!uint8 || uint8.length === 0) {
-          gallery.showToast(locale.t("characters.extract_image_failed"), "error");
-          return;
-        }
-        const meta = await readMetaFromBytes(uint8);
-        captured = {
-          kind: "bytes",
-          base64: imageBytesToBase64(Array.from(uint8)),
-          images,
-          meta,
-        };
+      captured = await captureCurrentImage();
+      if (!captured) {
+        if (hasCurrentImage) gallery.showToast(locale.t("characters.extract_image_failed"), "error");
+        return;
       }
     } catch (e) {
       console.error("Failed to read current image:", e);
       gallery.showToast(locale.t("characters.extract_image_failed"), "error");
       return;
     } finally {
-      imageExtracting = false;
+      extracting = false;
+      extractPhase = "idle";
     }
     if (captured) await runImageExtraction(captured);
   }
@@ -626,8 +782,13 @@
   async function extractFromGalleryImage(picked: OutputImage[]) {
     imageGalleryPickerOpen = false;
     const image = picked[0];
-    if (!image || !architecture || imageExtracting || extracting) return;
-    imageExtracting = true;
+    if (!image || !architecture || extracting) return;
+    if (!promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    extracting = true;
+    extractPhase = "interrogating";
     let captured: CapturedImageSource | null = null;
     try {
       const images = await outputImageToCharacterThumbnail(image).catch(() => null);
@@ -650,15 +811,21 @@
       gallery.showToast(locale.t("characters.extract_image_failed"), "error");
       return;
     } finally {
-      imageExtracting = false;
+      extracting = false;
+      extractPhase = "idle";
     }
     if (captured) await runImageExtraction(captured);
   }
 
   async function extractFromBlobBuffer(uint8: Uint8Array, rawBuffer?: ArrayBuffer, path?: string) {
-    if (!architecture || imageExtracting || extracting) return;
+    if (!architecture || extracting) return;
+    if (!promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
     imagePickerOpen = false;
-    imageExtracting = true;
+    extracting = true;
+    extractPhase = "interrogating";
     let captured: CapturedImageSource | null = null;
     try {
       const images = await blobToCharacterThumbnail(new Blob([uint8 as unknown as BlobPart]));
@@ -677,7 +844,8 @@
       gallery.showToast(locale.t("characters.extract_image_failed"), "error");
       return;
     } finally {
-      imageExtracting = false;
+      extracting = false;
+      extractPhase = "idle";
     }
     if (captured) await runImageExtraction(captured);
   }
@@ -1255,38 +1423,37 @@
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
     </button>
-    <button
-      type="button"
-      class="shrink-0 px-2.5 py-1 text-[11px] font-medium rounded border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-      onclick={openImagePicker}
-      disabled={!architecture || extracting || imageExtracting || (promptAssistant.isGenerating && !extracting && !imageExtracting)}
-      title={locale.t("characters.extract_from_image_tip")}
-    >
-      {#if imageExtracting}
-        <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
-        {locale.t("characters.extracting")}
-      {:else}
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        {locale.t("characters.extract_from_image")}
-      {/if}
-    </button>
-    <button
-      type="button"
-      class="shrink-0 px-2.5 py-1 text-[11px] font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-      onclick={extract}
-      disabled={!architecture || extracting || imageExtracting || (promptAssistant.isGenerating && !extracting && !imageExtracting)}
-      title={locale.t("characters.extract_tip")}
-    >
-      {#if extracting}
-        <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
-        {promptAssistant.stage === "loading_model"
-          ? locale.t("prompt_assistant.loading_model")
-          : locale.t("characters.extracting")}
-      {:else}
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        {locale.t("characters.extract")}
-      {/if}
-    </button>
+    <div class="inline-flex items-stretch shrink-0">
+      <button
+        type="button"
+        class="px-2.5 py-1 text-[11px] font-medium rounded-l bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+        onclick={extract}
+        disabled={!architecture || extracting || (promptAssistant.isGenerating && !extracting)}
+        title={locale.t("characters.extract_tip")}
+      >
+        {#if extracting}
+          <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+          {promptAssistant.stage === "loading_model"
+            ? locale.t("prompt_assistant.loading_model")
+            : extractPhase === "interrogating"
+              ? locale.t("characters.switching_to_interrogator")
+              : locale.t("characters.extracting")}
+        {:else}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          {locale.t("characters.extract")}
+        {/if}
+      </button>
+      <button
+        type="button"
+        class="px-1.5 py-1 rounded-r bg-indigo-600 hover:bg-indigo-500 border-l border-indigo-400/40 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+        onclick={openImagePicker}
+        disabled={!architecture || extracting || (promptAssistant.isGenerating && !extracting)}
+        title={locale.t("characters.extract_more")}
+        aria-label={locale.t("characters.extract_more")}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
   </div>
 
   {#if !architecture}
@@ -1342,6 +1509,16 @@
     {switchingToInterrogator}
     onSwitchToInterrogator={extractReview.captured
       ? () => void runImageExtraction(extractReview!.captured!, true)
+      : undefined}
+    canSwitchToPromptOnly={Boolean(extractReview.canPromptOnly)}
+    {switchingToPromptOnly}
+    onSwitchToPromptOnly={extractReview.canPromptOnly
+      ? () =>
+          void extractPromptOnly({
+            asSwitch: true,
+            sourceImages: extractReview?.sourceImages ?? null,
+            captured: extractReview?.captured,
+          })
       : undefined}
     onsave={applyExtractReview}
     onclose={() => { extractReview = null; }}
@@ -1446,6 +1623,16 @@
         >✕</button>
       </div>
       <div class="p-4 space-y-2">
+        {#if hasCurrentPrompt && hasCurrentImage}
+          <button
+            type="button"
+            class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-xs font-medium text-neutral-100 transition-colors"
+            onclick={() => void extractPromptOnly()}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+            {locale.t("characters.extract_source.prompt_only")}
+          </button>
+        {/if}
         {#if hasCurrentImage}
           <button
             type="button"
@@ -1453,7 +1640,7 @@
             onclick={() => void extractFromCurrentImage()}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-            {locale.t("characters.extract_source.current")}
+            {locale.t("characters.extract_source.current_only")}
           </button>
         {/if}
         <button

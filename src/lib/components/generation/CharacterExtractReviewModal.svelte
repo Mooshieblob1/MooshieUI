@@ -54,6 +54,9 @@
     canSwitchToInterrogator?: boolean;
     switchingToInterrogator?: boolean;
     onSwitchToInterrogator?: () => void;
+    canSwitchToPromptOnly?: boolean;
+    switchingToPromptOnly?: boolean;
+    onSwitchToPromptOnly?: () => void;
     onsave: (decisions: DuplicateDecision[], named: NewCharacterDecision[]) => void;
     onclose: () => void;
   }
@@ -66,6 +69,9 @@
     canSwitchToInterrogator = false,
     switchingToInterrogator = false,
     onSwitchToInterrogator,
+    canSwitchToPromptOnly = false,
+    switchingToPromptOnly = false,
+    onSwitchToPromptOnly,
     onsave,
     onclose,
   }: Props = $props();
@@ -167,15 +173,27 @@
           <h3 class="text-sm font-semibold text-neutral-100">
             {locale.t(namingOnly ? "characters.naming.title" : "characters.dupes.title")}
           </h3>
-          {#if sourceKind === "metadata" || sourceKind === "interrogator" || sourceKind === "describe"}
+          {#if sourceKind && sourceKind !== "prompt"}
             <span class="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-[10px] font-medium text-neutral-300">
               {locale.t(`characters.extract_source.${sourceKind}`)}
             </span>
           {/if}
-          {#if sourceKind === "metadata" && canSwitchToInterrogator && onSwitchToInterrogator}
+          {#if sourceKind === "combined" && canSwitchToPromptOnly && onSwitchToPromptOnly}
             <button
               type="button"
-              disabled={switchingToInterrogator}
+              disabled={switchingToPromptOnly || switchingToInterrogator}
+              onclick={onSwitchToPromptOnly}
+              class="rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+            >
+              {switchingToPromptOnly
+                ? locale.t("characters.extracting")
+                : locale.t("characters.use_prompt_only")}
+            </button>
+          {/if}
+          {#if (sourceKind === "metadata" || sourceKind === "combined") && canSwitchToInterrogator && onSwitchToInterrogator}
+            <button
+              type="button"
+              disabled={switchingToInterrogator || switchingToPromptOnly}
               onclick={onSwitchToInterrogator}
               class="rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
             >

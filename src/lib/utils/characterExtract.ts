@@ -94,6 +94,9 @@ const NATURAL_TARGET_RULES =
 const TAG_TARGET_RULES =
   "\n\nTarget style: the saved card stores comma-separated appearance tags, not full sentences. Convert each character's extracted appearance details (and negative traits, if any) into concise comma-separated tags while keeping every detail strictly faithful to what the input states.";
 
+const IMAGE_TAGS_RULES =
+  "\n\nYou are also given tags observed by an image tagger on the rendered image. Use them to fill in concrete visible appearance details for the characters (hair, eyes, outfit, accessories) that the prompt left vague or that a model/LoRA added. Keep the prompt's own character identity and names first, ignore tagger noise that contradicts the prompt or negative prompt, and still leave out pose, expression, camera, background, lighting, count, quality and artist tags.";
+
 export const CHARACTER_EXTRACT_RETRY =
   'The previous reply was not valid JSON in the required shape. Reply again with JSON only: {"characters":[{"name":"...","prompt":"...","negative":"...","same_as":""}]}';
 
@@ -244,9 +247,14 @@ export function groundExtracted(
   prompt: string,
   negative: string,
   targetStyle?: CharacterPromptStyle,
+  imageTags?: string,
 ): ExtractedCharacter[] {
-  if (!isTagPrompt(prompt) || targetStyle === "natural") return items;
-  const positive = tagIndex(prompt);
+  if (targetStyle === "natural") return items;
+  const hasPrompt = prompt.trim().length > 0;
+  const obs = imageTags?.trim() ?? "";
+  if (hasPrompt ? !isTagPrompt(prompt) : !isTagPrompt(obs)) return items;
+  const promptIdx = tagIndex(prompt);
+  const positive = tagIndex(obs ? `${prompt}\n${obs}` : prompt);
   const uc = tagIndex(negative);
   const owned = boxOnlyTags(prompt);
   const out: ExtractedCharacter[] = [];
@@ -255,7 +263,7 @@ export function groundExtracted(
       keepSourceTags(
         item.prompt,
         positive,
-        (tag) => NOT_CHARACTER_TAG.test(tag) || (uc.tags.has(tag) && !positive.tags.has(tag)),
+        (tag) => NOT_CHARACTER_TAG.test(tag) || (uc.tags.has(tag) && !promptIdx.tags.has(tag)),
       ),
       owned,
     );
@@ -314,24 +322,34 @@ export function characterExtractRequest(
   negative: string,
   saved: SavedCharacterHint[] = [],
   targetStyle?: CharacterPromptStyle,
+  imageTags?: string,
 ): {
   system: string;
   prompt: string;
   maxTokens: number;
 } {
+  const cleanPrompt = prompt.trim();
   const uc = negative.trim();
-  const hints = relevantSavedHints(prompt, saved)
+  const obs = imageTags?.trim() ?? "";
+  const hintSource = obs ? (cleanPrompt ? `${cleanPrompt}\n${obs}` : obs) : cleanPrompt;
+  const hints = relevantSavedHints(hintSource, saved)
     .map((c) => {
       const look = c.prompt.replace(/\s+/g, " ").trim();
       const clipped = look.length > SAVED_HINT_LENGTH ? `${look.slice(0, SAVED_HINT_LENGTH)} …` : look;
       return `- ${c.name.trim()}: ${clipped}`;
     });
-  let user = `Prompt:\n${prompt.trim()}` + (uc ? `\n\nNegative prompt:\n${uc}` : "");
+  let user = cleanPrompt ? `Prompt:\n${cleanPrompt}` : `Prompt:\n${obs}`;
+  if (uc) user += `\n\nNegative prompt:\n${uc}`;
+  if (cleanPrompt && obs) {
+    user += `\n\nObserved image tags (from interrogating the generated image):\n${obs}`;
+  }
   if (hints.length > 0) user += `\n\nAlready saved characters:\n${hints.join("\n")}`;
   let system = hints.length > 0 ? SYSTEM + SAME_AS_RULES : SYSTEM;
-  if (targetStyle === "natural" && isTagPrompt(prompt)) {
+  if (cleanPrompt && obs) system += IMAGE_TAGS_RULES;
+  const sourceIsTags = cleanPrompt ? isTagPrompt(cleanPrompt) : isTagPrompt(obs);
+  if (targetStyle === "natural" && sourceIsTags) {
     system += NATURAL_TARGET_RULES;
-  } else if (targetStyle === "tags" && !isTagPrompt(prompt)) {
+  } else if (targetStyle === "tags" && cleanPrompt && !isTagPrompt(cleanPrompt)) {
     system += TAG_TARGET_RULES;
   }
   return {
