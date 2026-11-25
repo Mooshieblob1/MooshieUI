@@ -1,5 +1,21 @@
 # Changelog
 
+## What's New in v2.4.9
+
+### NovelAI V5 Precise Reference
+- **NovelAI V5 support**: **Precise Reference** now works on NovelAI Diffusion V5 Full and Curated with up to 8 images, **Character**, **Style**, **Character and style**, and V5 **Outfit** modes, **Prefer same outfit**, V5 `0` to `5` **Strength** (keeping **Fidelity** on V4.5), aspect-bucket crop fitting with preserved transparency, automatic **High** effort override on V5 Full Medium, and automatic infill/outpainting gating.
+- **Unified uploader & parity controls**: attach images via drag-and-drop, click, clipboard paste, or **Gallery** in both **Precise Reference** and **Vibe Transfer**, toggle individual references on or off without removing them (disabled entries are neither sent nor billed), click thumbnails to zoom over a transparency checkerboard, press **Clear all**, or send images via **Add to Precise Reference** from gallery cards, lightbox, session images, live previews, Model Hub style previews (as **Style**), and character cards.
+- **Active PR visibility & character naming**: always-visible amber **PR** indicators show active targets and `+Anlas` above **Generate** (with one-click jump or remove), in the **NovelAI** section header, beside active prompt pills, on matched NovelAI character boxes, in Enhance / Image Enhance / Style Creator notices, and on the bottom **Characters** tab. Hovering any **PR** pill displays each active character's thumbnail, mode, and `+Anlas` (and expands the **Characters** tab pill inline); non-**Style** cards resolve saved characters automatically (by exact match, visual hash, or metadata) and include a character link dropdown (**No character linked** or any saved character).
+
+### Characters & Extraction
+- **Unified Extract from prompt and image**: clicking **Extract** in the **Characters** tab combines your current prompt with the current image's metadata or interrogator tags in one step; use the split arrow to pick **Prompt only**, **Current image only**, **Pick from gallery**, clipboard paste, or file upload/drop, switch sources inside the review dialog (**Prompt + Interrogator**, **Metadata**, **Interrogator**, **Description**), save inspected images with **Use image as card picture**, or run **Extract characters** straight from Interrogate without altering the prompt.
+- **Per-character Precise Reference library**: NovelAI character cards add an opt-in **PR** toggle and a **References** tab (up to 8 images per card, falling back to the **Card picture**) plus **Generate reference** with framing presets and optional PR guidance. When **PR** is enabled, **Use**, **Insert as is**, and **Enhance** (with toggleable **Attach PR:** chips and Undo support) attach and keep each character's references synced in place without duplicates.
+
+### Fixes
+- **Concept recipes & NovelAI errors**: Generate-time Concept recipe matching and AI adaptation now key strictly off resolved user prompts and active character slots (ignoring unrelated setting changes), and NovelAI 5xx/stream errors report clear upstream server error messages.
+
+---
+
 ## What's New in v2.4.8
 
 ### Generation & Prompting
