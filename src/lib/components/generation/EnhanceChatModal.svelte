@@ -45,6 +45,7 @@
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import EnhanceRecipesPanel from "./EnhanceRecipesPanel.svelte";
   import NaiEnhanceReview from "./NaiEnhanceReview.svelte";
+  import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
   import type { OutputImage } from "../../types/index.js";
 
   const OPTIONS_KEY = "mooshieui.enhanceChat.options";
@@ -137,6 +138,7 @@
         })
       : "",
   );
+  let headerPrAnchor = $state<HTMLElement | null>(null);
   const sendable = $derived(!enhanceChat.busy && canSend(flow));
 
   function newChat() {
@@ -601,9 +603,11 @@
             </span>
           {/if}
           {#if activeRefSummary.count > 0}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
               class="max-w-52 shrink-0 truncate rounded border border-amber-500/45 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
-              title={activeRefNotice}
+              onmouseenter={(e) => { headerPrAnchor = e.currentTarget; }}
+              onmouseleave={() => { headerPrAnchor = null; }}
             >
               {locale.t("generation.novelai.reference.enhance_badge", {
                 count: String(activeRefSummary.count),
@@ -1014,3 +1018,9 @@
     onclose={() => (pickerOpen = false)}
   />
 {/if}
+
+<PreciseRefHoverTooltip
+  anchor={headerPrAnchor}
+  items={activeRefSummary.items}
+  onDismiss={() => { headerPrAnchor = null; }}
+/>

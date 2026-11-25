@@ -1295,11 +1295,15 @@
             : 'text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800'}"
           title={prOn
             ? locale.t("characters.references.pill_on_tip", {
+                name: character.name,
                 count: String(refCount),
                 anlas: String(refCount * PRECISE_REFERENCE_COST),
               })
             : refCount > 0
-              ? locale.t("characters.references.pill_off_tip", { count: String(refCount) })
+              ? locale.t("characters.references.pill_off_tip", {
+                  name: character.name,
+                  count: String(refCount),
+                })
               : locale.t("characters.references.pill_empty_tip")}
           aria-pressed={prOn}
           onclick={() => {

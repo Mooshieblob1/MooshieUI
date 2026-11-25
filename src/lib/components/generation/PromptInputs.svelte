@@ -13,6 +13,7 @@
   import PromptChunkPicker from "./PromptChunkPicker.svelte";
   import NovelAiTokenBar from "./NovelAiTokenBar.svelte";
   import NovelAiCharacters from "./NovelAiCharacters.svelte";
+  import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
   import { hasRandomSyntax, previewRandomPrompt } from "../../utils/randomPrompt.js";
@@ -77,6 +78,15 @@
           savedCharacters.characters,
         ).items,
   );
+  let hoveredPrAnchor = $state<HTMLElement | null>(null);
+  let hoveredPrIndex = $state<number | null>(null);
+  const hoveredPrItems = $derived(
+    hoveredPrIndex === null ? [] : activePreciseRefs.filter((i) => i.index === hoveredPrIndex),
+  );
+  function clearPrHover() {
+    hoveredPrAnchor = null;
+    hoveredPrIndex = null;
+  }
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
 
@@ -278,13 +288,12 @@
               : targetLabel}
           <button
             type="button"
-            onclick={() => generation.removeNovelAiDirectorReference(refItem.index)}
+            onclick={() => { clearPrHover(); generation.removeNovelAiDirectorReference(refItem.index); }}
+            onmouseenter={(e) => { hoveredPrAnchor = e.currentTarget; hoveredPrIndex = refItem.index; }}
+            onmouseleave={clearPrHover}
+            onfocusin={(e) => { hoveredPrAnchor = e.currentTarget; hoveredPrIndex = refItem.index; }}
+            onfocusout={clearPrHover}
             class="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/15 text-amber-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
-            title={locale.t("generation.novelai.reference.active_pill_remove_tip", {
-              target: targetLabel,
-              mode: modeLabel,
-              anlas: String(PRECISE_REFERENCE_COST),
-            })}
             aria-label={locale.t("generation.novelai.reference.remove_aria", {
               target: targetLabel,
             })}
@@ -639,3 +648,10 @@
     onInstalled={onSetupInstalled}
   />
 {/if}
+
+<PreciseRefHoverTooltip
+  anchor={hoveredPrAnchor}
+  items={hoveredPrItems}
+  hint={locale.t("generation.novelai.reference.hover_click_remove")}
+  onDismiss={clearPrHover}
+/>
