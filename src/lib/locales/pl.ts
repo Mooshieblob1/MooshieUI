@@ -5007,6 +5007,8 @@ const pl: Record<string, string> = {
   "generation.novelai.reference.hover_manual": "Ręczna referencja",
   "generation.novelai.reference.hover_click_open": "Kliknij, aby otworzyć Precise Reference",
   "generation.novelai.reference.hover_click_remove": "Kliknij, aby usunąć",
+  "generation.novelai.reference.character_unassigned": "Nie powiązano postaci",
+  "generation.novelai.reference.link_character_tip": "Powiąż tę referencję z zapisaną postacią, aby znaczniki PR pokazywały jej nazwę",
   "characters.editor.references": "Referencje",
   "characters.references.pill_label": "PR",
   "characters.references.pill_on_tip": "PR włączone dla {name} ({count} obraz(y), +{anlas} Anlas). Kliknij, aby wyłączyć.",

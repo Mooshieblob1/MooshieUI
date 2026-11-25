@@ -9,11 +9,16 @@ import { gallery } from "../stores/gallery.svelte.js";
 import { generation } from "../stores/generation.svelte.js";
 import { authHeaders, isTauri } from "./ipc.js";
 import { fileToNovelAiBase64 } from "./novelaiImage.js";
-import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "./novelaiModels.js";
+import {
+  NAI_REF_STYLE,
+  NOVELAI_MAX_DIRECTOR_REFERENCES,
+  novelAiReferenceBaseType,
+} from "./novelaiModels.js";
 import {
   loadGalleryImage,
   loadGalleryImagePng,
   getOutputImage,
+  readImageMetadata,
   readTempImage,
   uploadImageBytes,
 } from "./api.js";
@@ -310,7 +315,54 @@ export async function addOutputImageAsPreciseReference(
       gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
       return false;
     }
-    generation.addNovelAiDirectorReference(base64, description);
+    let sourceCharacterId: string | undefined;
+    let sourceRefId: string | undefined;
+    if (novelAiReferenceBaseType(description) !== NAI_REF_STYLE) {
+      const [
+        { savedCharacters },
+        { matchImageToSavedCharacter },
+        { detectSingleCharacterFromMetadata },
+      ] = await Promise.all([
+        import("../stores/savedCharacters.svelte.js"),
+        import("./characterPreciseRef.js"),
+        import("./characterPreciseRefLogic.js"),
+      ]);
+      const visual = await matchImageToSavedCharacter(
+        base64,
+        savedCharacters.characters,
+        savedCharacters.currentArchitecture,
+      );
+      if (visual) {
+        sourceCharacterId = visual.characterId;
+        sourceRefId = visual.refId;
+      } else {
+        const meta =
+          image.metadata ??
+          (image.gallery_filename
+            ? await readImageMetadata(image.gallery_filename).catch(() => null)
+            : null);
+        const card = detectSingleCharacterFromMetadata(meta, savedCharacters.currentCharacters);
+        if (card) sourceCharacterId = card.id;
+      }
+      if (generation.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+        gallery.showToast(
+          locale.t("generation.novelai.reference.toast_full", {
+            max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+          }),
+          "info",
+        );
+        return false;
+      }
+      if (generation.novelaiSettings.director_references.some((r) => r.image === base64)) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+        return false;
+      }
+    }
+    generation.addNovelAiDirectorReference(
+      base64,
+      description,
+      sourceCharacterId ? { sourceCharacterId, sourceRefId, autoAttached: false } : undefined,
+    );
     gallery.showToast(locale.t("generation.novelai.reference.toast_added"), "success");
     return true;
   } catch (e) {

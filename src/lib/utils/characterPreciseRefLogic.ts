@@ -475,3 +475,158 @@ export function formatActivePreciseRefTargets(
 
   return { short, detailed };
 }
+
+/** 64-bit perceptual difference hash (9x8 grid) + source aspect ratio. */
+export interface ImageFingerprint {
+  hi: number;
+  lo: number;
+  aspect: number;
+}
+
+/**
+ * Compute a 64-bit horizontal gradient hash (dHash) from a 9x8 RGBA sample
+ * alongside the original image's aspect ratio (`origWidth / origHeight`).
+ */
+export function computeDHashFromRgba(
+  rgba: Uint8ClampedArray | readonly number[],
+  width: number,
+  height: number,
+  origWidth: number,
+  origHeight: number,
+): ImageFingerprint | null {
+  if (width !== 9 || height !== 8 || origWidth <= 0 || origHeight <= 0) return null;
+  if (rgba.length < 9 * 8 * 4) return null;
+
+  let hi = 0;
+  let lo = 0;
+  for (let y = 0; y < 8; y++) {
+    const row = y * 9;
+    for (let x = 0; x < 8; x++) {
+      const i0 = (row + x) * 4;
+      const i1 = (row + x + 1) * 4;
+      const l0 = 0.299 * rgba[i0] + 0.587 * rgba[i0 + 1] + 0.114 * rgba[i0 + 2];
+      const l1 = 0.299 * rgba[i1] + 0.587 * rgba[i1 + 1] + 0.114 * rgba[i1 + 2];
+      if (l0 > l1) {
+        const bit = y * 8 + x;
+        if (bit < 32) hi = (hi | (1 << bit)) >>> 0;
+        else lo = (lo | (1 << (bit - 32))) >>> 0;
+      }
+    }
+  }
+  return {
+    hi: hi >>> 0,
+    lo: lo >>> 0,
+    aspect: origWidth / origHeight,
+  };
+}
+
+function popcount32(x: number): number {
+  let v = x >>> 0;
+  v = v - ((v >>> 1) & 0x55555555);
+  v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+  return (((v + (v >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
+}
+
+/** Hamming distance (0..64) between two `ImageFingerprint` hashes. */
+export function dHashHammingDistance(a: ImageFingerprint, b: ImageFingerprint): number {
+  return popcount32((a.hi ^ b.hi) >>> 0) + popcount32((a.lo ^ b.lo) >>> 0);
+}
+
+/** Saved character / ref candidate tested against an untagged Precise Reference image. */
+export interface DirectorRefMatchCandidate {
+  characterId: string;
+  refId: string;
+  base64?: string | null;
+  fingerprint?: ImageFingerprint | null;
+  preferred?: boolean;
+}
+
+/**
+ * Match a Precise Reference image against saved character candidates using exact
+ * base64 equality first, then bounded 64-bit dHash similarity + aspect guard.
+ */
+export function matchDirectorRefCandidate(
+  target: { base64: string; fingerprint?: ImageFingerprint | null },
+  candidates: readonly DirectorRefMatchCandidate[],
+  opts?: { maxDistance?: number; maxAspectDiff?: number },
+): { characterId: string; refId: string } | null {
+  let exactFallback: DirectorRefMatchCandidate | null = null;
+  for (const cand of candidates) {
+    if (cand.base64 && cand.base64 === target.base64) {
+      if (cand.preferred) {
+        return { characterId: cand.characterId, refId: cand.refId };
+      }
+      if (!exactFallback) exactFallback = cand;
+    }
+  }
+  if (exactFallback) {
+    return { characterId: exactFallback.characterId, refId: exactFallback.refId };
+  }
+
+  const targetFp = target.fingerprint;
+  if (!targetFp) return null;
+
+  const maxDistance = opts?.maxDistance ?? 6;
+  const maxAspectDiff = opts?.maxAspectDiff ?? 0.08;
+  let best: DirectorRefMatchCandidate | null = null;
+  let bestDist = Infinity;
+
+  for (const cand of candidates) {
+    const fp = cand.fingerprint;
+    if (!fp) continue;
+    if (Math.abs(targetFp.aspect - fp.aspect) > maxAspectDiff) continue;
+    const dist = dHashHammingDistance(targetFp, fp);
+    if (dist > maxDistance) continue;
+    if (
+      dist < bestDist ||
+      (dist === bestDist && Boolean(cand.preferred) && !best?.preferred)
+    ) {
+      best = cand;
+      bestDist = dist;
+    }
+  }
+
+  return best ? { characterId: best.characterId, refId: best.refId } : null;
+}
+
+/**
+ * Identify an unambiguous single saved character from an image's metadata
+ * (NovelAI comment/description or ComfyUI prompt metadata). Returns `null` when
+ * ambiguous (0 or multiple distinct character families matched).
+ */
+export function detectSingleCharacterFromMetadata<T extends DetectCard>(
+  metadata: Record<string, string> | null | undefined,
+  cards: readonly T[],
+): T | null {
+  if (!metadata || cards.length === 0) return null;
+
+  const hits = detectCharacters(metadata, prepareCards(cards));
+  if (hits.length === 1) {
+    return cards.find((c) => c.id === hits[0].cardId) ?? null;
+  }
+  if (hits.length > 1) return null;
+
+  const base = metadata.positive_prompt ?? metadata.Description ?? "";
+  let characters: string[] = [];
+  const rawChars = metadata.mooshie_novelai_characters;
+  if (typeof rawChars === "string" && rawChars.trim()) {
+    try {
+      const parsed = JSON.parse(rawChars) as unknown;
+      if (Array.isArray(parsed)) {
+        characters = parsed
+          .map((item) =>
+            item && typeof item === "object" && typeof (item as { prompt?: unknown }).prompt === "string"
+              ? (item as { prompt: string }).prompt
+              : "",
+          )
+          .filter((p) => p.trim() !== "");
+      }
+    } catch {
+      characters = [];
+    }
+  }
+
+  if (!base.trim() && characters.length === 0) return null;
+  const matched = matchCharacterCardsInText(cards, [], { base, characters });
+  return matched.length === 1 ? matched[0] : null;
+}

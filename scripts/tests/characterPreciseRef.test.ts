@@ -3,10 +3,14 @@ import test from "node:test";
 import {
   clampCharacterReferenceFidelity,
   clampCharacterReferenceStrength,
+  computeDHashFromRgba,
   describeActiveNovelAiDirectorReferences,
+  detectSingleCharacterFromMetadata,
+  dHashHammingDistance,
   effectiveCharacterPreciseReferences,
   formatActivePreciseRefTargets,
   matchCharacterCardsInText,
+  matchDirectorRefCandidate,
   normalizeCharacterReferenceDescription,
   patchCharacterDirectorReference,
   pruneAutoAttachedCharacterReferences,
@@ -483,4 +487,128 @@ test("formatActivePreciseRefTargets formats single, multi-slot character, and ma
     ),
     { short: "Alice, Style ×2", detailed: "Alice (Character), Style ×2" },
   );
+});
+
+test("computeDHashFromRgba, dHashHammingDistance, and matchDirectorRefCandidate match visual hashes across resolutions", () => {
+  // Invalid grid returns null.
+  assert.equal(computeDHashFromRgba([], 8, 8, 100, 100), null);
+
+  // Build two synthetic 9x8 RGBA grids (horizontal gradient with 1 flipped bit).
+  const rgbaA = new Uint8ClampedArray(9 * 8 * 4);
+  const rgbaB = new Uint8ClampedArray(9 * 8 * 4);
+  const rgbaDifferent = new Uint8ClampedArray(9 * 8 * 4);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 9; x++) {
+      const idx = (y * 9 + x) * 4;
+      const valA = ((y * 17 + x * 29) % 256);
+      const valDiff = 255 - valA;
+      rgbaA[idx] = valA;
+      rgbaA[idx + 1] = valA;
+      rgbaA[idx + 2] = valA;
+      rgbaA[idx + 3] = 255;
+
+      rgbaB[idx] = valA;
+      rgbaB[idx + 1] = valA;
+      rgbaB[idx + 2] = valA;
+      rgbaB[idx + 3] = 255;
+
+      rgbaDifferent[idx] = valDiff;
+      rgbaDifferent[idx + 1] = valDiff;
+      rgbaDifferent[idx + 2] = valDiff;
+      rgbaDifferent[idx + 3] = 255;
+    }
+  }
+  // Nudge one pixel cleanly to create a distance of 1-2 bits without altering overall gradient.
+  rgbaB[0] = 255;
+  rgbaB[1] = 255;
+  rgbaB[2] = 255;
+
+  const fpA = computeDHashFromRgba(rgbaA, 9, 8, 1024, 1536);
+  const fpB = computeDHashFromRgba(rgbaB, 9, 8, 640, 960);
+  const fpWrongAspect = computeDHashFromRgba(rgbaA, 9, 8, 1024, 1024);
+  const fpDiff = computeDHashFromRgba(rgbaDifferent, 9, 8, 1024, 1536);
+  assert.ok(fpA && fpB && fpWrongAspect && fpDiff);
+  assert.equal(dHashHammingDistance(fpA, fpA), 0);
+  assert.ok(dHashHammingDistance(fpA, fpB) <= 2);
+  assert.ok(dHashHammingDistance(fpA, fpDiff) > 20);
+
+  // Exact base64 match wins and prefers preferred candidate.
+  const exactMatch = matchDirectorRefCandidate(
+    { base64: "SAME_B64", fingerprint: fpA },
+    [
+      { characterId: "other", refId: "r_other", base64: "SAME_B64", preferred: false },
+      { characterId: "pref", refId: "r_pref", base64: "SAME_B64", preferred: true },
+    ],
+  );
+  assert.deepEqual(exactMatch, { characterId: "pref", refId: "r_pref" });
+
+  // Visual match across different base64 & resolution succeeds within aspect/distance bounds.
+  const visualMatch = matchDirectorRefCandidate(
+    { base64: "ORIGINAL_1024_PNG", fingerprint: fpA },
+    [
+      { characterId: "diff", refId: "r_diff", base64: "DIFF_WEBP", fingerprint: fpDiff, preferred: true },
+      { characterId: "wrong_aspect", refId: "r_wa", base64: "WA_WEBP", fingerprint: fpWrongAspect, preferred: true },
+      { characterId: "alice", refId: "r_alice", base64: "SCALED_640_WEBP", fingerprint: fpB, preferred: true },
+    ],
+  );
+  assert.deepEqual(visualMatch, { characterId: "alice", refId: "r_alice" });
+
+  // Rejects when all candidates exceed distance or aspect diff.
+  assert.equal(
+    matchDirectorRefCandidate(
+      { base64: "ORIGINAL", fingerprint: fpA },
+      [
+        { characterId: "diff", refId: "r1", fingerprint: fpDiff },
+        { characterId: "wrong_aspect", refId: "r2", fingerprint: fpWrongAspect },
+      ],
+    ),
+    null,
+  );
+});
+
+test("detectSingleCharacterFromMetadata resolves unambiguous character and rejects ambiguous metadata", () => {
+  const cards = [
+    {
+      id: "alice",
+      name: "Alice",
+      prompt: "1girl, silver hair, blue eyes, red ribbon, school uniform",
+      parentId: null,
+    },
+    {
+      id: "bob",
+      name: "Bob",
+      prompt: "1boy, short black hair, green eyes, scar, glasses, hoodie",
+      parentId: null,
+    },
+  ];
+
+  // Single character detected by tags returns that card.
+  const tagHit = detectSingleCharacterFromMetadata(
+    { positive_prompt: "1girl, silver hair, blue eyes, red ribbon, cafe background" },
+    cards,
+  );
+  assert.equal(tagHit?.id, "alice");
+
+  // Single short/CJK/name match in NAI character box JSON resolves cleanly.
+  const boxHit = detectSingleCharacterFromMetadata(
+    {
+      Description: "outdoor park",
+      mooshie_novelai_characters: JSON.stringify([{ prompt: "girl, Bob standing" }]),
+    },
+    cards,
+  );
+  assert.equal(boxHit?.id, "bob");
+
+  // Two distinct characters present -> returns null (never guesses).
+  const multiHit = detectSingleCharacterFromMetadata(
+    {
+      positive_prompt:
+        "1girl, 1boy, silver hair, blue eyes, red ribbon, short black hair, green eyes, scar, glasses, hoodie",
+    },
+    cards,
+  );
+  assert.equal(multiHit, null);
+
+  // Empty metadata -> returns null.
+  assert.equal(detectSingleCharacterFromMetadata(null, cards), null);
 });

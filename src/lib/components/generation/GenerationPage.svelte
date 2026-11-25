@@ -7,7 +7,12 @@
     describeActiveNovelAiDirectorReferences,
     formatActivePreciseRefTargets,
   } from "../../utils/characterPreciseRefLogic.js";
-  import { novelAiReferenceLabelKey } from "../../utils/novelaiModels.js";
+  import { reconcileUntaggedDirectorReferences } from "../../utils/characterPreciseRef.js";
+  import {
+    NAI_REF_STYLE,
+    novelAiReferenceBaseType,
+    novelAiReferenceLabelKey,
+  } from "../../utils/novelaiModels.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { wheelScrollLock } from "../../utils/wheelScrollLock.js";
   import PromptInputs from "./PromptInputs.svelte";
@@ -482,6 +487,38 @@
     ),
   );
   let novelaiHeaderPrAnchor = $state<HTMLElement | null>(null);
+
+  const untaggedPrBackfillSig = $derived.by(() => {
+    if (!generation.isNovelAi || !generation.supportsNovelAiPreciseReference) return "";
+    const validIds = new Set(savedCharacters.characters.map((c) => c.id));
+    const missing = generation.novelaiSettings.director_references
+      .filter(
+        (r) =>
+          Boolean(r.image) &&
+          novelAiReferenceBaseType(r.description) !== NAI_REF_STYLE &&
+          (!r.source_character_id || !validIds.has(r.source_character_id)),
+      )
+      .map((r) => `${r.image.length}:${r.image.slice(0, 24)}`);
+    if (missing.length === 0 || savedCharacters.characters.length === 0) return "";
+    const charsSig = savedCharacters.characters
+      .map((c) => `${c.id}:${c.preciseReferences?.length ?? 0}:${c.reference ? 1 : 0}:${c.thumbnail ? 1 : 0}`)
+      .join(",");
+    return `${missing.join("|")}::${charsSig}`;
+  });
+  let lastPrBackfillSig = "";
+  $effect(() => {
+    const sig = untaggedPrBackfillSig;
+    if (!sig) {
+      lastPrBackfillSig = "";
+      return;
+    }
+    if (sig === lastPrBackfillSig) return;
+    lastPrBackfillSig = sig;
+    void reconcileUntaggedDirectorReferences(
+      savedCharacters.characters,
+      savedCharacters.currentArchitecture,
+    );
+  });
 
   let collapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {

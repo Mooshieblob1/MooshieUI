@@ -4954,6 +4954,8 @@ const en: Record<string, string> = {
   "generation.novelai.reference.hover_manual": "Manual reference",
   "generation.novelai.reference.hover_click_open": "Click to open Precise Reference",
   "generation.novelai.reference.hover_click_remove": "Click to remove",
+  "generation.novelai.reference.character_unassigned": "No character linked",
+  "generation.novelai.reference.link_character_tip": "Link this reference to a saved character so PR badges show their name",
   "generation.novelai.vibe.title": "Vibe Transfer",
   "generation.novelai.vibe.tip": "Carries the mood, palette and style of a reference image into the result.",
   "generation.novelai.vibe.add": "Add image",
