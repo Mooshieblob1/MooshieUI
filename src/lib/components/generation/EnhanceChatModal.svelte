@@ -22,6 +22,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import { effectiveCharacterPreciseReferences } from "../../utils/characterPreciseRefLogic.js";
   import { canSend, redoLast, sendMessage } from "../../utils/enhanceChatRunner.js";
   import { parseNaiResponse } from "../../utils/naiParse.js";
   import { NAI_LANGUAGES } from "../../utils/naiLanguage.js";
@@ -403,6 +404,49 @@
           </div>
         {:else}
           <div class="max-h-80 overflow-y-auto whitespace-pre-wrap break-words text-[11px] text-neutral-200">{ex.prompt}</div>
+        {/if}
+
+        {#if (isNai || isGeneral) && generation.isNovelAi && generation.supportsNovelAiPreciseReference}
+          {@const matchedCards = enhanceChat.matchedPreciseRefCards(ex.at)}
+          {#if matchedCards.length > 0}
+            {@const disabledSet = new Set(m?.disabledCharacterRefIds ?? [])}
+            <div class="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2 py-1">
+              <span class="text-[10px] font-medium text-indigo-200">
+                {locale.t("characters.references.enhance_attach_label")}
+              </span>
+              {#each matchedCards as card (card.id)}
+                {@const refCount = effectiveCharacterPreciseReferences(card).length}
+                {@const checked = !disabledSet.has(card.id)}
+                <label
+                  class="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] cursor-pointer transition-colors {checked
+                    ? 'border-indigo-500/60 bg-indigo-500/20 text-indigo-100'
+                    : 'border-neutral-700 bg-neutral-900/60 text-neutral-400'}"
+                >
+                  <input
+                    type="checkbox"
+                    class="accent-indigo-500"
+                    {checked}
+                    onchange={() => enhanceChat.toggleAnswerCharacterRef(ex.at, card.id)}
+                  />
+                  {#if card.thumbnail}
+                    <img src={card.thumbnail} alt="" class="w-3.5 h-3.5 rounded-sm object-cover" />
+                  {/if}
+                  <span class="truncate max-w-[8rem]">{card.name}</span>
+                  <span class="tabular-nums opacity-80">
+                    ({refCount}, +{refCount * PRECISE_REFERENCE_COST})
+                  </span>
+                </label>
+              {/each}
+              {#if generation.novelaiSettings.vibes.length > 0}
+                <span
+                  class="ml-auto rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-px text-[10px] text-amber-200"
+                  title={locale.t("characters.references.toast_vibes_active")}
+                >
+                  {locale.t("generation.novelai.vibe.title")}
+                </span>
+              {/if}
+            </div>
+          {/if}
         {/if}
 
         <div class="mt-2 flex flex-wrap items-center gap-1.5">

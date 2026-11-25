@@ -9,10 +9,13 @@
    */
   import { untrack } from "svelte";
   import { portal } from "../../utils/portal.js";
-  import { gallery } from "../../stores/gallery.svelte.js";
+  import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
+  import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import { promptAssistant, type MemorySuggestions } from "../../stores/promptAssistant.svelte.js";
   import {
+    NOVELAI_ARCHITECTURE,
     architectureLabel,
     savedCharacters,
     type SavedCharacter,
@@ -34,20 +37,46 @@
     type LinkedCharacter,
     type MemoryChange,
   } from "../../utils/characterMemory.js";
+  import { effectiveCharacterPreciseReferences } from "../../utils/characterPreciseRefLogic.js";
+  import {
+    blobsToCharacterImages,
+    outputImagesToBlobs,
+    readImageBlobsFromClipboard,
+    tauriDropFiles,
+    tauriPathsToFiles,
+  } from "../../utils/characterReferenceInput.js";
+  import { currentImageToCharacterThumbnail } from "../../utils/characterThumbnail.js";
+  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
+  import {
+    NAI_REF_OUTFIT,
+    NOVELAI_MAX_DIRECTOR_REFERENCES,
+    NOVELAI_OUTFIT_REFERENCE_OPTION,
+    NOVELAI_REFERENCE_DESCRIPTIONS,
+    novelAiReferenceBaseType,
+    novelAiReferencePreferSameOutfit,
+    novelAiReferenceSupportsSameOutfit,
+    novelAiSetPreferSameOutfit,
+  } from "../../utils/novelaiModels.js";
+  import { CHECKERBOARD_CLASS } from "../../utils/transparentBackdrop.js";
   import { saveTextFile } from "../../utils/api.js";
   import { mapLlmError } from "../../utils/llmError.js";
+  import type { OutputImage } from "../../types/index.js";
+  import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import EditableValue from "../ui/EditableValue.svelte";
+  import InfoTip from "../ui/InfoTip.svelte";
 
-  type Tab = "details" | "memory";
+  type Tab = "details" | "references" | "memory";
 
   interface Props {
     character: SavedCharacter;
     tab?: Tab;
     /** Memory changes to review on opening, from Update. */
     suggestions?: MemoryChange[];
+    ongenerateref?: (character: SavedCharacter) => void;
     onclose: () => void;
   }
 
-  let { character, tab: startTab = "details", suggestions = [], onclose }: Props = $props();
+  let { character, tab: startTab = "details", suggestions = [], ongenerateref, onclose }: Props = $props();
 
   // Mounted once per edit, so the card is read once on purpose: the draft is
   // compared against what it was when the editor opened.
@@ -96,6 +125,32 @@
   /** File name being typed, committed (cleaned and made unique) on blur. */
   let nameDraft = $state("");
   let importInput = $state<HTMLInputElement | null>(null);
+  let refFileInput = $state<HTMLInputElement | null>(null);
+  let refPickerOpen = $state(false);
+  let refDragOver = $state(false);
+  let refBusy = $state(false);
+  let zoomedSrc = $state<string | null>(null);
+
+  const liveCard = $derived(
+    savedCharacters.characters.find((c) => c.id === character.id) ?? character,
+  );
+  const liveRefs = $derived(liveCard.preciseReferences ?? []);
+  const effectiveRefs = $derived(effectiveCharacterPreciseReferences(liveCard));
+  const showReferences = $derived(
+    character.architecture === NOVELAI_ARCHITECTURE ||
+      generation.isNovelAi ||
+      liveRefs.length > 0,
+  );
+  const supportsOutfits = $derived(generation.novelAiModel?.outfitReferences ?? true);
+  const strengthMax = $derived(
+    character.architecture === NOVELAI_ARCHITECTURE
+      ? Math.max(generation.novelAiModel?.preciseReferenceStrengthMax ?? 1, 5)
+      : generation.novelAiModel?.preciseReferenceStrengthMax ?? 5,
+  );
+  const refBusyOrFull = $derived(
+    refBusy || liveRefs.length >= NOVELAI_MAX_DIRECTOR_REFERENCES,
+  );
+  const portraitGenerating = $derived(savedCharacters.portraitPromptIds(liveCard.id).length > 0);
 
   const selected = $derived(files.find((f) => f.id === selectedId) ?? null);
   const detailsDirty = $derived(
@@ -347,9 +402,152 @@
     review = null;
   }
 
+  async function addRefBlobs(blobs: readonly Blob[], enablePr = false) {
+    if (blobs.length === 0 || refBusy) return;
+    refBusy = true;
+    try {
+      const { items, failed } = await blobsToCharacterImages(blobs);
+      const res = savedCharacters.addPreciseReferences(liveCard.id, items, { enablePr });
+      if (res.hitCap) {
+        gallery.showToast(
+          locale.t("characters.references.toast_full", {
+            max: String(NOVELAI_MAX_DIRECTOR_REFERENCES),
+          }),
+          "info",
+        );
+      } else if (res.duplicates > 0 && res.added.length === 0) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+      } else if (failed > 0 && res.added.length === 0 && res.duplicates === 0) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+      }
+    } finally {
+      refBusy = false;
+    }
+  }
+
+  async function addRefFromClipboard(clipboardItems?: DataTransferItemList) {
+    const blobs = await readImageBlobsFromClipboard(clipboardItems);
+    if (blobs.length === 0) {
+      gallery.showToast(locale.t("common.no_clipboard_image"), "info");
+      return;
+    }
+    await addRefBlobs(blobs);
+  }
+
+  async function addRefFromGallery(images: OutputImage[]) {
+    refPickerOpen = false;
+    if (images.length === 0 || refBusy) return;
+    refBusy = true;
+    try {
+      const blobs = await outputImagesToBlobs(images);
+      refBusy = false;
+      if (blobs.length > 0) await addRefBlobs(blobs);
+      else gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+    } finally {
+      refBusy = false;
+    }
+  }
+
+  async function addRefFromCurrent() {
+    const latest = gallery.sessionImages.find((image) => !isVideoImage(image)) ?? null;
+    if (!progress.lastOutputImage && !latest) {
+      gallery.showToast(locale.t("characters.thumbnail.no_current"), "info");
+      return;
+    }
+    refBusy = true;
+    try {
+      const imgs = await currentImageToCharacterThumbnail(progress.lastOutputImage, latest);
+      if (!imgs) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+        return;
+      }
+      const res = savedCharacters.addPreciseReferences(liveCard.id, [imgs]);
+      if (res.hitCap) {
+        gallery.showToast(
+          locale.t("characters.references.toast_full", { max: String(NOVELAI_MAX_DIRECTOR_REFERENCES) }),
+          "info",
+        );
+      } else if (res.duplicates > 0 && res.added.length === 0) {
+        gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+      }
+    } finally {
+      refBusy = false;
+    }
+  }
+
+  function addRefFromCardPicture() {
+    const thumb = liveCard.thumbnail ?? liveCard.reference;
+    const ref = liveCard.reference ?? liveCard.thumbnail;
+    if (!thumb || !ref) return;
+    const res = savedCharacters.addPreciseReferences(
+      liveCard.id,
+      [{ thumbnail: thumb, reference: ref }],
+    );
+    if (res.hitCap) {
+      gallery.showToast(
+        locale.t("characters.references.toast_full", { max: String(NOVELAI_MAX_DIRECTOR_REFERENCES) }),
+        "info",
+      );
+    } else if (res.duplicates > 0 && res.added.length === 0) {
+      gallery.showToast(locale.t("generation.novelai.reference.toast_duplicate"), "info");
+    }
+  }
+
+  async function addRefFromTauriPaths(paths: string[]) {
+    try {
+      const files = await tauriPathsToFiles(paths);
+      await addRefBlobs(files);
+    } catch (err) {
+      console.error("Character reference drop failed:", err);
+      gallery.showToast(locale.t("generation.novelai.reference.toast_failed"), "error");
+    }
+  }
+
+  function removeOneRef(refId: string) {
+    const prev = [...liveRefs];
+    savedCharacters.removePreciseReference(liveCard.id, refId);
+    gallery.showToast(locale.t("characters.references.toast_removed"), "info", {
+      actionLabel: locale.t("characters.undo"),
+      onAction: () => savedCharacters.setPreciseReferences(liveCard.id, prev),
+      durationMs: 6000,
+    });
+  }
+
+  function clearAllRefs() {
+    const prev = [...liveRefs];
+    if (prev.length === 0) return;
+    savedCharacters.clearPreciseReferences(liveCard.id);
+    gallery.showToast(locale.t("characters.references.toast_cleared"), "info", {
+      actionLabel: locale.t("characters.undo"),
+      onAction: () => savedCharacters.setPreciseReferences(liveCard.id, prev),
+      durationMs: 6000,
+    });
+  }
+
+  $effect(() => {
+    const handler = (event: ClipboardEvent) => {
+      if (tab !== "references" || !showReferences || refPickerOpen || zoomedSrc || refBusyOrFull) return;
+      const el = event.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void addRefFromClipboard(event.clipboardData?.items);
+    };
+    window.addEventListener("paste", handler, { capture: true });
+    return () => window.removeEventListener("paste", handler, { capture: true });
+  });
+
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key !== "Escape") return;
+      if (zoomedSrc) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        zoomedSrc = null;
+        return;
+      }
+      if (refPickerOpen) return;
+      close();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -377,8 +575,8 @@
   ></button>
   <div class="relative z-10 flex h-[min(90vh,46rem)] w-full max-w-4xl flex-col rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl">
     <div class="flex items-center gap-3 px-5 pt-4">
-      {#if character.thumbnail}
-        <img src={character.thumbnail} alt={character.name} class="w-10 h-10 rounded-md object-cover border border-neutral-700" />
+      {#if liveCard.thumbnail}
+        <img src={liveCard.thumbnail} alt={liveCard.name} class="w-10 h-10 rounded-md object-cover border border-neutral-700" />
       {/if}
       <h3 class="min-w-0 truncate text-sm font-semibold text-neutral-100">
         {locale.t("characters.editor.title", { name: initial.name })}
@@ -395,27 +593,276 @@
       >✕</button>
     </div>
 
-    {#if showMemory}
+    {#if showMemory || showReferences}
       <div class="flex gap-1 px-5 pt-3 border-b border-neutral-800" role="tablist">
-        {#each [["details", "characters.editor.details"], ["memory", "characters.editor.memory"]] as [id, key] (id)}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "details"}
+          class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors {tab === 'details' ? 'border-indigo-500 text-neutral-100' : 'border-transparent text-neutral-400 hover:text-neutral-200'}"
+          onclick={() => { tab = "details"; }}
+        >
+          {locale.t("characters.editor.details")}
+        </button>
+        {#if showReferences}
           <button
             type="button"
             role="tab"
-            aria-selected={tab === id}
-            class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors {tab === id ? 'border-indigo-500 text-neutral-100' : 'border-transparent text-neutral-400 hover:text-neutral-200'}"
-            onclick={() => { tab = id as Tab; }}
+            aria-selected={tab === "references"}
+            class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors {tab === 'references' ? 'border-indigo-500 text-neutral-100' : 'border-transparent text-neutral-400 hover:text-neutral-200'}"
+            onclick={() => { tab = "references"; }}
           >
-            {locale.t(key)}
-            {#if id === "memory" && files.length > 0}
+            {#if liveCard.usePreciseReference && effectiveRefs.length > 0}
+              <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+            {/if}
+            {locale.t("characters.editor.references")}
+            {#if liveRefs.length > 0}
+              <span class="rounded-full bg-neutral-700 px-1.5 text-[10px] text-neutral-200">{liveRefs.length}</span>
+            {/if}
+          </button>
+        {/if}
+        {#if showMemory}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "memory"}
+            class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors {tab === 'memory' ? 'border-indigo-500 text-neutral-100' : 'border-transparent text-neutral-400 hover:text-neutral-200'}"
+            onclick={() => { tab = "memory"; }}
+          >
+            {locale.t("characters.editor.memory")}
+            {#if files.length > 0}
               <span class="rounded-full bg-neutral-700 px-1.5 text-[10px] text-neutral-200">{files.length}</span>
             {/if}
           </button>
-        {/each}
+        {/if}
       </div>
     {/if}
 
     <div class="min-h-0 flex-1 overflow-hidden px-5 py-4 flex flex-col gap-3">
-      {#if tab === "details" || !showMemory}
+      {#if tab === "references" && showReferences}
+        <div class="min-h-0 flex-1 overflow-y-auto flex flex-col gap-3">
+          <div class="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/60 px-3 py-2">
+            <label class="flex items-center gap-2 text-xs font-medium text-neutral-200 cursor-pointer">
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                checked={!!liveCard.usePreciseReference}
+                onchange={(e) => savedCharacters.setUsePreciseReference(liveCard.id, e.currentTarget.checked)}
+              />
+              {locale.t("characters.references.use_toggle")}
+              <InfoTip text={locale.t("characters.references.use_tip")} />
+            </label>
+            <div class="ml-auto flex items-center gap-2">
+              {#if liveCard.usePreciseReference && effectiveRefs.length > 0}
+                <span class="rounded bg-indigo-500/20 border border-indigo-500/40 px-2 py-0.5 text-[11px] tabular-nums text-indigo-200">
+                  {locale.t("characters.references.anlas_badge", { anlas: String(effectiveRefs.length * PRECISE_REFERENCE_COST) })}
+                </span>
+              {/if}
+              {#if liveRefs.length > 0}
+                <button
+                  type="button"
+                  class="text-[11px] text-neutral-400 hover:text-red-300"
+                  onclick={clearAllRefs}
+                >
+                  {locale.t("generation.novelai.reference.clear_all")}
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            use:tauriDropFiles={(paths) => void addRefFromTauriPaths(paths)}
+            class="border border-dashed rounded-lg px-3 py-2.5 flex flex-wrap items-center justify-center gap-2 text-[11px] transition-colors {refDragOver
+              ? 'border-indigo-500 bg-indigo-500/10'
+              : 'border-neutral-700 hover:border-neutral-600 bg-neutral-950/40'} {refBusyOrFull
+              ? 'opacity-45 pointer-events-none'
+              : ''}"
+            ondragenter={(e) => { e.preventDefault(); e.stopPropagation(); refDragOver = true; }}
+            ondragover={(e) => { e.preventDefault(); e.stopPropagation(); refDragOver = true; }}
+            ondragleave={() => { refDragOver = false; }}
+            ondrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              refDragOver = false;
+              const dropped = e.dataTransfer?.files;
+              if (dropped && dropped.length > 0) void addRefBlobs(Array.from(dropped));
+            }}
+          >
+            {#if ongenerateref}
+              <button
+                type="button"
+                class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium flex items-center gap-1.5"
+                disabled={portraitGenerating}
+                onclick={() => ongenerateref(liveCard)}
+              >
+                {#if portraitGenerating}
+                  <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+                {/if}
+                {locale.t("characters.references.generate")}
+              </button>
+            {/if}
+            <span class="text-neutral-700">|</span>
+            <button
+              type="button"
+              class="text-emerald-400/90 hover:text-emerald-300"
+              onclick={() => void addRefFromClipboard()}
+            >{locale.t("generation.image.ctrl_v_paste")}</button>
+            <span class="text-neutral-700">|</span>
+            <button
+              type="button"
+              class="text-neutral-300 hover:text-white"
+              onclick={() => refFileInput?.click()}
+            >{locale.t("generation.image.select_image")}</button>
+            <span class="text-neutral-700">|</span>
+            <button
+              type="button"
+              class="text-indigo-400 hover:text-indigo-300"
+              onclick={() => { refPickerOpen = true; }}
+            >{locale.t("generation.novelai.reference.from_gallery")}</button>
+            <span class="text-neutral-700">|</span>
+            <button
+              type="button"
+              class="text-sky-400 hover:text-sky-300"
+              onclick={() => void addRefFromCurrent()}
+            >{locale.t("characters.thumbnail.current")}</button>
+            {#if liveCard.thumbnail}
+              <span class="text-neutral-700">|</span>
+              <button
+                type="button"
+                class="text-neutral-300 hover:text-white"
+                onclick={addRefFromCardPicture}
+              >{locale.t("characters.references.add_card_picture")}</button>
+            {/if}
+            <span class="text-[10px] text-neutral-500 tabular-nums ml-auto">
+              {liveRefs.length}/{NOVELAI_MAX_DIRECTOR_REFERENCES}
+            </span>
+          </div>
+          <input
+            bind:this={refFileInput}
+            type="file"
+            accept="image/*"
+            multiple
+            class="hidden"
+            aria-hidden="true"
+            tabindex="-1"
+            onchange={(e) => {
+              const picked = e.currentTarget.files;
+              if (picked && picked.length > 0) void addRefBlobs(Array.from(picked));
+              e.currentTarget.value = "";
+            }}
+          />
+
+          {#if liveRefs.length > 0}
+            <div class="grid gap-2 sm:grid-cols-2">
+              {#each liveRefs as refItem (refItem.id)}
+                {@const desc = refItem.description ?? "character"}
+                {@const baseDesc = novelAiReferenceBaseType(desc)}
+                <div class="rounded-lg border border-neutral-800 bg-neutral-900/70 p-2.5 flex gap-3">
+                  <button
+                    type="button"
+                    class="shrink-0 w-16 h-16 rounded overflow-hidden border border-neutral-800 hover:border-indigo-500/70 cursor-zoom-in {CHECKERBOARD_CLASS}"
+                    title={locale.t("generation.novelai.reference.zoom")}
+                    onclick={() => { zoomedSrc = refItem.reference; }}
+                  >
+                    <img src={refItem.thumbnail} alt="" class="w-full h-full object-cover" />
+                  </button>
+                  <div class="flex-1 min-w-0 space-y-1.5">
+                    <div class="flex items-center gap-1.5">
+                      <select
+                        class="flex-1 min-w-0 px-2 py-1 text-[11px] rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
+                        value={baseDesc}
+                        onchange={(e) => {
+                          const next = e.currentTarget.value;
+                          if (next !== baseDesc) {
+                            savedCharacters.updatePreciseReference(liveCard.id, refItem.id, { description: next });
+                          }
+                        }}
+                      >
+                        {#each NOVELAI_REFERENCE_DESCRIPTIONS as option (option.value)}
+                          <option value={option.value}>{locale.t(option.labelKey)}</option>
+                        {/each}
+                        {#if supportsOutfits || desc === NAI_REF_OUTFIT}
+                          <option value={NOVELAI_OUTFIT_REFERENCE_OPTION.value}>
+                            {locale.t(NOVELAI_OUTFIT_REFERENCE_OPTION.labelKey)}
+                          </option>
+                        {/if}
+                      </select>
+                      <button
+                        type="button"
+                        class="px-2 py-0.5 text-[11px] rounded text-neutral-400 hover:text-red-400 hover:bg-neutral-800 shrink-0"
+                        onclick={() => removeOneRef(refItem.id)}
+                      >
+                        {locale.t("generation.novelai.reference.remove")}
+                      </button>
+                    </div>
+                    {#if supportsOutfits && novelAiReferenceSupportsSameOutfit(desc)}
+                      <label class="flex items-center gap-1.5 text-[11px] text-neutral-300">
+                        <input
+                          type="checkbox"
+                          class="accent-indigo-500"
+                          checked={novelAiReferencePreferSameOutfit(desc)}
+                          onchange={(e) =>
+                            savedCharacters.updatePreciseReference(liveCard.id, refItem.id, {
+                              description: novelAiSetPreferSameOutfit(desc, e.currentTarget.checked),
+                            })}
+                        />
+                        {locale.t("generation.novelai.reference.prefer_same_outfit")}
+                      </label>
+                    {/if}
+                    <div class="space-y-0.5">
+                      <div class="flex items-center justify-between text-[11px] text-neutral-500">
+                        <span>{locale.t("generation.novelai.reference.strength")}</span>
+                        <EditableValue
+                          value={refItem.strength ?? 1.0}
+                          min={0}
+                          max={10}
+                          step={0.05}
+                          decimals={2}
+                          onchange={(v) =>
+                            savedCharacters.updatePreciseReference(liveCard.id, refItem.id, { strength: v })}
+                        />
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max={strengthMax}
+                        step="0.05"
+                        class="w-full accent-indigo-500"
+                        value={Math.min(strengthMax, Math.max(0, refItem.strength ?? 1.0))}
+                        oninput={(e) =>
+                          savedCharacters.updatePreciseReference(liveCard.id, refItem.id, {
+                            strength: Number(e.currentTarget.value),
+                          })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else if liveCard.thumbnail}
+            <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 flex items-center gap-3">
+              <button
+                type="button"
+                class="shrink-0 w-14 h-14 rounded overflow-hidden border border-neutral-800 hover:border-indigo-500/70 cursor-zoom-in {CHECKERBOARD_CLASS}"
+                title={locale.t("generation.novelai.reference.zoom")}
+                onclick={() => { zoomedSrc = liveCard.reference ?? liveCard.thumbnail; }}
+              >
+                <img src={liveCard.thumbnail} alt="" class="w-full h-full object-cover" />
+              </button>
+              <div class="flex-1 min-w-0">
+                <span class="inline-block rounded bg-neutral-800 border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-300">
+                  {locale.t("characters.references.card_fallback_badge")}
+                </span>
+              </div>
+            </div>
+          {:else}
+            <div class="flex-1 min-h-28 flex items-center justify-center rounded-lg border border-dashed border-neutral-800 text-xs text-neutral-500">
+              {locale.t("characters.references.empty")}
+            </div>
+          {/if}
+        </div>
+      {:else if tab === "details" || !showMemory}
         <div class="min-h-0 flex-1 overflow-y-auto flex flex-col gap-3">
           <label class="flex flex-col gap-1">
             <span class="text-xs font-medium text-neutral-300">{locale.t("characters.name")}</span>
@@ -707,3 +1154,45 @@
     />
   </div>
 </div>
+
+{#if refPickerOpen}
+  <GalleryPickerModal
+    open={true}
+    multiple
+    max={Math.max(1, NOVELAI_MAX_DIRECTOR_REFERENCES - liveRefs.length)}
+    title={locale.t("generation.novelai.reference.gallery_pick_title")}
+    onselect={(images) => void addRefFromGallery(images)}
+    onclose={() => { refPickerOpen = false; }}
+  />
+{/if}
+
+{#if zoomedSrc}
+  <div
+    use:portal
+    class="fixed inset-0 z-[10000] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+    role="dialog"
+    aria-modal="true"
+    aria-label={locale.t("generation.novelai.reference.zoom")}
+    tabindex="-1"
+  >
+    <button
+      type="button"
+      class="absolute inset-0 h-full w-full cursor-default"
+      aria-label={locale.t("common.close")}
+      onclick={() => { zoomedSrc = null; }}
+    ></button>
+    <div class="relative z-10 max-w-[90vw] max-h-[90vh]">
+      <img
+        src={zoomedSrc}
+        alt=""
+        class="max-w-[90vw] max-h-[85vh] rounded-lg border border-neutral-700 object-contain {CHECKERBOARD_CLASS}"
+      />
+      <button
+        type="button"
+        class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-neutral-900/90 border border-neutral-700 text-neutral-300 hover:text-white"
+        aria-label={locale.t("common.close")}
+        onclick={() => { zoomedSrc = null; }}
+      >✕</button>
+    </div>
+  </div>
+{/if}

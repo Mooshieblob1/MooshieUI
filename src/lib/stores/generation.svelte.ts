@@ -2754,12 +2754,25 @@ class GenerationStore {
   }
 
   /** Add a Precise Reference, clearing vibes for the same reason as above. */
-  addNovelAiDirectorReference(image: string, description = "character") {
+  addNovelAiDirectorReference(
+    image: string,
+    description = "character",
+    opts?: { strength?: number; fidelity?: number; enabled?: boolean },
+  ) {
     if (this.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) return;
+    const strengthMax = this.novelAiModel?.preciseReferenceStrengthMax ?? 1;
+    const rawStrength = typeof opts?.strength === "number" && Number.isFinite(opts.strength) ? opts.strength : 1.0;
+    const rawFidelity = typeof opts?.fidelity === "number" && Number.isFinite(opts.fidelity) ? opts.fidelity : 1.0;
     this.updateNovelAiSettings({
       director_references: [
         ...this.novelaiSettings.director_references,
-        { image, description, strength: 1.0, fidelity: 1.0, enabled: true },
+        {
+          image,
+          description,
+          strength: Math.max(0, Math.min(strengthMax, rawStrength)),
+          fidelity: Math.max(0, Math.min(1, rawFidelity)),
+          enabled: opts?.enabled ?? true,
+        },
       ],
       vibes: [],
     });

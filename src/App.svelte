@@ -137,7 +137,7 @@
   } from "./lib/artist-gallery/previewRecipe.js";
   import { artistLocalPreviews } from "./lib/stores/artistLocalPreviews.svelte.js";
   import { savedCharacters } from "./lib/stores/savedCharacters.svelte.js";
-  import { applyCharacterPortrait } from "./lib/utils/characterPortrait.js";
+  import { applyCharacterGeneratedReference, applyCharacterPortrait } from "./lib/utils/characterPortrait.js";
   import { styleCreator } from "./lib/stores/styleCreator.svelte.js";
   import { animeScene } from "./lib/stores/animeScene.svelte.js";
   import { submitGeneration } from "./lib/utils/generationSubmit.js";
@@ -2442,11 +2442,17 @@
       }
     }
 
-    // A saved character's portrait becomes that card's picture. Before the
-    // artist-preview block, which is followed by an early return.
-    const portraitCard = savedCharacters.resolvePortrait(promptId);
-    if (portraitCard !== null && newImages[0]) {
-      void applyCharacterPortrait(portraitCard, newImages[0]);
+    // A saved character's generated portrait or reference goes back to its card.
+    const imageClaim = savedCharacters.resolveImageClaim(promptId);
+    if (imageClaim !== null && newImages[0]) {
+      if (imageClaim.target === "reference") {
+        void applyCharacterGeneratedReference(imageClaim.cardId, newImages[0], {
+          description: imageClaim.description,
+          enablePr: imageClaim.enablePr,
+        });
+      } else {
+        void applyCharacterPortrait(imageClaim.cardId, newImages[0]);
+      }
     }
 
     // Route a finished Style Creator card back to its round. Must run before
@@ -3545,7 +3551,7 @@
           // `toastMsg` is the classified message the toast above already showed.
           styleCreator.fail(data.prompt_id, toastMsg);
           stylesStore.failThumbnail(data.prompt_id);
-          savedCharacters.resolvePortrait(data.prompt_id);
+          savedCharacters.resolveImageClaim(data.prompt_id);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
@@ -3663,7 +3669,7 @@
                 // card's spinner would run forever.
                 styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
                 stylesStore.failThumbnail(p.promptId);
-                savedCharacters.resolvePortrait(p.promptId);
+                savedCharacters.resolveImageClaim(p.promptId);
               }
             } else {
               // `completePrompt` did not recognise this prompt at all. Same
@@ -3671,7 +3677,7 @@
               // must be released the same way.
               styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
               stylesStore.failThumbnail(p.promptId);
-              savedCharacters.resolvePortrait(p.promptId);
+              savedCharacters.resolveImageClaim(p.promptId);
             }
           }
         }

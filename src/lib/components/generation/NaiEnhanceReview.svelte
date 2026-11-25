@@ -13,6 +13,8 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
+  import { effectiveCharacterPreciseReferences } from "../../utils/characterPreciseRefLogic.js";
   import { redoLast } from "../../utils/enhanceChatRunner.js";
   import {
     findOutfitOverlaps,
@@ -58,6 +60,20 @@
       generation.isNovelAiInfill,
     ),
   );
+  const pendingRefCards = $derived.by(() => {
+    if (!pending?.characterRefIds.length) return [];
+    const byId = new Map(savedCharacters.characters.map((c) => [c.id, c]));
+    return pending.characterRefIds
+      .map((id) => byId.get(id))
+      .filter(
+        (c): c is SavedCharacter =>
+          Boolean(
+            c &&
+              c.usePreciseReference &&
+              effectiveCharacterPreciseReferences(c).length > 0,
+          ),
+      );
+  });
 
   /** Where else an overlapping tag is written, for its chip's tooltip. */
   function overlapPlaces(o: OutfitOverlap, except: number | null): string {
@@ -250,6 +266,42 @@
             modes: activeRefSummary.modes.map((m) => locale.t(novelAiReferenceLabelKey(m))).join(", "),
             anlas: String(activeRefSummary.count * PRECISE_REFERENCE_COST),
           })}
+        </div>
+      {/if}
+
+      {#if generation.isNovelAi && generation.supportsNovelAiPreciseReference && pendingRefCards.length > 0}
+        <div class="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-500/40 bg-indigo-500/10 p-2 text-[11px] text-indigo-100">
+          <span class="font-medium text-indigo-200">
+            {locale.t("characters.references.enhance_attach_label")}
+          </span>
+          {#each pendingRefCards as card (card.id)}
+            {@const refCount = effectiveCharacterPreciseReferences(card).length}
+            {@const checked = pending.selectedCharacterRefIds.includes(card.id)}
+            <label
+              class="inline-flex items-center gap-1.5 rounded border px-2 py-0.5 cursor-pointer transition-colors {checked
+                ? 'border-indigo-400/70 bg-indigo-500/25 text-white'
+                : 'border-neutral-700 bg-neutral-900/60 text-neutral-400'}"
+            >
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                {checked}
+                onchange={() => enhanceChat.togglePendingCharacterRef(card.id)}
+              />
+              {#if card.thumbnail}
+                <img src={card.thumbnail} alt="" class="w-4 h-4 rounded-sm object-cover" />
+              {/if}
+              <span>{card.name}</span>
+              <span class="text-[10px] tabular-nums opacity-80">
+                ({refCount}, +{refCount * PRECISE_REFERENCE_COST} Anlas)
+              </span>
+            </label>
+          {/each}
+          {#if generation.novelaiSettings.vibes.length > 0}
+            <span class="ml-auto text-[10px] text-amber-300">
+              {locale.t("characters.references.toast_vibes_active")}
+            </span>
+          {/if}
         </div>
       {/if}
 
