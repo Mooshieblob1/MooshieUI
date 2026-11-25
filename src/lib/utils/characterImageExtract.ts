@@ -6,7 +6,12 @@ import type { InterrogationResult } from "../types/index.js";
 import type { ExtractedCharacter } from "./characterExtract.js";
 import { findDuplicate, sameContent, type DuplicateCandidate } from "./characterDuplicates.js";
 
-export type ExtractSourceKind = "metadata" | "interrogator" | "describe" | "prompt";
+export type ExtractSourceKind =
+  | "prompt"
+  | "combined"
+  | "metadata"
+  | "interrogator"
+  | "describe";
 
 export interface ImageExtractSource {
   prompt: string;
