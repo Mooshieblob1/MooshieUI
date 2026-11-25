@@ -9,6 +9,7 @@
   import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
   import { novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { NAI_REF_CHARACTER, novelAiReferenceLabelKey } from "../../utils/novelaiModels.js";
+  import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
 
   interface Props {
     compact?: boolean;
@@ -16,6 +17,9 @@
   }
 
   let { compact = false, onJumpToPreciseRef }: Props = $props();
+
+  let hoverAnchor = $state<HTMLElement | null>(null);
+  let hoverIndex = $state<number | null>(null);
 
   const summary = $derived(
     describeActiveNovelAiDirectorReferences(
@@ -50,6 +54,22 @@
         })
       : "",
   );
+
+  const hoveredItems = $derived(
+    hoverIndex === null
+      ? []
+      : hoverIndex === -1
+        ? summary.items
+        : summary.items.filter((i) => i.index === hoverIndex),
+  );
+  const hoverHint = $derived(
+    hoverIndex === null ? undefined : locale.t("generation.novelai.reference.hover_click_open"),
+  );
+
+  function clearHover() {
+    hoverAnchor = null;
+    hoverIndex = null;
+  }
 </script>
 
 {#if summary.count > 0}
@@ -57,8 +77,12 @@
     <div class="mb-1 flex items-center gap-1 overflow-x-auto">
       <button
         type="button"
-        onclick={() => onJumpToPreciseRef?.()}
-        title={headerTip}
+        onclick={() => { clearHover(); onJumpToPreciseRef?.(); }}
+        onmouseenter={(e) => { hoverAnchor = e.currentTarget; hoverIndex = -1; }}
+        onmouseleave={clearHover}
+        onfocusin={(e) => { hoverAnchor = e.currentTarget; hoverIndex = -1; }}
+        onfocusout={clearHover}
+        aria-label={headerTip}
         class="inline-flex min-w-0 shrink items-center gap-1.5 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-200 hover:bg-amber-500/25 transition-colors"
       >
         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-hidden="true"></span>
@@ -68,7 +92,7 @@
       </button>
       <button
         type="button"
-        onclick={() => generation.clearNovelAiDirectorReferences()}
+        onclick={() => { clearHover(); generation.clearNovelAiDirectorReferences(); }}
         title={locale.t("generation.novelai.reference.clear_all")}
         aria-label={locale.t("generation.novelai.reference.clear_all")}
         class="shrink-0 rounded-full border border-amber-500/40 bg-neutral-900/70 px-1.5 py-0.5 text-[10px] text-amber-200/80 hover:border-red-500/50 hover:bg-red-500/15 hover:text-red-200 transition-colors"
@@ -79,17 +103,26 @@
   {:else}
     <div class="mb-2 space-y-1.5 rounded-lg border border-amber-500/45 bg-amber-500/10 px-2 py-1.5">
       <div class="flex items-center justify-between gap-2 text-[11px]">
-        <span class="flex min-w-0 items-center gap-1.5 font-medium text-amber-200" title={headerTip}>
+        <button
+          type="button"
+          class="flex min-w-0 items-center gap-1.5 font-medium text-amber-200 hover:text-amber-100 transition-colors"
+          aria-label={headerTip}
+          onclick={() => { clearHover(); onJumpToPreciseRef?.(); }}
+          onmouseenter={(e) => { hoverAnchor = e.currentTarget; hoverIndex = -1; }}
+          onmouseleave={clearHover}
+          onfocusin={(e) => { hoverAnchor = e.currentTarget; hoverIndex = -1; }}
+          onfocusout={clearHover}
+        >
           <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-hidden="true"></span>
           <span class="truncate">{locale.t("generation.novelai.reference.title")}</span>
           <span class="shrink-0 rounded bg-amber-500/20 px-1 py-px font-mono text-[10px] text-amber-200">
             {locale.t("characters.references.anlas_badge", { anlas: String(summary.anlas) })}
           </span>
-        </span>
+        </button>
         {#if summary.count >= 2}
           <button
             type="button"
-            onclick={() => generation.clearNovelAiDirectorReferences()}
+            onclick={() => { clearHover(); generation.clearNovelAiDirectorReferences(); }}
             class="shrink-0 text-[10px] text-amber-200/80 hover:text-red-200 transition-colors"
           >
             {locale.t("generation.novelai.reference.clear_all")}
@@ -115,8 +148,12 @@
           <div class="inline-flex max-w-full items-center overflow-hidden rounded-full border border-amber-500/50 bg-neutral-950/60 text-[10px] text-amber-100">
             <button
               type="button"
-              onclick={() => onJumpToPreciseRef?.()}
-              title={itemTip}
+              onclick={() => { clearHover(); onJumpToPreciseRef?.(); }}
+              onmouseenter={(e) => { hoverAnchor = e.currentTarget; hoverIndex = item.index; }}
+              onmouseleave={clearHover}
+              onfocusin={(e) => { hoverAnchor = e.currentTarget; hoverIndex = item.index; }}
+              onfocusout={clearHover}
+              aria-label={itemTip}
               class="inline-flex min-w-0 items-center gap-1 py-0.5 pl-1 pr-1.5 hover:bg-amber-500/15 transition-colors"
             >
               <img src={novelAiBase64ToSrc(item.image)} alt="" class="h-4 w-4 shrink-0 rounded-sm object-cover" />
@@ -127,7 +164,7 @@
             </button>
             <button
               type="button"
-              onclick={() => generation.removeNovelAiDirectorReference(item.index)}
+              onclick={() => { clearHover(); generation.removeNovelAiDirectorReference(item.index); }}
               title={locale.t("generation.novelai.reference.remove")}
               aria-label={removeAria}
               class="inline-flex h-5 items-center border-l border-amber-500/30 px-1.5 text-amber-300/80 hover:bg-red-500/20 hover:text-red-200 transition-colors"
@@ -140,3 +177,10 @@
     </div>
   {/if}
 {/if}
+
+<PreciseRefHoverTooltip
+  anchor={hoverAnchor}
+  items={hoveredItems}
+  hint={hoverHint}
+  onDismiss={clearHover}
+/>

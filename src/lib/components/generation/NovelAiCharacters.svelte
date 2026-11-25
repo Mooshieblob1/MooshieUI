@@ -25,6 +25,7 @@
   import { naiV5Variant, novelAiMaxCharacters } from "../../utils/novelaiModels.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import NovelAiCharacterPrompt from "./NovelAiCharacterPrompt.svelte";
+  import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
 
   const characters = $derived(generation.novelaiSettings.characters);
   const maxCharacters = $derived(novelAiMaxCharacters(generation.checkpoint));
@@ -79,6 +80,17 @@
       });
     }),
   );
+  let hoveredBoxPrAnchor = $state<HTMLElement | null>(null);
+  let hoveredBoxPrCharId = $state<string | null>(null);
+  const hoveredBoxPrItems = $derived(
+    hoveredBoxPrCharId
+      ? activePrSummary.items.filter((item) => item.characterId === hoveredBoxPrCharId)
+      : [],
+  );
+  function clearBoxPrHover() {
+    hoveredBoxPrAnchor = null;
+    hoveredBoxPrCharId = null;
+  }
 
   function isolateOutfits() {
     if (!enhanceChat.openIsolateReview()) {
@@ -144,12 +156,14 @@
             {#each matchedPrCards as prCard (prCard.id)}
               {@const prMeta = activePrMetaByCharId.get(prCard.id)}
               {#if prMeta}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <span
                   class="inline-flex max-w-40 items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-200"
-                  title={locale.t("generation.novelai.reference.character_box_active_tip", {
-                    name: prCard.name,
-                    anlas: String(prMeta.anlas),
-                  })}
+                  onmouseenter={(e) => {
+                    hoveredBoxPrAnchor = e.currentTarget;
+                    hoveredBoxPrCharId = prCard.id;
+                  }}
+                  onmouseleave={clearBoxPrHover}
                 >
                   <img src={novelAiBase64ToSrc(prMeta.image)} alt="" class="h-3.5 w-3.5 shrink-0 rounded-sm object-cover" />
                   <span class="truncate">{locale.t("characters.references.pill_label")}: {prCard.name}</span>
@@ -228,3 +242,9 @@
     {/if}
   {/if}
 </div>
+
+<PreciseRefHoverTooltip
+  anchor={hoveredBoxPrAnchor}
+  items={hoveredBoxPrItems}
+  onDismiss={clearBoxPrHover}
+/>

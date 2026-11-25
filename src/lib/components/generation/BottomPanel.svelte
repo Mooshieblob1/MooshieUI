@@ -37,7 +37,9 @@
     describeActiveNovelAiDirectorReferences,
     formatActivePreciseRefTargets,
   } from "../../utils/characterPreciseRefLogic.js";
+  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
   import { novelAiReferenceLabelKey } from "../../utils/novelaiModels.js";
+  import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
   import ScheduleBuilder from "./ScheduleBuilder.svelte";
   import VideoTimelinePanel from "../video/VideoTimelinePanel.svelte";
   import { videoTimeline } from "../../stores/videoTimeline.svelte.js";
@@ -125,6 +127,7 @@
       locale.t(novelAiReferenceLabelKey(baseType)),
     ),
   );
+  let prTabHoverAnchor = $state<HTMLElement | null>(null);
 
   // Snap to a valid tab whenever the visible set shrinks out from under the
   // selection (mode switch, or the checkpoints count dropping below the
@@ -590,8 +593,27 @@
   <div class="flex flex-1 min-w-0 items-center gap-0.5 px-2 pt-1 pb-0.5 overflow-x-auto overflow-y-hidden">
     {#each visibleTabs as tab}
       <button
-        onclick={() => { activeTab = tab; if (collapsed) ontogglecollapse?.(); }}
-        class="shrink-0 whitespace-nowrap px-3 py-1.5 text-[11px] font-medium rounded-t-md transition-colors flex items-center gap-1.5 {activeTab === tab && !collapsed
+        onclick={() => { prTabHoverAnchor = null; activeTab = tab; if (collapsed) ontogglecollapse?.(); }}
+        onmouseenter={(e) => {
+          if (tab === "characters" && activeCharPrSummary.items.length > 0) {
+            prTabHoverAnchor = e.currentTarget;
+          }
+        }}
+        onmouseleave={() => { if (tab === "characters") prTabHoverAnchor = null; }}
+        onfocusin={(e) => {
+          if (tab === "characters" && activeCharPrSummary.items.length > 0) {
+            prTabHoverAnchor = e.currentTarget;
+          }
+        }}
+        onfocusout={() => { if (tab === "characters") prTabHoverAnchor = null; }}
+        aria-label={tab === "characters" && activeCharPrSummary.items.length > 0
+          ? `${locale.t(tabLabelKey(tab))} - ${locale.t("generation.novelai.reference.active_header_tip", {
+              count: String(activeCharPrSummary.items.length),
+              targets: activeCharPrTargets.detailed,
+              anlas: String(activeCharPrSummary.items.length * PRECISE_REFERENCE_COST),
+            })}`
+          : undefined}
+        class="group shrink-0 whitespace-nowrap px-3 py-1.5 text-[11px] font-medium rounded-t-md transition-colors flex items-center gap-1.5 {activeTab === tab && !collapsed
           ? 'bg-neutral-800/80 text-neutral-100 border-b-2 border-indigo-500'
           : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/40'}"
       >
@@ -636,15 +658,11 @@
             <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{savedCharacters.currentCharacters.length}</span>
           {/if}
           {#if activeCharPrSummary.items.length > 0}
-            <span
-              class="text-[9px] px-1 py-0 rounded-full border border-amber-500/45 bg-amber-500/20 text-amber-300 font-semibold"
-              title={locale.t("generation.novelai.reference.active_header_tip", {
-                count: String(activeCharPrSummary.items.length),
-                targets: activeCharPrTargets.detailed,
-                anlas: String(activeCharPrSummary.items.length * 5),
-              })}
-            >
-              {locale.t("characters.references.pill_label")}
+            <span class="inline-flex items-center text-[9px] px-1 py-0 rounded-full border border-amber-500/45 bg-amber-500/20 text-amber-300 font-semibold">
+              <span>{locale.t("characters.references.pill_label")}</span>
+              <span class="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-150 group-hover:max-w-44 group-hover:opacity-100 group-focus-visible:max-w-44 group-focus-visible:opacity-100">
+                : {activeCharPrTargets.short}
+              </span>
             </span>
           {/if}
         {:else if tab === "artists" && artistFavourites.count > 0}
@@ -1168,3 +1186,9 @@
     </div>
   </div>
 {/if}
+
+<PreciseRefHoverTooltip
+  anchor={prTabHoverAnchor}
+  items={activeCharPrSummary.items}
+  onDismiss={() => { prTabHoverAnchor = null; }}
+/>

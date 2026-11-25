@@ -17,6 +17,7 @@
   import DimensionControls from "./DimensionControls.svelte";
   import GenerateButton from "./GenerateButton.svelte";
   import GenerationTabStrip from "./GenerationTabStrip.svelte";
+  import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
   import MobileNavIcon from "../mobile/MobileNavIcon.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
@@ -480,6 +481,7 @@
       locale.t(novelAiReferenceLabelKey(baseType)),
     ),
   );
+  let novelaiHeaderPrAnchor = $state<HTMLElement | null>(null);
 
   let collapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
@@ -1778,19 +1780,17 @@
       {@render dragHandle(section)}
       <button
         class="flex flex-1 min-w-0 items-center gap-1.5 py-2.5 pr-1 text-left text-[13px] font-semibold text-neutral-200 hover:text-white focus:outline-none"
-        onclick={toggle}
+        onclick={() => { novelaiHeaderPrAnchor = null; toggle(); }}
         aria-expanded={open}
-        title={toggleTitle}
+        aria-label={toggleTitle}
       >
-        <span class="truncate">{label}</span>
+        <span class="truncate" title={toggleTitle}>{label}</span>
         {#if section === "novelai" && activeNovelAiPrSummary.count > 0}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <span
             class="inline-flex max-w-44 shrink-0 items-center truncate rounded-full border border-amber-500/50 bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-200"
-            title={locale.t("generation.novelai.reference.active_header_tip", {
-              count: String(activeNovelAiPrSummary.count),
-              targets: activeNovelAiPrTargets.detailed,
-              anlas: String(activeNovelAiPrSummary.anlas),
-            })}
+            onmouseenter={(e) => { novelaiHeaderPrAnchor = e.currentTarget; }}
+            onmouseleave={() => { novelaiHeaderPrAnchor = null; }}
           >
             {locale.t("characters.references.pill_label")}: {activeNovelAiPrTargets.short} (+{activeNovelAiPrSummary.anlas})
           </span>
@@ -2832,3 +2832,9 @@
 
   <!-- Staged by any drop or paste of a NovelAI image, wherever it landed. -->
   <NovelAiImportModal onImage2Image={(file) => handleImagePaste(file)} />
+
+  <PreciseRefHoverTooltip
+    anchor={novelaiHeaderPrAnchor}
+    items={activeNovelAiPrSummary.items}
+    onDismiss={() => { novelaiHeaderPrAnchor = null; }}
+  />
