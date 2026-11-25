@@ -1,3 +1,11 @@
+## What's New in v2.4.10
+
+### Fixes & Improvements
+- **Character card PR button**: pressing the **PR** pill on a saved character card now immediately activates that character's reference image(s) in the NovelAI **Precise Reference** panel and opens it on desktop so you can adjust **Character**, **Outfit**, **Character and style**, **Style**, **Prefer same outfit**, or **Strength** right away; manual panel adjustments stay preserved across subsequent **Use** and **Enhance** runs, and the card **PR** pill turns amber while active in the panel.
+- **Windows clipboard paste**: clicking **Ctrl+V Paste** on Windows now reads images copied out of MooshieUI (or Windows Explorer) as file drops (`CF_HDROP`) as well as registered `PNG` clipboard formats, keeping PNG metadata intact and converting WebP/JPEG/JXL files automatically.
+
+---
+
 ## What's New in v2.4.9
 
 ### NovelAI V5 Precise Reference
