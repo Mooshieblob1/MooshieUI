@@ -14,7 +14,11 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
-  import { effectiveCharacterPreciseReferences } from "../../utils/characterPreciseRefLogic.js";
+  import {
+    describeActiveNovelAiDirectorReferences,
+    effectiveCharacterPreciseReferences,
+    formatActivePreciseRefTargets,
+  } from "../../utils/characterPreciseRefLogic.js";
   import { redoLast } from "../../utils/enhanceChatRunner.js";
   import {
     findOutfitOverlaps,
@@ -25,7 +29,6 @@
   import type { NaiCanonPriority } from "../../utils/naiSavedCharacters.js";
   import {
     naiV5Variant,
-    novelAiActiveDirectorReferenceSummary,
     novelAiReferenceLabelKey,
   } from "../../utils/novelaiModels.js";
   import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
@@ -54,10 +57,16 @@
   const similarBodies = $derived(similarBodyPairs(liveBoxes).length > 0);
   const oppositeUcDone = $derived(hasOppositeOutfitUc(liveBoxes, liveUcs));
   const activeRefSummary = $derived(
-    novelAiActiveDirectorReferenceSummary(
+    describeActiveNovelAiDirectorReferences(
       generation.novelAiModel,
       generation.novelaiSettings.director_references,
       generation.isNovelAiInfill,
+      savedCharacters.characters,
+    ),
+  );
+  const activeRefTargets = $derived(
+    formatActivePreciseRefTargets(activeRefSummary.items, (baseType) =>
+      locale.t(novelAiReferenceLabelKey(baseType)),
     ),
   );
   const pendingRefCards = $derived.by(() => {
@@ -259,12 +268,12 @@
 
       {#if activeRefSummary.count > 0}
         <div
-          class="mb-3 rounded-lg border border-indigo-500/40 bg-indigo-500/10 p-2 text-[11px] text-indigo-200"
+          class="mb-3 rounded-lg border border-amber-500/45 bg-amber-500/10 p-2 text-[11px] text-amber-200"
         >
           {locale.t("generation.novelai.reference.enhance_active", {
             count: String(activeRefSummary.count),
-            modes: activeRefSummary.modes.map((m) => locale.t(novelAiReferenceLabelKey(m))).join(", "),
-            anlas: String(activeRefSummary.count * PRECISE_REFERENCE_COST),
+            modes: activeRefTargets.detailed,
+            anlas: String(activeRefSummary.anlas),
           })}
         </div>
       {/if}

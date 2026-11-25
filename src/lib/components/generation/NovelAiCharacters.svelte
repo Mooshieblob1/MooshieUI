@@ -15,6 +15,13 @@
   import { novelai } from "../../stores/novelai.svelte.js";
   import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import {
+    describeActiveNovelAiDirectorReferences,
+    matchCharacterCardsInText,
+  } from "../../utils/characterPreciseRefLogic.js";
+  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
+  import { novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { naiV5Variant, novelAiMaxCharacters } from "../../utils/novelaiModels.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import NovelAiCharacterPrompt from "./NovelAiCharacterPrompt.svelte";
@@ -33,6 +40,44 @@
   const canIsolate = $derived(
     !!naiV5Variant(generation.checkpoint) &&
       characters.filter((character) => character.prompt.trim()).length >= 2,
+  );
+  const activePrSummary = $derived(
+    describeActiveNovelAiDirectorReferences(
+      generation.novelAiModel,
+      generation.novelaiSettings.director_references,
+      generation.isNovelAiInfill,
+      savedCharacters.characters,
+    ),
+  );
+  const activePrMetaByCharId = $derived.by(() => {
+    const map = new Map<string, { count: number; anlas: number; image: string }>();
+    for (const item of activePrSummary.items) {
+      if (!item.characterId) continue;
+      const existing = map.get(item.characterId);
+      if (existing) {
+        existing.count += 1;
+        existing.anlas += PRECISE_REFERENCE_COST;
+      } else {
+        map.set(item.characterId, { count: 1, anlas: PRECISE_REFERENCE_COST, image: item.image });
+      }
+    }
+    return map;
+  });
+  const activePrCards = $derived.by(() => {
+    if (activePrSummary.characterIds.length === 0) return [];
+    const activeIds = new Set(activePrSummary.characterIds);
+    return savedCharacters.characters.filter((c) => activeIds.has(c.id));
+  });
+  const matchedPrCardsByBox = $derived(
+    characters.map((character) => {
+      if (!character.enabled || !character.prompt.trim() || activePrCards.length === 0) {
+        return [];
+      }
+      return matchCharacterCardsInText(activePrCards, [], {
+        base: "",
+        characters: [character.prompt],
+      });
+    }),
   );
 
   function isolateOutfits() {
@@ -80,20 +125,38 @@
     {/if}
 
     {#each characters as character, index (index)}
+      {@const matchedPrCards = matchedPrCardsByBox[index] ?? []}
       <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 space-y-2">
         <div class="flex items-center justify-between gap-2">
-          <label class="flex items-center gap-2 text-xs text-neutral-300">
-            <input
-              type="checkbox"
-              class="accent-indigo-500"
-              checked={character.enabled}
-              onchange={(e) =>
-                generation.updateNovelAiCharacter(index, {
-                  enabled: e.currentTarget.checked,
-                })}
-            />
-            {locale.t("generation.novelai.characters.label", { index: String(index + 1) })}
-          </label>
+          <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+            <label class="flex items-center gap-2 text-xs text-neutral-300">
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                checked={character.enabled}
+                onchange={(e) =>
+                  generation.updateNovelAiCharacter(index, {
+                    enabled: e.currentTarget.checked,
+                  })}
+              />
+              {locale.t("generation.novelai.characters.label", { index: String(index + 1) })}
+            </label>
+            {#each matchedPrCards as prCard (prCard.id)}
+              {@const prMeta = activePrMetaByCharId.get(prCard.id)}
+              {#if prMeta}
+                <span
+                  class="inline-flex max-w-40 items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-200"
+                  title={locale.t("generation.novelai.reference.character_box_active_tip", {
+                    name: prCard.name,
+                    anlas: String(prMeta.anlas),
+                  })}
+                >
+                  <img src={novelAiBase64ToSrc(prMeta.image)} alt="" class="h-3.5 w-3.5 shrink-0 rounded-sm object-cover" />
+                  <span class="truncate">{locale.t("characters.references.pill_label")}: {prCard.name}</span>
+                </span>
+              {/if}
+            {/each}
+          </div>
           <button
             class="px-2 py-0.5 text-[11px] rounded-md text-neutral-400 hover:text-red-400 hover:bg-neutral-800"
             title={locale.t("generation.novelai.characters.remove")}

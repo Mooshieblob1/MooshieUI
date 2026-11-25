@@ -32,6 +32,11 @@
   import { naiImageEnhance } from "../../stores/naiImageEnhance.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import {
+    describeActiveNovelAiDirectorReferences,
+    formatActivePreciseRefTargets,
+  } from "../../utils/characterPreciseRefLogic.js";
   import { requestGeneration } from "../../utils/generationSubmit.js";
   import {
     imageBytesToBase64,
@@ -46,7 +51,6 @@
     NOVELAI_MEDIUM_EFFORT,
     naiV5Variant,
     novelAiActiveDirectorReferenceCount,
-    novelAiActiveDirectorReferenceSummary,
     novelAiEffortForcedByPreciseReference,
     novelAiReferenceLabelKey,
     novelAiUsesMediumEffort,
@@ -204,10 +208,16 @@
     costFor(naiImageEnhance.oneXSize, naiImageEnhance.variety, naiImageEnhance.variationCount),
   );
   const activeRefSummary = $derived(
-    novelAiActiveDirectorReferenceSummary(
+    describeActiveNovelAiDirectorReferences(
       generation.novelAiModel,
       generation.novelaiSettings.director_references,
       false,
+      savedCharacters.characters,
+    ),
+  );
+  const activeRefTargets = $derived(
+    formatActivePreciseRefTargets(activeRefSummary.items, (baseType) =>
+      locale.t(novelAiReferenceLabelKey(baseType)),
     ),
   );
 
@@ -737,14 +747,13 @@
 
       {#if action !== "upscale" && activeRefSummary.count > 0}
         <p
-          class="mt-2 rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200"
+          class="mt-2 rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
         >
           {locale.t("generation.novelai.reference.image_enhance_active", {
             count: String(activeRefSummary.count),
-            modes: activeRefSummary.modes.map((m) => locale.t(novelAiReferenceLabelKey(m))).join(", "),
+            modes: activeRefTargets.detailed,
             anlas: String(
-              activeRefSummary.count *
-                PRECISE_REFERENCE_COST *
+              activeRefSummary.anlas *
                 (action === "variations" ? naiImageEnhance.variationCount : 1),
             ),
           })}

@@ -6,9 +6,13 @@
   import { novelai } from "../../stores/novelai.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import {
+    describeActiveNovelAiDirectorReferences,
+    formatActivePreciseRefTargets,
+  } from "../../utils/characterPreciseRefLogic.js";
   import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
-  import { PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
-  import { novelAiActiveDirectorReferenceSummary } from "../../utils/novelaiModels.js";
+  import { novelAiReferenceLabelKey } from "../../utils/novelaiModels.js";
   import { stripArtistSigil } from "../../utils/artistTag.js";
   import type { StyleArtist } from "../../stores/styles.svelte.js";
 
@@ -35,14 +39,20 @@
     const one = estimateCurrentNovelAiCost(1, true);
     return one === null ? null : one * styleCreator.cardsPerRound;
   });
-  const activeRefCount = $derived(
+  const activeRefSummary = $derived(
     generation.isNovelAi
-      ? novelAiActiveDirectorReferenceSummary(
+      ? describeActiveNovelAiDirectorReferences(
           generation.novelAiModel,
           generation.novelaiSettings.director_references,
           false,
-        ).count
-      : 0,
+          savedCharacters.characters,
+        )
+      : { items: [], count: 0, anlas: 0, characterIds: [], characterNames: [] },
+  );
+  const activeRefTargets = $derived(
+    formatActivePreciseRefTargets(activeRefSummary.items, (baseType) =>
+      locale.t(novelAiReferenceLabelKey(baseType)),
+    ),
   );
 
   // The badge needs the subscription tier, same as the Generate button.
@@ -198,11 +208,12 @@
           {locale.t("style_creator.cost_badge", { anlas })}
         </span>
       {/if}
-      {#if activeRefCount > 0}
+      {#if activeRefSummary.count > 0}
         <p class="mt-1 text-[11px] text-amber-300/90">
           {locale.t("generation.novelai.reference.style_creator_active", {
-            count: String(activeRefCount),
-            anlas: String(activeRefCount * PRECISE_REFERENCE_COST),
+            count: String(activeRefSummary.count),
+            targets: activeRefTargets.detailed,
+            anlas: String(activeRefSummary.anlas),
           })}
         </p>
       {/if}

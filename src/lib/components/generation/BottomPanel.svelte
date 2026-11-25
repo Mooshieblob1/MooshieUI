@@ -33,6 +33,11 @@
   import CharactersPanel from "./CharactersPanel.svelte";
   import WildcardsPanel from "./WildcardsPanel.svelte";
   import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import {
+    describeActiveNovelAiDirectorReferences,
+    formatActivePreciseRefTargets,
+  } from "../../utils/characterPreciseRefLogic.js";
+  import { novelAiReferenceLabelKey } from "../../utils/novelaiModels.js";
   import ScheduleBuilder from "./ScheduleBuilder.svelte";
   import VideoTimelinePanel from "../video/VideoTimelinePanel.svelte";
   import { videoTimeline } from "../../stores/videoTimeline.svelte.js";
@@ -96,6 +101,30 @@
     }
     return tabs;
   });
+
+  const activeCharPrSummary = $derived.by(() => {
+    if (!generation.isNovelAi || isVideoMode) {
+      return { items: [], count: 0, anlas: 0, characterIds: [], characterNames: [] };
+    }
+    const summary = describeActiveNovelAiDirectorReferences(
+      generation.novelAiModel,
+      generation.novelaiSettings.director_references,
+      generation.isNovelAiInfill,
+      savedCharacters.characters,
+    );
+    const charItems = summary.items.filter((item) => item.characterId !== null);
+    return {
+      ...summary,
+      items: charItems,
+      count: charItems.length,
+    };
+  });
+
+  const activeCharPrTargets = $derived(
+    formatActivePreciseRefTargets(activeCharPrSummary.items, (baseType) =>
+      locale.t(novelAiReferenceLabelKey(baseType)),
+    ),
+  );
 
   // Snap to a valid tab whenever the visible set shrinks out from under the
   // selection (mode switch, or the checkpoints count dropping below the
@@ -602,8 +631,22 @@
           <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{sessionImageCount}</span>
         {:else if tab === "prompts" && favoriteCount > 0}
           <span class="text-[9px] px-1 py-0 rounded-full bg-amber-500/30 text-amber-400 tabular-nums">{favoriteCount}</span>
-        {:else if tab === "characters" && savedCharacters.currentCharacters.length > 0}
-          <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{savedCharacters.currentCharacters.length}</span>
+        {:else if tab === "characters"}
+          {#if savedCharacters.currentCharacters.length > 0}
+            <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{savedCharacters.currentCharacters.length}</span>
+          {/if}
+          {#if activeCharPrSummary.items.length > 0}
+            <span
+              class="text-[9px] px-1 py-0 rounded-full border border-amber-500/45 bg-amber-500/20 text-amber-300 font-semibold"
+              title={locale.t("generation.novelai.reference.active_header_tip", {
+                count: String(activeCharPrSummary.items.length),
+                targets: activeCharPrTargets.detailed,
+                anlas: String(activeCharPrSummary.items.length * 5),
+              })}
+            >
+              {locale.t("characters.references.pill_label")}
+            </span>
+          {/if}
         {:else if tab === "artists" && artistFavourites.count > 0}
           <span class="text-[9px] px-1 py-0 rounded-full bg-red-500/30 text-red-400 tabular-nums">{artistFavourites.count}</span>
         {:else if tab === "compare" && compare.enabled}
