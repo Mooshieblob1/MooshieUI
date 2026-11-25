@@ -20,6 +20,48 @@ env:
   USE_NUC_RUNNER: 'false'
 
 jobs:
+  # Blocking: a high or critical npm advisory in a shipped dependency, or a
+  # Rust vulnerability, stops the release before updater signing/publishing.
+  # Extracted into one cached Linux job so Windows and Linux builders don't each
+  # compile cargo-audit from source before starting `tauri build`.
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache key
+        id: month
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo-audit
+        id: cache-audit
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ steps.month.outputs.month }}
+
+      - name: Install cargo-audit
+        if: steps.cache-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        run: bash scripts/audit-deps.sh
+
   build:
     strategy:
       fail-fast: false
@@ -75,6 +117,8 @@ jobs:
         uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           workspaces: src-tauri
+          shared-key: release-desktop
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # --ignore-scripts: no dependency lifecycle script runs during the release
       # build. Only esbuild (platform binary comes from its optional dependency)
@@ -83,15 +127,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --ignore-scripts
 
-      # Blocking: a high or critical npm advisory in a shipped dependency, or a
-      # Rust vulnerability, stops the release. Rules and the ignore list live in
-      # scripts/audit-deps.sh, which the Dependency Audit workflow also runs on
-      # PRs, main and daily, so a new advisory should be fixed before tagging.
-      - name: Audit dependencies
-        shell: bash
-        run: |
-          cargo install cargo-audit --locked
-          bash scripts/audit-deps.sh
+      # Built once here because `.github/tauri-no-updater-artifacts.json` clears
+      # `beforeBuildCommand` so Linux doesn't re-run Vite for all 3 formats.
+      - name: Build frontend
+        run: npm run build
 
       # Built as three separate `tauri build` invocations (one process per format)
       # instead of one `--target ... ` call with `targets: "all"`. Tauri's bundler
@@ -152,8 +191,8 @@ jobs:
   # from the lockfile-pinned @tauri-apps/cli), then publishes only the `.sig`
   # files. The release job merges them back next to the installers.
   sign-updaters:
-    needs: [build, build-macos]
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
+    needs: [audit, build, build-macos]
+    if: ${{ !cancelled() && needs.audit.result == 'success' && needs.build.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
     runs-on: ubuntu-latest
 
     steps:
@@ -505,6 +544,8 @@ jobs:
         uses: swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           workspaces: src-tauri
+          shared-key: release-server
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # NUC path pins cargo home/target into the persistent cache dir. Split from the
       # hosted path because an empty CARGO_TARGET_DIR (the old ternary fallback) makes
