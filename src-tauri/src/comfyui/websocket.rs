@@ -90,6 +90,69 @@ fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     Some((width, height))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum BootObservation {
+    Initial,
+    Same,
+    Restarted { previous: String, current: String },
+}
+
+#[derive(Debug, Default)]
+struct BootIdTracker {
+    current: Option<String>,
+}
+
+impl BootIdTracker {
+    fn new() -> Self {
+        Self { current: None }
+    }
+
+    fn observe(&mut self, next: Option<&str>) -> Option<BootObservation> {
+        let trimmed = next.map(str::trim).filter(|s| !s.is_empty())?.to_string();
+        match &self.current {
+            None => {
+                self.current = Some(trimmed);
+                Some(BootObservation::Initial)
+            }
+            Some(prev) if prev == &trimmed => Some(BootObservation::Same),
+            Some(prev) => {
+                let previous = prev.clone();
+                self.current = Some(trimmed.clone());
+                Some(BootObservation::Restarted {
+                    previous,
+                    current: trimmed,
+                })
+            }
+        }
+    }
+}
+
+async fn fetch_server_boot_id(client: &reqwest::Client, base_url: &str) -> Option<String> {
+    let url = format!("{}/features", base_url.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().await.ok()?;
+    json.get("server_boot_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn release_prompt_on_restart(ws_state: &AppState, current_prompt_id: &mut Option<String>) {
+    if let Some(pid) = current_prompt_id.take() {
+        ws_state.prompt_queue.finish(&pid);
+        ws_state.prompt_queue.drain_notify.notify_waiters();
+    }
+}
+
 /// Decode a MOOSHIE_OUTPUT_IMAGE binary frame (event_type 100) and, for raw RGBA
 /// payloads (format_tags 3/4/5), encode to JXL + a WebP/PNG display copy, or to
 /// lossless WebP directly (tag 5).
@@ -574,6 +637,7 @@ pub async fn connect_websocket(
         // Persist across reconnects so we can detect prompts that completed
         // while the WebSocket was down and emit a synthetic completion event.
         let mut current_prompt_id: Option<String> = None;
+        let mut boot_tracker = BootIdTracker::new();
         let mut backoff_ms: u64 = 0;
 
         'reconnect: loop {
@@ -625,6 +689,22 @@ pub async fn connect_websocket(
             };
 
             emit("comfyui:connection", serde_json::json!({"connected": true}));
+            if let Some(BootObservation::Restarted { previous, current }) = boot_tracker.observe(
+                fetch_server_boot_id(&ws_state.http_client, &base_url)
+                    .await
+                    .as_deref(),
+            ) {
+                log::info!(
+                    "ComfyUI restart detected (server_boot_id changed {} -> {})",
+                    previous,
+                    current
+                );
+                release_prompt_on_restart(&ws_state, &mut current_prompt_id);
+                emit(
+                    "comfyui:server_restarted",
+                    serde_json::json!({ "previous_boot_id": previous, "server_boot_id": current }),
+                );
+            }
 
             let (_, mut read) = ws_stream.split();
 
@@ -750,6 +830,28 @@ pub async fn connect_websocket(
                                         }
                                     }
                                     _ => {}
+                                }
+                            }
+
+                            if event_type == "feature_flags" {
+                                if let Some(BootObservation::Restarted { previous, current }) =
+                                    boot_tracker.observe(
+                                        data.get("server_boot_id").and_then(|v| v.as_str()),
+                                    )
+                                {
+                                    log::info!(
+                                        "ComfyUI restart detected from feature_flags ({} -> {})",
+                                        previous,
+                                        current
+                                    );
+                                    release_prompt_on_restart(&ws_state, &mut current_prompt_id);
+                                    emit(
+                                        "comfyui:server_restarted",
+                                        serde_json::json!({
+                                            "previous_boot_id": previous,
+                                            "server_boot_id": current,
+                                        }),
+                                    );
                                 }
                             }
 
@@ -1028,6 +1130,7 @@ pub async fn connect_websocket_headless(
             });
         };
         let mut current_prompt_id: Option<String> = None;
+        let mut boot_tracker = BootIdTracker::new();
         let mut backoff_ms: u64 = 0;
 
         'reconnect: loop {
@@ -1075,6 +1178,22 @@ pub async fn connect_websocket_headless(
             };
 
             emit("comfyui:connection", serde_json::json!({"connected": true}));
+            if let Some(BootObservation::Restarted { previous, current }) = boot_tracker.observe(
+                fetch_server_boot_id(&ws_state.http_client, &base_url)
+                    .await
+                    .as_deref(),
+            ) {
+                log::info!(
+                    "ComfyUI restart detected (server_boot_id changed {} -> {})",
+                    previous,
+                    current
+                );
+                release_prompt_on_restart(&ws_state, &mut current_prompt_id);
+                emit(
+                    "comfyui:server_restarted",
+                    serde_json::json!({ "previous_boot_id": previous, "server_boot_id": current }),
+                );
+            }
 
             let (_, mut read) = ws_stream.split();
 
@@ -1084,6 +1203,28 @@ pub async fn connect_websocket_headless(
                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
                             let event_type = parsed["type"].as_str().unwrap_or("unknown");
                             let data = &parsed["data"];
+
+                            if event_type == "feature_flags" {
+                                if let Some(BootObservation::Restarted { previous, current }) =
+                                    boot_tracker.observe(
+                                        data.get("server_boot_id").and_then(|v| v.as_str()),
+                                    )
+                                {
+                                    log::info!(
+                                        "ComfyUI restart detected from feature_flags (headless: {} -> {})",
+                                        previous,
+                                        current
+                                    );
+                                    release_prompt_on_restart(&ws_state, &mut current_prompt_id);
+                                    emit(
+                                        "comfyui:server_restarted",
+                                        serde_json::json!({
+                                            "previous_boot_id": previous,
+                                            "server_boot_id": current,
+                                        }),
+                                    );
+                                }
+                            }
 
                             if let Some(prompt_id) = data["prompt_id"].as_str() {
                                 match event_type {
@@ -1277,6 +1418,7 @@ async fn connect_websocket_for_worker_inner(
     let ws_url = format!("{}/ws?clientId={}", ws_url, state.client_id);
 
     let worker_id = worker.id;
+    let worker_base_url = worker.base_url();
     let tx = event_tx;
     #[cfg(feature = "desktop")]
     let app = app_handle;
@@ -1297,6 +1439,7 @@ async fn connect_websocket_for_worker_inner(
             });
         };
         let mut current_prompt_id: Option<String> = None;
+        let mut boot_tracker = BootIdTracker::new();
         let mut backoff_ms: u64 = 0;
 
         'reconnect: loop {
@@ -1359,6 +1502,27 @@ async fn connect_websocket_for_worker_inner(
                 "comfyui:connection",
                 serde_json::json!({"connected": true, "worker_id": worker_id}),
             );
+            if let Some(BootObservation::Restarted { previous, current }) = boot_tracker.observe(
+                fetch_server_boot_id(&ws_state.http_client, &worker_base_url)
+                    .await
+                    .as_deref(),
+            ) {
+                log::info!(
+                    "Worker {} ComfyUI restart detected (server_boot_id changed {} -> {})",
+                    worker_id,
+                    previous,
+                    current
+                );
+                release_prompt_on_restart(&ws_state, &mut current_prompt_id);
+                emit(
+                    "comfyui:server_restarted",
+                    serde_json::json!({
+                        "previous_boot_id": previous,
+                        "server_boot_id": current,
+                        "worker_id": worker_id,
+                    }),
+                );
+            }
 
             let (_, mut read) = ws_stream.split();
 
@@ -1368,6 +1532,28 @@ async fn connect_websocket_for_worker_inner(
                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
                             let event_type = parsed["type"].as_str().unwrap_or("unknown");
                             let data = &parsed["data"];
+
+                            if event_type == "feature_flags" {
+                                if let Some(BootObservation::Restarted { previous, current }) =
+                                    boot_tracker.observe(
+                                        data.get("server_boot_id").and_then(|v| v.as_str()),
+                                    )
+                                {
+                                    log::info!(
+                                        "ComfyUI restart detected from feature_flags (headless: {} -> {})",
+                                        previous,
+                                        current
+                                    );
+                                    release_prompt_on_restart(&ws_state, &mut current_prompt_id);
+                                    emit(
+                                        "comfyui:server_restarted",
+                                        serde_json::json!({
+                                            "previous_boot_id": previous,
+                                            "server_boot_id": current,
+                                        }),
+                                    );
+                                }
+                            }
 
                             if let Some(prompt_id) = data["prompt_id"].as_str() {
                                 match event_type {
@@ -1502,7 +1688,27 @@ async fn connect_websocket_for_worker_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::{png_dimensions, preview_image_format};
+    use super::{png_dimensions, preview_image_format, BootIdTracker, BootObservation};
+
+    #[test]
+    fn boot_id_tracker_ignores_blank_and_detects_restarts() {
+        let mut tracker = BootIdTracker::new();
+        assert_eq!(tracker.observe(None), None);
+        assert_eq!(tracker.observe(Some("   ")), None);
+        assert_eq!(
+            tracker.observe(Some("boot-1")),
+            Some(BootObservation::Initial)
+        );
+        assert_eq!(tracker.observe(Some("boot-1")), Some(BootObservation::Same));
+        assert_eq!(
+            tracker.observe(Some(" boot-2 ")),
+            Some(BootObservation::Restarted {
+                previous: "boot-1".into(),
+                current: "boot-2".into(),
+            })
+        );
+        assert_eq!(tracker.observe(Some("boot-2")), Some(BootObservation::Same));
+    }
 
     #[test]
     fn preview_image_format_maps_comfyui_codes_and_animated_webp() {

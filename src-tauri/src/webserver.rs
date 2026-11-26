@@ -661,6 +661,9 @@ const ADMIN_COMMANDS: &[&str] = &[
     // Eagle runs on the host: only the owner's library, only the owner's gallery
     "eagle_status",
     "send_to_eagle",
+    // ComfyUI snapshots / rollback manage host installation
+    "get_comfyui_snapshots",
+    "rollback_comfyui",
 ];
 
 /// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
@@ -5702,6 +5705,15 @@ async fn dispatch_command(
             let info = crate::comfyui_version::comfyui_version_info(&comfyui_dir);
             Ok(serde_json::to_value(info).map_err(|e| e.to_string())?)
         }
+        "get_comfyui_snapshots" => {
+            let base = crate::config::app_data_dir()
+                .ok_or_else(|| "Cannot determine app data directory".to_string())?;
+            let list = crate::comfyui_snapshot::list_snapshots(&base);
+            Ok(serde_json::to_value(list).map_err(|e| e.to_string())?)
+        }
+        "rollback_comfyui" => {
+            Err("ComfyUI rollback must be triggered from the desktop application.".to_string())
+        }
         "fetch_release_notes" => {
             let resp = state
                 .http_client
@@ -9936,6 +9948,15 @@ mod nai_key_tests {
         ] {
             assert_eq!(min_role_for_command(command), UserRole::User);
         }
+    }
+
+    #[test]
+    fn comfyui_snapshots_and_rollback_require_admin() {
+        assert_eq!(
+            min_role_for_command("get_comfyui_snapshots"),
+            UserRole::Admin
+        );
+        assert_eq!(min_role_for_command("rollback_comfyui"), UserRole::Admin);
     }
 
     #[test]

@@ -5,6 +5,8 @@ pub mod backup;
 pub mod cloud;
 pub mod comfyui;
 #[cfg(any(feature = "desktop", feature = "server"))]
+pub mod comfyui_snapshot;
+#[cfg(any(feature = "desktop", feature = "server"))]
 pub mod comfyui_version;
 pub mod commands;
 pub mod config;
@@ -828,6 +830,8 @@ pub fn run() {
             setup::move_installation,
             setup::get_comfyui_version,
             setup::update_comfyui,
+            setup::get_comfyui_snapshots,
+            setup::rollback_comfyui,
             commands::video_export::export_video_animation,
             commands::video_export::probe_video_export,
             commands::video_export::copy_file_to_clipboard,

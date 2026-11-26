@@ -1330,6 +1330,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         )));
     }
 
+    validate_extra_args(&config.extra_args)?;
     #[cfg(target_os = "macos")]
     super::runtime::validate_macos_args(&config.extra_args)?;
 
@@ -1656,6 +1657,7 @@ pub async fn start_worker_process(
     if config.server_mode != ServerMode::AutoLaunch {
         return Ok(());
     }
+    validate_extra_args(&config.extra_args)?;
     #[cfg(target_os = "macos")]
     super::runtime::validate_macos_args(&config.extra_args)?;
 
@@ -2464,6 +2466,43 @@ mod extra_model_paths_tests {
         assert!(!content.contains("custom_nodes"));
         assert!(content.contains("base_path: \"/no/such/loras\""));
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+/// Reject launch options that ComfyUI no longer supports across all OSes.
+pub fn validate_extra_args(args: &[String]) -> Result<(), String> {
+    for arg in args {
+        let flag = arg.split('=').next().unwrap_or(arg).trim();
+        if flag == "--directml" {
+            return Err(
+                "ComfyUI removed --directml support in v0.46.0. Remove --directml from Settings > Paths > Extra CLI Arguments and use CUDA, ROCm, XPU, MPS, or --cpu instead."
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod extra_args_validation_tests {
+    use super::validate_extra_args;
+
+    #[test]
+    fn rejects_removed_directml_flag() {
+        for bad in ["--directml", "--directml=0"] {
+            let err = validate_extra_args(&[bad.into()]).unwrap_err();
+            assert!(err.contains("--directml"), "{err}");
+        }
+    }
+
+    #[test]
+    fn accepts_supported_launch_flags() {
+        assert!(validate_extra_args(&[
+            "--cpu".into(),
+            "--fp32-vae".into(),
+            "--cuda-device=0".into(),
+        ])
+        .is_ok());
     }
 }
 

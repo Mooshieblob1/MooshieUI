@@ -3557,6 +3557,20 @@ pub async fn update_comfyui(
         error
     })?;
 
+    emit(&app, "snapshot", "Saving pre-update snapshot...", 20);
+    if let Err(err) = crate::comfyui_snapshot::capture_snapshot(
+        &base,
+        &comfyui_dir,
+        &git,
+        &venv_python(&base),
+        &uv_bin(&base),
+        comfyui_source_ref(),
+    )
+    .await
+    {
+        log::warn!("Pre-update ComfyUI snapshot skipped: {err}");
+    }
+
     // 1. Stop ComfyUI so the working tree is not locked (Windows) and the new
     //    version is picked up on the next start.
     emit(
@@ -3614,6 +3628,223 @@ pub async fn update_comfyui(
         updated: true,
         target_ref: comfyui_target_label().to_string(),
         method: checkout.method.to_string(),
+    })
+}
+
+/// Return saved pre-update ComfyUI snapshots, newest first.
+#[tauri::command]
+pub async fn get_comfyui_snapshots(
+    app: AppHandle,
+) -> Result<Vec<crate::comfyui_snapshot::ComfyUiSnapshotSummary>, AppError> {
+    let base = data_dir(&app)?;
+    Ok(crate::comfyui_snapshot::list_snapshots(&base))
+}
+
+async fn restore_frozen_deps(
+    app: &AppHandle,
+    base: &Path,
+    net: &SetupNetworkOpts,
+    frozen_packages: &str,
+) -> Result<(), String> {
+    if frozen_packages.trim().is_empty() {
+        return Err("Snapshot contains no recorded Python packages".into());
+    }
+    let uv = uv_bin(base);
+    if !uv.is_file() {
+        return Err("uv package manager not found for frozen restore".into());
+    }
+    let req_path = base.join(format!(
+        ".comfyui-rollback-{}.txt",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::write(&req_path, frozen_packages)
+        .map_err(|e| format!("Failed to write temporary rollback requirements: {e}"))?;
+
+    let python = venv_python(base);
+    let python_dir = base.join("python");
+    let mut cmd = tokio::process::Command::new(uv);
+    cmd.arg("pip")
+        .arg("install")
+        .arg("--python")
+        .arg(python.to_string_lossy().as_ref())
+        .arg("-r")
+        .arg(req_path.to_string_lossy().as_ref())
+        .env(
+            "UV_PYTHON_INSTALL_DIR",
+            python_dir.to_string_lossy().as_ref(),
+        );
+    let apply_res = crate::comfyui::nodes::apply_pip_install_options(
+        &mut cmd,
+        true,
+        net.network_proxy.as_deref(),
+        net.pip_index_url.as_deref(),
+    );
+    let result = match apply_res {
+        Ok(()) => run_command_logged(app, cmd).await,
+        Err(e) => Err(e),
+    };
+    let _ = std::fs::remove_file(&req_path);
+    result
+}
+
+/// Roll back the managed ComfyUI checkout and Python dependencies to a saved
+/// pre-update snapshot. Leaves ComfyUI stopped; the caller restarts it via `start_comfyui`.
+#[tauri::command]
+pub async fn rollback_comfyui(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    snapshot_id: String,
+) -> Result<ComfyUiUpdateResult, AppError> {
+    let _setup = SETUP_LOCK
+        .try_lock()
+        .map_err(|_| "A ComfyUI setup or update is already running")?;
+    let base = data_dir(&app)?;
+    let comfyui_dir = base.join("comfyui");
+    if !comfyui_dir.join("main.py").exists() {
+        return Err("ComfyUI is not installed yet. Run setup first.".into());
+    }
+    {
+        let config = state.config.read().await;
+        if config.server_mode == config::ServerMode::Remote {
+            return Err(
+                "Roll back ComfyUI on the remote host. This tool manages the local installation."
+                    .into(),
+            );
+        }
+        let configured = std::fs::canonicalize(&config.comfyui_path)?;
+        if configured != std::fs::canonicalize(&comfyui_dir)? {
+            return Err("Rollback manages the ComfyUI installation in MooshieUI's data folder. Manage the configured external installation separately.".into());
+        }
+    }
+
+    let snapshot = crate::comfyui_snapshot::load_snapshot(&base, &snapshot_id)?;
+    let net = {
+        let config = state.config.read().await;
+        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
+    };
+
+    emit(&app, "git", "Checking Git for ComfyUI rollback...", 5);
+    let git = crate::comfyui::git::ensure_available(
+        &base,
+        &state.http_client,
+        net.network_proxy.as_deref(),
+    )
+    .await?;
+
+    let comfy_str = comfyui_dir.to_string_lossy().to_string();
+    let verify_arg = format!("{}^0", snapshot.comfyui_commit);
+    let local_ok = crate::comfyui::git::run_git(
+        &git,
+        &["-C", &comfy_str, "rev-parse", "--verify", &verify_arg],
+        None,
+    )
+    .await
+    .map(|rev| rev.eq_ignore_ascii_case(&snapshot.comfyui_commit))
+    .unwrap_or(false);
+
+    let prepared_checkout = if local_ok {
+        None
+    } else {
+        emit(&app, "comfyui", "Fetching snapshot ComfyUI revision...", 15);
+        Some(
+            crate::comfyui::git::prepare_checkout(
+                &git,
+                &comfyui_dir,
+                "https://github.com/Comfy-Org/ComfyUI.git",
+                &snapshot.comfyui_commit,
+                net.network_proxy.as_deref(),
+            )
+            .await?,
+        )
+    };
+
+    emit(&app, "stopping", "Stopping ComfyUI for rollback...", 25);
+    crate::comfyui::process::stop_comfyui_process(&state).await?;
+
+    let marker = comfyui_dir.join(crate::comfyui_version::UPDATE_PENDING_MARKER);
+    std::fs::write(&marker, &snapshot.comfyui_commit)
+        .map_err(|e| format!("Cannot mark ComfyUI rollback pending: {e}"))?;
+
+    let label = snapshot
+        .comfyui_version
+        .clone()
+        .unwrap_or_else(|| snapshot.comfyui_commit[..8].to_string());
+    emit(
+        &app,
+        "comfyui",
+        &format!("Restoring ComfyUI {label}..."),
+        35,
+    );
+    if let Some(checkout) = prepared_checkout {
+        checkout.apply().await?;
+    } else {
+        crate::comfyui::git::run_git(
+            &git,
+            &[
+                "-C",
+                &comfy_str,
+                "reset",
+                "--hard",
+                &snapshot.comfyui_commit,
+            ],
+            None,
+        )
+        .await
+        .map_err(|e| format!("Failed to restore ComfyUI commit: {e}"))?;
+    }
+
+    emit(&app, "deps", "Restoring Python dependencies...", 55);
+    if let Err(err) = restore_frozen_deps(&app, &base, &net, &snapshot.python_packages).await {
+        log::warn!(
+            "Frozen package restore failed ({err}); falling back to requirements.txt for {label}"
+        );
+        step_install_deps(&app, &base, &net).await?;
+    }
+    ensure_quant_kernel_backend(&app, &base, &net).await;
+    verify_quant_stack(&app, &base).await;
+
+    emit(&app, "nodes", "Restoring custom node revisions...", 80);
+    let custom_nodes_dir = comfyui_dir.join("custom_nodes");
+    for node in &snapshot.custom_nodes {
+        if !crate::comfyui_snapshot::validate_node_dirname(&node.name)
+            || !crate::comfyui_snapshot::is_valid_commit_sha(&node.revision)
+        {
+            continue;
+        }
+        let node_dir = custom_nodes_dir.join(&node.name);
+        if !node_dir.is_dir() || !node_dir.join(".git").exists() {
+            continue;
+        }
+        let node_str = node_dir.to_string_lossy().to_string();
+        if let Err(err) = crate::comfyui::git::run_git(
+            &git,
+            &["-C", &node_str, "reset", "--hard", &node.revision],
+            None,
+        )
+        .await
+        {
+            log::warn!(
+                "Could not restore custom node '{}' to {}: {err}",
+                node.name,
+                &node.revision[..8]
+            );
+        }
+    }
+
+    crate::comfyui::nodes::ensure_mooshie_nodes(&comfy_str)?;
+    step_install_custom_nodes(&base)?;
+    std::fs::remove_file(&marker).ok();
+
+    emit(
+        &app,
+        "done",
+        &format!("ComfyUI rolled back to {label}."),
+        100,
+    );
+    Ok(ComfyUiUpdateResult {
+        updated: true,
+        target_ref: label,
+        method: "snapshot-rollback".to_string(),
     })
 }
 

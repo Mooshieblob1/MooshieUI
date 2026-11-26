@@ -545,8 +545,26 @@ export interface ComfyUiUpdateResult {
   method: string;
 }
 
+export interface ComfyUiSnapshotSummary {
+  id: string;
+  created_unix: number;
+  comfyui_version: string | null;
+  comfyui_commit: string;
+  target_ref: string;
+  package_count: number;
+  custom_node_count: number;
+}
+
 export async function updateComfyui(): Promise<ComfyUiUpdateResult> {
   return ipcInvoke("update_comfyui");
+}
+
+export async function getComfyuiSnapshots(): Promise<ComfyUiSnapshotSummary[]> {
+  return ipcInvoke("get_comfyui_snapshots");
+}
+
+export async function rollbackComfyui(snapshotId: string): Promise<ComfyUiUpdateResult> {
+  return ipcInvoke("rollback_comfyui", { snapshotId });
 }
 
 export async function killPortProcess(): Promise<number> {
