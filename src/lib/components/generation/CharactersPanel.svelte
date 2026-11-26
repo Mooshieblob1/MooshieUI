@@ -6,6 +6,7 @@
    */
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
+  import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import {
@@ -1246,6 +1247,16 @@
     editor = { character, tab, suggestions };
   }
 
+  function openCharacterChat(character: SavedCharacter) {
+    if (!promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    moreMenuId = null;
+    thumbMenuId = null;
+    enhanceChat.openCharacterChat(character.id);
+  }
+
   /** Whether a card shows its Memory button: the provider reads memory, or it has some. */
   function showsMemory(character: SavedCharacter): boolean {
     return promptAssistant.canUseMemory || savedCharacters.memoryOf(character).length > 0;
@@ -1333,6 +1344,15 @@
         onclick={() => openEditor(character)}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      </button>
+      <button
+        type="button"
+        class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-indigo-300 hover:bg-neutral-800"
+        title={locale.t("characters.chat.open_tip")}
+        aria-label={locale.t("characters.chat.open")}
+        onclick={() => openCharacterChat(character)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       </button>
       {#if canReference || character.architecture === NOVELAI_ARCHITECTURE}
         {@const refCount = effectiveCharacterPreciseReferences(character).length}
@@ -1657,6 +1677,7 @@
   <CharacterExtractReviewModal
     matches={extractReview.matches}
     fresh={extractReview.fresh}
+    existingCharacters={savedCharacters.characters.filter((c) => c.architecture === extractReview!.arch)}
     sourceKind={extractReview.sourceKind}
     sourcePreviewUrl={extractReview.sourceImages?.thumbnail ?? null}
     canSwitchToInterrogator={Boolean(extractReview.captured)}

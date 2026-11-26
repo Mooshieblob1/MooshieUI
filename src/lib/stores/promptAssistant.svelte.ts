@@ -33,6 +33,7 @@ import {
   RUST_SYSTEM_RESERVE_TOKENS,
   type EnhancerFlow,
   type HistoryBudget,
+  type SessionTurn,
 } from "../utils/enhancerSession.js";
 import { cleanMusicWritingResponse, musicWritingProblems, musicWritingRequest } from "../utils/yue2Skill.js";
 import { musicEditRequest, validateMusicEdit, type MusicEditContext, type MusicEditProposal } from "../utils/musicEdit.js";
@@ -160,6 +161,14 @@ import {
   type MemoryBudget,
   type MemoryChange,
 } from "../utils/characterMemory.js";
+import {
+  CHARACTER_CHAT_MAX_TOKENS,
+  characterChatSystemPrompt,
+  characterChatUserPrompt,
+  parseCharacterChatResponse,
+  type CharacterChatProposal,
+  type CharacterChatTarget,
+} from "../utils/characterChat.js";
 import { expressionRequest, parseExpression, type PortraitPromptStyle } from "../utils/portraitExpression.js";
 
 /** A memory request's suggestions: changes to this character's files, and facts for the other characters it read. */
@@ -701,18 +710,20 @@ class PromptAssistantStore {
   /**
    * Refresh one saved character from the current prompt and UC for the
    * Characters tab's Update. "missing" when the prompt does not contain that
-   * character. One retry when the reply is not the JSON asked for.
+   * character (unless `assumeMatch` is true). One retry when the reply is not
+   * the JSON asked for.
    */
   async updateCharacter(
     character: { name: string; prompt: string; negative: string },
     prompt: string,
     negative: string,
     memory: readonly CharacterMemoryFile[] | null = null,
+    assumeMatch = false,
   ): Promise<CharacterUpdate | "missing"> {
     if (this.isGenerating) throw new Error("busy_generation");
     const files = memory && this.canUseMemory ? memory : null;
     assertAllowedRequest([character.prompt, prompt], [files ? memoryContext(files, 0) : ""]);
-    const request = characterUpdateRequest(character, prompt, negative, files);
+    const request = characterUpdateRequest(character, prompt, negative, files, assumeMatch);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
@@ -1218,6 +1229,90 @@ class PromptAssistantStore {
    */
   naiWorkingNotes(variant: NaiVariant, signal?: AbortSignal): Promise<string | null> {
     return this.ensureNaiSkill({ variant }, signal);
+  }
+
+  /**
+   * Chat directly with the prompt assistant to inspect, brainstorm, or modify a
+   * saved character card without rewriting a full generation prompt.
+   */
+  async chatForCharacter(
+    target: CharacterChatTarget,
+    message: string,
+    historyTurns: SessionTurn[],
+    opts: {
+      useMemory: boolean;
+      referenceLabels: string[];
+      images: string[];
+      naiVariant?: NaiVariant | null;
+      signal?: AbortSignal;
+    },
+  ): Promise<{
+    reply: string;
+    proposal: CharacterChatProposal | null;
+    sessionUser: string;
+    droppedTurns: number;
+  }> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const budgetChars = target.memoryBudgetChars ?? this.memoryBudget.perCharacter;
+    const effectiveTarget: CharacterChatTarget = { ...target, memoryBudgetChars: budgetChars };
+    const useMem = opts.useMemory && this.canUseMemory && !!target.memoryFiles;
+    const memBackground =
+      useMem && target.memoryFiles ? memoryContext(target.memoryFiles, budgetChars) : "";
+
+    assertAllowedRequest(
+      [message, ...historyTurns.map((t) => t.user)],
+      [target.prompt, memBackground],
+    );
+
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        const naiSkill =
+          target.architecture === "novelai" && opts.naiVariant
+            ? await this.ensureNaiSkill({ variant: opts.naiVariant }, opts.signal)
+            : null;
+        const singleSystem = characterChatSystemPrompt(effectiveTarget, {
+          useMemory: useMem,
+          inSession: false,
+          naiSkill,
+        });
+        const sessionSystem = characterChatSystemPrompt(effectiveTarget, {
+          useMemory: useMem,
+          inSession: true,
+          naiSkill,
+        });
+        const user = characterChatUserPrompt(message, effectiveTarget, {
+          useMemory: useMem,
+          referenceLabels: opts.referenceLabels,
+        });
+        const history = buildHistory(historyTurns, {
+          contextTokens: this.historyContextTokens,
+          systemTokens: estimateTokens(sessionSystem),
+          userText: user,
+          maxOutputTokens: CHARACTER_CHAT_MAX_TOKENS,
+        });
+        const system = history.sentTurns > 0 ? sessionSystem : singleSystem;
+        const sessionUser = withImageMarker(message, opts.images.length, "reference");
+        const raw = await callExternalLlm(
+          system,
+          user,
+          CHARACTER_CHAT_MAX_TOKENS,
+          null,
+          opts.images.length > 0 ? opts.images : null,
+          history.messages,
+          opts.signal,
+        );
+        const { reply, proposal } = parseCharacterChatResponse(raw, target.name, target.negative);
+        return {
+          reply,
+          proposal,
+          sessionUser,
+          droppedTurns: history.droppedTurns,
+        };
+      });
+    } finally {
+      this.isGenerating = false;
+    }
   }
 
   private async ensureNaiSkill(ctx: Pick<NaiPromptContext, "variant">, signal?: AbortSignal): Promise<string | null> {

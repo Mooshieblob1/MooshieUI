@@ -200,6 +200,17 @@ pub async fn delete_novelai_key(
     crate::novelai_keys::delete(&label, current.as_deref()).map_err(AppError::Other)
 }
 
+/// Remove opaque background from a Precise Reference image using local YOLO segmentation.
+#[tauri::command]
+pub async fn novelai_cutout_reference(
+    state: State<'_, Arc<AppState>>,
+    image: String,
+    detector_model: Option<String>,
+) -> Result<novelai::char_pr::CutoutResult, AppError> {
+    let detector = detector_model.as_deref().unwrap_or("");
+    novelai::char_pr::cutout_reference_bg(state.inner(), &image, detector).await
+}
+
 /// Switch to a saved key.
 #[tauri::command]
 pub async fn use_novelai_key(

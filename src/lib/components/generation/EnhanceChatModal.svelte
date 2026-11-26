@@ -14,14 +14,15 @@
    */
   import { tick } from "svelte";
   import { portal } from "../../utils/portal.js";
-  import { enhanceChat, NAI_MAX_REFERENCES, sessionFlowOf, type ChatExchange } from "../../stores/enhanceChat.svelte.js";
+  import { currentEnhanceFlow, enhanceChat, NAI_MAX_REFERENCES, type ChatExchange } from "../../stores/enhanceChat.svelte.js";
   import { enhanceRecipes } from "../../stores/enhanceRecipes.svelte.js";
   import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
-  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import { architectureLabel, savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
+  import { parseCharacterChatResponse } from "../../utils/characterChat.js";
   import {
     describeActiveNovelAiDirectorReferences,
     effectiveCharacterPreciseReferences,
@@ -43,6 +44,7 @@
   import { writeClipboardText } from "../../utils/clipboardText.js";
   import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import CharacterPickerModal from "./CharacterPickerModal.svelte";
   import EnhanceRecipesPanel from "./EnhanceRecipesPanel.svelte";
   import NaiEnhanceReview from "./NaiEnhanceReview.svelte";
   import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
@@ -76,9 +78,26 @@
   const isNai = $derived(flow === "nai");
   const isH3 = $derived(flow === "h3");
   const isGeneral = $derived(flow === "general");
+  const isCharacter = $derived(flow === "character");
+  const targetChar = $derived(
+    isCharacter
+      ? savedCharacters.characters.find((c) => c.id === enhanceChat.targetCharacterId) ?? null
+      : null,
+  );
+  const characterChoices = $derived.by(() => {
+    const list = [...savedCharacters.currentCharacters];
+    if (targetChar && !list.some((c) => c.id === targetChar.id)) {
+      list.unshift(targetChar);
+    }
+    return list;
+  });
   const exchanges = $derived(enhanceChat.exchanges(flow));
   const sending = $derived(
-    enhanceChat.sending?.flow === flow && enhanceChat.sending?.tabId === enhanceChat.activeTabId
+    enhanceChat.sending?.flow === flow &&
+      (flow === "character"
+        ? !enhanceChat.sending?.characterId ||
+          enhanceChat.sending.characterId === enhanceChat.targetCharacterId
+        : enhanceChat.sending?.tabId === enhanceChat.activeTabId)
       ? enhanceChat.sending
       : null,
   );
@@ -93,14 +112,16 @@
   const hidden = $derived(Math.max(0, exchanges.length - shown));
   const visible = $derived(hidden > 0 ? exchanges.slice(hidden) : exchanges);
   /** How many of the oldest exchanges the newest request had to leave out. */
-  const dropped = $derived(enhancerSessions.dropped[sessionFlowOf(flow)]);
+  const dropped = $derived(enhanceChat.droppedCount(flow));
   const variant = $derived(naiV5Variant(generation.checkpoint));
   const title = $derived(
-    isH3
-      ? locale.t("prompt_assistant.enhance_h3")
-      : isNai
-        ? locale.t("prompt_assistant.enhance_nai")
-        : locale.t("prompt_assistant.enhance"),
+    isCharacter
+      ? locale.t("characters.chat.title")
+      : isH3
+        ? locale.t("prompt_assistant.enhance_h3")
+        : isNai
+          ? locale.t("prompt_assistant.enhance_nai")
+          : locale.t("prompt_assistant.enhance"),
   );
   // The saved characters a V5 answer is told about, named under the box so
   // the user knows "Julie" will resolve to one of them.
@@ -161,13 +182,18 @@
     scroller?.scrollTo({ top: scroller.scrollHeight });
   }
 
-  // Each opening (or tab switch) starts from the newest few exchanges again.
+  // Each opening (or tab / character switch) starts from the newest few exchanges again.
   $effect(() => {
     if (enhanceChat.open) {
       void flow;
       void enhanceChat.activeTabId;
+      void enhanceChat.targetCharacterId;
+    }
+    if (!enhanceChat.open || flow !== "character") {
+      charPickerOpen = false;
     }
     shown = SHOWN_STEP;
+    variantDraft = null;
   });
 
   // New messages, an answer on its way, a failure, another flow, another tab,
@@ -178,6 +204,7 @@
     void error;
     void flow;
     void enhanceChat.activeTabId;
+    void enhanceChat.targetCharacterId;
     if (enhanceChat.open && enhanceChat.view === "chat") void scrollToEnd();
   });
 
@@ -189,6 +216,7 @@
 
   let fileInput = $state<HTMLInputElement | null>(null);
   let pickerOpen = $state(false);
+  let charPickerOpen = $state(false);
   /** Set while a picked image is being decoded, so the buttons cannot stack. */
   let attaching = $state(false);
 
@@ -268,8 +296,8 @@
   }
 
   function onPanelKeydown(e: KeyboardEvent) {
-    // The gallery picker sits on top and closes itself on Escape.
-    if (e.key === "Escape" && !pickerOpen) {
+    // Inner picker overlays sit on top and close themselves on Escape.
+    if (e.key === "Escape" && !pickerOpen && !charPickerOpen) {
       e.stopPropagation();
       if (enhanceChat.view === "memory") enhanceChat.finishMemoryReview(false);
       else if (enhanceChat.view === "review" || enhanceChat.view === "recipes") enhanceChat.backToChat();
@@ -308,6 +336,42 @@
     enhanceChat.openSaveRecipeFromChat(
       slice.map((item) => ({ user: item.user, reply: item.reply, prompt: item.prompt })),
     );
+  }
+
+  let variantDraft = $state<{ at: number; name: string } | null>(null);
+
+  function openVariantPrompt(ex: ChatExchange, card: SavedCharacter | null) {
+    if (!card) return;
+    const parentId = card.parentId ?? card.id;
+    const parentCard = savedCharacters.characters.find((c) => c.id === parentId) ?? card;
+    const parsed = parseCharacterChatResponse(ex.prompt, card.name, card.negative);
+    const label = parsed.proposal?.variant.trim() || locale.t("characters.dupes.variant_default");
+    variantDraft = {
+      at: ex.at,
+      name: `${parentCard.name} (${label})`,
+    };
+  }
+
+  function submitVariantDraft(targetId?: string) {
+    if (!variantDraft) return;
+    const { at, name } = variantDraft;
+    if (enhanceChat.applyCharacterAsVariant(at, name, targetId)) {
+      variantDraft = null;
+    }
+  }
+
+  async function attachCardPicture() {
+    const src = targetChar?.reference || targetChar?.thumbnail;
+    if (!src || attaching || !enhanceChat.canAddReference) return;
+    try {
+      const resp = await fetch(src);
+      if (!resp.ok) return;
+      const blob = await resp.blob();
+      await attach([blob]);
+    } catch (e) {
+      console.error("Card picture attach failed:", e);
+      gallery.showToast(locale.t("prompt_assistant.nai_reference_failed"), "error");
+    }
   }
 
   async function copy(text: string) {
@@ -355,6 +419,13 @@
       {/if}
     {/if}
     {#if ex.prompt}
+      {@const charTargetId = m?.characterTargetId ?? enhanceChat.targetCharacterId ?? ""}
+      {@const answerCard = isCharacter
+        ? savedCharacters.characters.find((c) => c.id === charTargetId) ?? targetChar
+        : null}
+      {@const charProposal = isCharacter
+        ? parseCharacterChatResponse(ex.prompt, answerCard?.name ?? "", answerCard?.negative ?? "").proposal
+        : null}
       <div class="w-full rounded-xl border {m?.applied ? 'border-emerald-600/50' : 'border-neutral-700'} bg-neutral-950 p-2.5">
         {#if m?.notice}
           <div class="mb-2 rounded-lg border p-2 text-[11px] {m.notice.kind === 'warning' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-indigo-500/40 bg-indigo-500/10 text-indigo-200'}">
@@ -404,7 +475,26 @@
           </div>
         {/if}
 
-        {#if isNai}
+        {#if isCharacter && charProposal}
+          <div class="max-h-80 space-y-1.5 overflow-y-auto">
+            {#if charProposal.name && charProposal.name !== answerCard?.name}
+              <div>
+                <div class="text-[9px] uppercase tracking-wide text-neutral-500">{locale.t("characters.naming.name")}</div>
+                <div class="text-[11px] font-medium text-neutral-100">{charProposal.name}</div>
+              </div>
+            {/if}
+            <div>
+              <div class="text-[9px] uppercase tracking-wide text-neutral-500">{locale.t("characters.review.prompt")}</div>
+              <div class="whitespace-pre-wrap break-words text-[11px] text-neutral-200">{charProposal.prompt}</div>
+            </div>
+            {#if charProposal.negative}
+              <div>
+                <div class="text-[9px] uppercase tracking-wide text-red-400/80">{locale.t("characters.review.negative")}</div>
+                <div class="whitespace-pre-wrap break-words text-[11px] text-neutral-400">{charProposal.negative}</div>
+              </div>
+            {/if}
+          </div>
+        {:else if isNai}
           <div class="max-h-80 space-y-1.5 overflow-y-auto">
             {#each naiFields(ex.prompt) as field, i (i)}
               <div>
@@ -417,7 +507,7 @@
           <div class="max-h-80 overflow-y-auto whitespace-pre-wrap break-words text-[11px] text-neutral-200">{ex.prompt}</div>
         {/if}
 
-        {#if (isNai || isGeneral) && generation.isNovelAi && generation.supportsNovelAiPreciseReference}
+        {#if !isCharacter && (isNai || isGeneral) && generation.isNovelAi && generation.supportsNovelAiPreciseReference}
           {@const matchedCards = enhanceChat.matchedPreciseRefCards(ex.at)}
           {#if matchedCards.length > 0}
             {@const disabledSet = new Set(m?.disabledCharacterRefIds ?? [])}
@@ -461,7 +551,22 @@
         {/if}
 
         <div class="mt-2 flex flex-wrap items-center gap-1.5">
-          {#if isNai}
+          {#if isCharacter}
+            <button
+              class="rounded-lg bg-indigo-600 px-2.5 py-0.5 text-[11px] text-white hover:bg-indigo-500 disabled:opacity-40"
+              disabled={!answerCard || !charProposal}
+              onclick={() => enhanceChat.applyCharacterUpdate(ex.at, charTargetId)}
+            >
+              {locale.t("characters.chat.apply_update")}
+            </button>
+            <button
+              class={btn}
+              disabled={!answerCard || !charProposal}
+              onclick={() => openVariantPrompt(ex, answerCard)}
+            >
+              {locale.t("characters.chat.save_variant")}
+            </button>
+          {:else if isNai}
             <button
               class="rounded-lg bg-indigo-600 px-2.5 py-0.5 text-[11px] text-white hover:bg-indigo-500 disabled:opacity-40"
               disabled={!variant}
@@ -487,8 +592,13 @@
               </button>
             {/if}
           {/if}
-          <button class={btn} title={locale.t("common.copy")} aria-label={locale.t("common.copy")} onclick={() => void copy(ex.prompt)}>⧉</button>
-          {#if !isH3}
+          <button
+            class={btn}
+            title={locale.t("common.copy")}
+            aria-label={locale.t("common.copy")}
+            onclick={() => void copy(isCharacter && charProposal ? charProposal.prompt : ex.prompt)}
+          >⧉</button>
+          {#if !isH3 && !isCharacter}
             <button
               class={btn}
               title={locale.t("prompt_assistant.recipe_save_from_chat_tip")}
@@ -497,10 +607,40 @@
               {locale.t("prompt_assistant.recipe_save_from_chat")}
             </button>
           {/if}
-          {#if m?.applied}
+          {#if m?.characterApplied === "variant"}
+            <span class="text-[10px] text-emerald-400">✓ {locale.t("characters.chat.variant_saved")}</span>
+          {:else if m?.applied}
             <span class="text-[10px] text-emerald-400">✓ {locale.t("prompt_assistant.chat_applied")}</span>
           {/if}
         </div>
+        {#if isCharacter && variantDraft && variantDraft.at === ex.at}
+          <div class="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900/70 px-2 py-1.5">
+            <input
+              type="text"
+              bind:value={variantDraft.name}
+              maxlength={80}
+              aria-label={locale.t("characters.dupes.variant_name")}
+              placeholder={locale.t("characters.dupes.variant_name")}
+              class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-2 py-0.5 text-[11px] text-neutral-100 focus:border-indigo-500 focus:outline-none"
+              onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitVariantDraft(charTargetId); } }}
+            />
+            <button
+              type="button"
+              class="rounded-lg bg-indigo-600 px-2 py-0.5 text-[10px] text-white hover:bg-indigo-500 disabled:opacity-40"
+              disabled={!variantDraft.name.trim()}
+              onclick={() => submitVariantDraft(charTargetId)}
+            >
+              {locale.t("characters.dupes.save")}
+            </button>
+            <button
+              type="button"
+              class={btn}
+              onclick={() => { variantDraft = null; }}
+            >
+              {locale.t("common.cancel")}
+            </button>
+          </div>
+        {/if}
         {#if m?.appliedRecipes && m.appliedRecipes.length > 0}
           <div class="mt-1.5 flex flex-wrap items-center gap-1">
             <span class="text-[10px] text-neutral-500">{locale.t("prompt_assistant.recipe_applied_label")}</span>
@@ -597,27 +737,70 @@
           <h2 class="truncate text-sm font-semibold text-neutral-100">{locale.t("prompt_assistant.recipe_title")}</h2>
         {:else}
           <h2 class="truncate text-sm font-semibold text-neutral-100">✨ {title}</h2>
-          {#if isNai && variant}
-            <span class="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
-              {locale.t(enhanceChat.curate || variant === "full" ? "prompt_assistant.nai_variant_full" : "prompt_assistant.nai_variant_curated")}
-            </span>
-          {/if}
-          {#if activeRefSummary.count > 0}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <span
-              class="max-w-52 shrink-0 truncate rounded border border-amber-500/45 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
-              onmouseenter={(e) => { headerPrAnchor = e.currentTarget; }}
-              onmouseleave={() => { headerPrAnchor = null; }}
-            >
-              {locale.t("generation.novelai.reference.enhance_badge", {
-                count: String(activeRefSummary.count),
-                targets: activeRefTargets.short,
-              })}
-            </span>
+          {#if isCharacter}
+            {#if targetChar || characterChoices.length > 0}
+              <button
+                type="button"
+                class="flex max-w-[14rem] items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 px-2 py-0.5 text-xs text-neutral-100 hover:border-indigo-500/70 hover:bg-neutral-800/80 disabled:opacity-40"
+                disabled={characterChoices.length === 0}
+                title={locale.t("characters.review.target_character")}
+                aria-label={locale.t("characters.review.target_character")}
+                onclick={() => (charPickerOpen = true)}
+              >
+                {#if targetChar?.thumbnail}
+                  <img src={targetChar.thumbnail} alt="" class="h-5 w-5 shrink-0 rounded border border-neutral-700 object-cover" />
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                {/if}
+                <span class="truncate">{targetChar?.name ?? locale.t("characters.review.target_character")}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            {/if}
+            {#if targetChar}
+              <span class="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                {architectureLabel(targetChar.architecture)}
+              </span>
+            {/if}
+          {:else}
+            {#if isNai && variant}
+              <span class="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                {locale.t(enhanceChat.curate || variant === "full" ? "prompt_assistant.nai_variant_full" : "prompt_assistant.nai_variant_curated")}
+              </span>
+            {/if}
+            {#if activeRefSummary.count > 0}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span
+                class="max-w-52 shrink-0 truncate rounded border border-amber-500/45 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
+                onmouseenter={(e) => { headerPrAnchor = e.currentTarget; }}
+                onmouseleave={() => { headerPrAnchor = null; }}
+              >
+                {locale.t("generation.novelai.reference.enhance_badge", {
+                  count: String(activeRefSummary.count),
+                  targets: activeRefTargets.short,
+                })}
+              </span>
+            {/if}
           {/if}
         {/if}
         <div class="ml-auto flex items-center gap-1">
-          {#if enhanceChat.view === "chat" && !isH3}
+          {#if enhanceChat.view === "chat" && isCharacter}
+            <button
+              class={btn}
+              title={locale.t("characters.chat.back_enhance_tip")}
+              onclick={() => enhanceChat.openChat(currentEnhanceFlow())}
+            >
+              ← {locale.t("characters.chat.back_enhance")}
+            </button>
+          {:else if enhanceChat.view === "chat" && !isH3}
+            {#if savedCharacters.currentCharacters.length > 0}
+              <button
+                class={btn}
+                title={locale.t("characters.chat.switch_tip")}
+                onclick={() => enhanceChat.openCharacterChat()}
+              >
+                {locale.t("characters.chat.switch_button")}
+              </button>
+            {/if}
             <button
               class="rounded-lg border px-2 py-0.5 text-[10px] {enhanceRecipes.activeIds.length > 0
                 ? 'border-indigo-500/70 bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25'
@@ -685,6 +868,31 @@
         <EnhanceRecipesPanel />
       {:else}
         <div bind:this={scroller} class="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+          {#if isCharacter}
+            {#if targetChar}
+              <div class="rounded-lg border border-neutral-800 bg-neutral-950/60 p-2.5 text-[11px]">
+                <div class="mb-1 flex items-center gap-2">
+                  {#if targetChar.thumbnail}
+                    <img src={targetChar.thumbnail} alt={targetChar.name} class="h-7 w-7 rounded border border-neutral-700 object-cover shrink-0" />
+                  {/if}
+                  <div class="min-w-0 flex-1">
+                    <div class="text-[9px] uppercase tracking-wide text-neutral-500">{locale.t("characters.chat.current_card")}</div>
+                    <div class="truncate text-xs font-medium text-neutral-100">{targetChar.name}</div>
+                  </div>
+                </div>
+                <p class="max-h-24 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] text-neutral-300">
+                  {targetChar.prompt || "—"}
+                </p>
+                {#if targetChar.negative}
+                  <p class="mt-1 max-h-16 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[10px] text-red-300/80">
+                    <span class="font-semibold text-red-400/90">{locale.t("characters.negative_prefix")}</span> {targetChar.negative}
+                  </p>
+                {/if}
+              </div>
+            {:else}
+              <p class="py-6 text-center text-xs text-neutral-500">{locale.t("characters.chat.no_characters")}</p>
+            {/if}
+          {/if}
           {#if hidden > 0}
             <button class="mx-auto block text-[10px] text-neutral-500 hover:text-neutral-200" onclick={() => (shown += SHOWN_STEP)}>
               {locale.t("prompt_assistant.chat_show_earlier", { count: hidden })}
@@ -764,7 +972,7 @@
             </div>
           {/if}
 
-          {#if !isH3 && enhanceRecipes.recipes.length > 0}
+          {#if !isH3 && !isCharacter && enhanceRecipes.recipes.length > 0}
             <div class="mb-2 flex flex-wrap items-center gap-1">
               {#each enhanceRecipes.recipes as recipe (recipe.id)}
                 {@const active = enhanceRecipes.isActive(recipe.id)}
@@ -805,11 +1013,13 @@
             class="max-h-48 min-h-[4.5rem] w-full resize-y rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-indigo-500 focus:outline-none"
             placeholder={exchanges.length > 0
               ? locale.t("prompt_assistant.session_continue_placeholder")
-              : isH3
-                ? locale.t("prompt_assistant.h3_input_placeholder")
-                : isGeneral
-                  ? locale.t("prompt_assistant.general_input_placeholder")
-                  : locale.t("prompt_assistant.nai_input_placeholder")}
+              : isCharacter
+                ? locale.t("characters.chat.placeholder")
+                : isH3
+                  ? locale.t("prompt_assistant.h3_input_placeholder")
+                  : isGeneral
+                    ? locale.t("prompt_assistant.general_input_placeholder")
+                    : locale.t("prompt_assistant.nai_input_placeholder")}
             aria-label={title}
             bind:value={enhanceChat.input}
             onkeydown={onComposerKeydown}
@@ -820,7 +1030,7 @@
               {locale.t("prompt_assistant.nai_saved_characters", { names: savedNames.join(", ") })}
             </p>
           {/if}
-          {#if activeRefNotice}
+          {#if !isCharacter && activeRefNotice}
             <p class="mt-1 text-[10px] text-amber-300/90">
               {activeRefNotice}
             </p>
@@ -855,6 +1065,17 @@
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
               </button>
+              {#if isCharacter && (targetChar?.reference || targetChar?.thumbnail)}
+                <button
+                  class={iconBtn}
+                  aria-label={locale.t("characters.chat.attach_card_picture")}
+                  title={locale.t("characters.chat.attach_card_picture")}
+                  disabled={attaching || !enhanceChat.canAddReference}
+                  onclick={() => void attachCardPicture()}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                </button>
+              {/if}
               {#if enhanceChat.references.length > 0}
                 <span class="px-1 text-[10px] tabular-nums text-neutral-500">{enhanceChat.references.length}/{NAI_MAX_REFERENCES}</span>
               {/if}
@@ -872,32 +1093,38 @@
                 el.value = "";
               }}
             />
-            <!-- Off by default, and sticky once ticked: iterating on one image
-                 wants it for the whole conversation. -->
-            <label
-              class="ml-1 flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
-              title={isNai
-                ? locale.t("prompt_assistant.nai_include_existing_tooltip")
-                : locale.t("prompt_assistant.general_include_existing_tooltip")}
-            >
-              <input
-                type="checkbox"
-                class="accent-indigo-500"
-                checked={generation.naiEnhanceIncludeExisting}
-                onchange={(e) => {
-                  generation.naiEnhanceIncludeExisting = (e.currentTarget as HTMLInputElement).checked;
-                  generation.saveSettings();
-                }}
-              />
-              {locale.t("prompt_assistant.nai_include_existing")}
-            </label>
-            <button
-              class="{iconBtn} ml-auto w-auto px-1.5 text-[10px] {optionsOpen ? 'text-neutral-100' : ''}"
-              aria-expanded={optionsOpen}
-              onclick={toggleOptions}
-            >
-              ⚙ {locale.t("prompt_assistant.chat_options")}
-            </button>
+            {#if !isCharacter}
+              <!-- Off by default, and sticky once ticked: iterating on one image
+                   wants it for the whole conversation. -->
+              <label
+                class="ml-1 flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
+                title={isNai
+                  ? locale.t("prompt_assistant.nai_include_existing_tooltip")
+                  : locale.t("prompt_assistant.general_include_existing_tooltip")}
+              >
+                <input
+                  type="checkbox"
+                  class="accent-indigo-500"
+                  checked={generation.naiEnhanceIncludeExisting}
+                  onchange={(e) => {
+                    generation.naiEnhanceIncludeExisting = (e.currentTarget as HTMLInputElement).checked;
+                    generation.saveSettings();
+                  }}
+                />
+                {locale.t("prompt_assistant.nai_include_existing")}
+              </label>
+            {/if}
+            {#if !isCharacter || promptAssistant.canUseMemory}
+              <button
+                class="{iconBtn} ml-auto w-auto px-1.5 text-[10px] {optionsOpen ? 'text-neutral-100' : ''}"
+                aria-expanded={optionsOpen}
+                onclick={toggleOptions}
+              >
+                ⚙ {locale.t("prompt_assistant.chat_options")}
+              </button>
+            {:else}
+              <span class="ml-auto"></span>
+            {/if}
             {#if sending}
               <button
                 class="rounded-lg border border-neutral-600 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
@@ -916,11 +1143,13 @@
             {/if}
           </div>
 
-          {#if optionsOpen}
+          {#if optionsOpen && (!isCharacter || promptAssistant.canUseMemory)}
             <div class="mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-2">
-              <button class={btn} disabled={!generation.positivePrompt?.trim()} onclick={() => enhanceChat.copyExistingPrompt()}>
-                {locale.t("prompt_assistant.nai_copy_existing")}
-              </button>
+              {#if !isCharacter}
+                <button class={btn} disabled={!generation.positivePrompt?.trim()} onclick={() => enhanceChat.copyExistingPrompt()}>
+                  {locale.t("prompt_assistant.nai_copy_existing")}
+                </button>
+              {/if}
               {#if isNai && canIsolateCurrent}
                 <button class={btn} title={locale.t("prompt_assistant.nai_isolate_outfits_tip")} onclick={isolateCurrent}>
                   {locale.t("prompt_assistant.nai_isolate_outfits")}
@@ -1016,6 +1245,18 @@
     title={locale.t("prompt_assistant.nai_reference_pick_title")}
     onselect={(images) => void attachFromGallery(images)}
     onclose={() => (pickerOpen = false)}
+  />
+{/if}
+
+{#if charPickerOpen && isCharacter}
+  <CharacterPickerModal
+    characters={characterChoices}
+    selectedId={enhanceChat.targetCharacterId}
+    onselect={(card) => {
+      enhanceChat.selectTargetCharacter(card.id);
+      charPickerOpen = false;
+    }}
+    onclose={() => (charPickerOpen = false)}
   />
 {/if}
 

@@ -136,7 +136,7 @@ fn strip_data_url(s: &str) -> &str {
 }
 
 /// Pick the accepted V4.5 canvas whose aspect ratio is closest to `width`x`height`.
-fn choose_canvas(width: u32, height: u32) -> (u32, u32) {
+pub fn choose_canvas(width: u32, height: u32) -> (u32, u32) {
     let aspect = width as f64 / height as f64;
     let mut best = ACCEPTED_CANVASES[0];
     let mut best_diff = f64::INFINITY;

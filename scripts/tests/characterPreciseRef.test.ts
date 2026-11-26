@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  autoSheetScale,
+  chooseNovelAiSheetCanvas,
   clampCharacterReferenceFidelity,
   clampCharacterReferenceStrength,
   computeDHashFromRgba,
+  computeSheetItemRect,
   describeActiveNovelAiDirectorReferences,
   detectSingleCharacterFromMetadata,
   dHashHammingDistance,
@@ -16,6 +19,9 @@ import {
   pruneAutoAttachedCharacterReferences,
   reconcileCharacterDirectorReferences,
   removeCharacterDirectorReferences,
+  resolveDirectorReferenceCharacterTargets,
+  resolveMultiCharSheetLayout,
+  summarizeMultiCharPrPlan,
   type DirectorRefEntry,
 } from "../../src/lib/utils/characterPreciseRefLogic.ts";
 import {
@@ -678,4 +684,208 @@ test("reconcileCharacterDirectorReferences preserves live panel overrides when p
   // Default behavior (preserveOverrides omitted) still replaces same-img with replacements[0].
   const overwritten = reconcileCharacterDirectorReferences(existing, "alice", replacements);
   assert.deepEqual(overwritten.next[0], replacements[0]);
+});
+
+test("resolveDirectorReferenceCharacterTargets and summarizeMultiCharPrPlan handle Auto, overrides, Global, Style, and <2 characters", () => {
+  const v5Full = NOVELAI_MODELS.find((m) => m.id === "nai-diffusion-5-full");
+  assert.ok(v5Full);
+
+  const savedCards = [
+    { id: "alice", name: "Alice", prompt: "1girl, blonde hair, green eyes", parentId: null },
+    { id: "alice-swim", name: "Alice (swimsuit)", prompt: "1girl, blonde hair, bikini", parentId: "alice" },
+    { id: "bob", name: "Bob", prompt: "1boy, black hair, red jacket", parentId: null },
+  ];
+  const characters = [
+    { prompt: "1girl, Alice standing on the left", enabled: true },
+    { prompt: "disabled slot", enabled: false },
+    { prompt: "1boy, Bob standing on the right", enabled: true },
+  ];
+  const refs: DirectorRefEntry[] = [
+    {
+      image: "ALICE_AUTO_VARIANT",
+      description: NAI_REF_CHARACTER,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      source_character_id: "alice-swim",
+    },
+    {
+      image: "BOB_FORCED_GLOBAL",
+      description: NAI_REF_CHARACTER_MAIN_OUTFIT,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      source_character_id: "bob",
+      target_character_index: -1,
+    },
+    {
+      image: "STYLE_WITH_EXPLICIT",
+      description: NAI_REF_STYLE,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      source_character_id: "alice",
+      target_character_index: 2,
+    },
+    {
+      image: "EXPLICIT_BOB",
+      description: NAI_REF_OUTFIT,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      target_character_index: 2,
+    },
+    {
+      image: "TARGET_DISABLED",
+      description: NAI_REF_CHARACTER,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      target_character_index: 1,
+    },
+  ];
+
+  const targets = resolveDirectorReferenceCharacterTargets(refs, characters, savedCards);
+  assert.deepEqual(targets, [0, null, null, 2, null]);
+
+  const plan = summarizeMultiCharPrPlan(v5Full, refs, characters, savedCards, false, true);
+  assert.equal(plan.active, true);
+  assert.equal(plan.enabledCharacterCount, 2);
+  assert.equal(plan.baseRefCount, 3);
+  assert.deepEqual(plan.groups, [
+    { characterIndex: 0, refCount: 1 },
+    { characterIndex: 2, refCount: 1 },
+  ]);
+
+  // Fewer than 2 active characters disables isolation and keeps all active refs on base.
+  const singleCharPlan = summarizeMultiCharPrPlan(
+    v5Full,
+    refs,
+    [characters[0], characters[1]],
+    savedCards,
+    false,
+    true,
+  );
+  assert.equal(singleCharPlan.active, false);
+  assert.equal(singleCharPlan.enabledCharacterCount, 1);
+  assert.equal(singleCharPlan.baseRefCount, 5);
+  assert.deepEqual(singleCharPlan.groups, []);
+});
+
+test("combined sheet canvas selection, item geometry, layout, and override preservation match Rust", () => {
+  const v5Full = NOVELAI_MODELS.find((m) => m.id === "nai-diffusion-5-full");
+  assert.ok(v5Full);
+
+  assert.deepEqual(chooseNovelAiSheetCanvas(1216, 832, true), [1216, 832]);
+  assert.deepEqual(chooseNovelAiSheetCanvas(1216, 832, false), [1536, 1024]);
+  assert.equal(
+    Math.round(autoSheetScale(1200, 800, 2) * 1000),
+    Math.round(0.85 * 1000),
+  );
+  assert.deepEqual(computeSheetItemRect(1200, 800, 500, 1000, 0.25, 0.5, 0.7), {
+    left: 160,
+    top: 120,
+    width: 280,
+    height: 560,
+  });
+
+  const chars = [
+    { prompt: "1girl, blonde hair", enabled: true, center: { x: 0.2, y: 0.4 } },
+    { prompt: "1boy, black hair", enabled: true, center: { x: 0.8, y: 0.6 } },
+  ];
+  const refs: DirectorRefEntry[] = [
+    {
+      image: "A",
+      description: NAI_REF_CHARACTER,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      target_character_index: 0,
+      sheet_x: 0.18,
+      sheet_scale: 0.92,
+    },
+    {
+      image: "B",
+      description: NAI_REF_CHARACTER_MAIN_OUTFIT,
+      strength: 1,
+      fidelity: 1,
+      enabled: true,
+      target_character_index: 1,
+    },
+  ];
+
+  const layoutNoCoords = resolveMultiCharSheetLayout(
+    refs,
+    [0, 1],
+    chars,
+    false,
+    1216,
+    832,
+  );
+  assert.equal(layoutNoCoords.length, 2);
+  assert.equal(layoutNoCoords[0].x, 0.18);
+  assert.equal(layoutNoCoords[0].y, 0.5);
+  assert.equal(layoutNoCoords[0].scale, 0.92);
+  assert.equal(layoutNoCoords[1].x, 0.75);
+  assert.equal(layoutNoCoords[1].y, 0.5);
+
+  const layoutCoords = resolveMultiCharSheetLayout(
+    refs,
+    [0, 1],
+    chars,
+    true,
+    1216,
+    832,
+  );
+  assert.equal(layoutCoords[1].x, 0.8);
+  assert.equal(layoutCoords[1].y, 0.6);
+
+  const sheetPlan = summarizeMultiCharPrPlan(v5Full, refs, chars, [], false, true, "sheet");
+  assert.equal(sheetPlan.strategy, "sheet");
+  assert.equal(sheetPlan.usesSheet, true);
+  assert.equal(sheetPlan.usesPasses, false);
+
+  const hybridPlan = summarizeMultiCharPrPlan(v5Full, refs, chars, [], false, true, "hybrid");
+  assert.equal(hybridPlan.strategy, "hybrid");
+  assert.equal(hybridPlan.usesSheet, true);
+  assert.equal(hybridPlan.usesPasses, true);
+
+  const passesPlan = summarizeMultiCharPrPlan(v5Full, refs, chars, [], false, true, "passes");
+  assert.equal(passesPlan.strategy, "passes");
+  assert.equal(passesPlan.usesSheet, false);
+  assert.equal(passesPlan.usesPasses, true);
+
+  const reconciled = reconcileCharacterDirectorReferences(
+    [
+      {
+        image: "img-a",
+        description: NAI_REF_CHARACTER,
+        strength: 1,
+        fidelity: 1,
+        enabled: true,
+        source_character_id: "alice",
+        source_ref_id: "r1",
+        target_character_index: 0,
+        sheet_x: 0.3,
+        sheet_y: 0.4,
+        sheet_scale: 0.75,
+      },
+    ],
+    "alice",
+    [
+      {
+        image: "img-a",
+        description: NAI_REF_CHARACTER,
+        strength: 1,
+        fidelity: 1,
+        enabled: true,
+        source_character_id: "alice",
+        source_ref_id: "r1",
+      },
+    ],
+    { preserveOverrides: true },
+  );
+  assert.equal(reconciled.next[0].sheet_x, 0.3);
+  assert.equal(reconciled.next[0].sheet_y, 0.4);
+  assert.equal(reconciled.next[0].sheet_scale, 0.75);
 });

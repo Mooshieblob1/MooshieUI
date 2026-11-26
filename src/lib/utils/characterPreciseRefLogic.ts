@@ -31,6 +31,10 @@ export interface DirectorRefEntry {
   source_character_id?: string;
   source_ref_id?: string;
   auto_attached?: boolean;
+  target_character_index?: number | null;
+  sheet_x?: number | null;
+  sheet_y?: number | null;
+  sheet_scale?: number | null;
 }
 
 /** Structural slice of a saved Precise Reference entry on a character card. */
@@ -300,6 +304,12 @@ export function reconcileCharacterDirectorReferences<T extends DirectorRefEntry>
           fidelity: prev.fidelity,
           enabled: prev.enabled !== undefined ? prev.enabled : item.enabled,
           ...(prev.auto_attached === false ? { auto_attached: false } : {}),
+          ...(prev.target_character_index !== undefined
+            ? { target_character_index: prev.target_character_index }
+            : {}),
+          ...(prev.sheet_x !== undefined ? { sheet_x: prev.sheet_x } : {}),
+          ...(prev.sheet_y !== undefined ? { sheet_y: prev.sheet_y } : {}),
+          ...(prev.sheet_scale !== undefined ? { sheet_scale: prev.sheet_scale } : {}),
         }
       : item;
     existingImages.add(entry.image);
@@ -642,4 +652,356 @@ export function detectSingleCharacterFromMetadata<T extends DetectCard>(
   if (!base.trim() && characters.length === 0) return null;
   const matched = matchCharacterCardsInText(cards, [], { base, characters });
   return matched.length === 1 ? matched[0] : null;
+}
+
+/** Minimal slice of a NovelAI character box used to resolve PR isolation targets. */
+export interface CharacterSlotLike {
+  prompt: string;
+  enabled?: boolean;
+  center?: { x: number; y: number };
+}
+
+/**
+ * Resolve each Precise Reference's target 0-based character slot index, or
+ * `null` when it stays global on the base pass.
+ *
+ * - Style references are always global (`null`).
+ * - `target_character_index === -1` forces global (`null`).
+ * - `target_character_index >= 0` selects that slot if enabled and non-empty.
+ * - `undefined`/`null` (Auto) matches `source_character_id` (or its card
+ *   family) against enabled non-empty character box prompts.
+ */
+export function resolveDirectorReferenceCharacterTargets(
+  references: readonly DirectorRefEntry[],
+  characters: readonly CharacterSlotLike[],
+  savedCards: readonly DetectCard[],
+  maxCharacters?: number,
+): (number | null)[] {
+  const limit = maxCharacters !== undefined ? Math.min(characters.length, maxCharacters) : characters.length;
+  const activeIndices: number[] = [];
+  for (let i = 0; i < limit; i++) {
+    const ch = characters[i];
+    if (ch && ch.enabled !== false && ch.prompt.trim() !== "") {
+      activeIndices.push(i);
+    }
+  }
+  const activeSet = new Set(activeIndices);
+
+  const cardById = new Map(savedCards.map((c) => [c.id, c]));
+  const familyOfId = (id: string): string => {
+    const c = cardById.get(id);
+    return c?.parentId && cardById.has(c.parentId) ? c.parentId : id;
+  };
+
+  const slotCardIds = new Map<number, string[]>();
+  const slotFamilies = new Map<number, Set<string>>();
+  if (savedCards.length > 0 && references.some((r) => Boolean(r.source_character_id))) {
+    for (const idx of activeIndices) {
+      const hits = matchCharacterCardsInText(savedCards, [], {
+        base: "",
+        characters: [characters[idx].prompt],
+      });
+      slotCardIds.set(idx, hits.map((h) => h.id));
+      slotFamilies.set(idx, new Set(hits.map((h) => familyOfId(h.id))));
+    }
+  }
+
+  return references.map((ref) => {
+    if (novelAiReferenceBaseType(ref.description) === NAI_REF_STYLE) {
+      return null;
+    }
+    const raw = ref.target_character_index;
+    if (raw === -1) return null;
+    if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0) {
+      return activeSet.has(raw) ? raw : null;
+    }
+    const sourceId = ref.source_character_id;
+    if (!sourceId) return null;
+    for (const idx of activeIndices) {
+      if (slotCardIds.get(idx)?.includes(sourceId)) return idx;
+    }
+    const sourceFam = familyOfId(sourceId);
+    for (const idx of activeIndices) {
+      if (slotFamilies.get(idx)?.has(sourceFam)) return idx;
+    }
+    return null;
+  });
+}
+
+export type MultiCharPrStrategy = "sheet" | "passes" | "hybrid";
+
+export interface MultiCharPrGroupSummary {
+  characterIndex: number;
+  refCount: number;
+}
+
+export interface MultiCharPrPlanSummary {
+  active: boolean;
+  strategy: MultiCharPrStrategy;
+  usesSheet: boolean;
+  usesPasses: boolean;
+  enabledCharacterCount: number;
+  baseRefCount: number;
+  groups: MultiCharPrGroupSummary[];
+  resolvedTargets: (number | null)[];
+}
+
+export function normalizeMultiCharPrStrategy(raw?: string | null): MultiCharPrStrategy {
+  if (raw === "passes" || raw === "hybrid") return raw;
+  return "sheet";
+}
+
+/**
+ * Summarize how active Precise References split between the base pass and
+ * isolated per-character passes so the UI, cost badge, and submission agree.
+ */
+export function summarizeMultiCharPrPlan(
+  model: NovelAiModelInfo | null | undefined,
+  references: readonly DirectorRefEntry[],
+  characters: readonly CharacterSlotLike[],
+  savedCards: readonly DetectCard[],
+  isInfill: boolean,
+  enabled: boolean,
+  strategyRaw: MultiCharPrStrategy | string = "sheet",
+): MultiCharPrPlanSummary {
+  const strategy = normalizeMultiCharPrStrategy(strategyRaw);
+  const maxChars = model?.maxCharacters;
+  const resolvedTargets = resolveDirectorReferenceCharacterTargets(
+    references,
+    characters,
+    savedCards,
+    maxChars,
+  );
+
+  let enabledCharacterCount = 0;
+  const limit = maxChars !== undefined ? Math.min(characters.length, maxChars) : characters.length;
+  for (let i = 0; i < limit; i++) {
+    const ch = characters[i];
+    if (ch && ch.enabled !== false && ch.prompt.trim() !== "") {
+      enabledCharacterCount += 1;
+    }
+  }
+
+  if (!model?.preciseReference || (isInfill && !model.preciseReferenceInpainting)) {
+    return {
+      active: false,
+      strategy,
+      usesSheet: false,
+      usesPasses: false,
+      enabledCharacterCount,
+      baseRefCount: 0,
+      groups: [],
+      resolvedTargets,
+    };
+  }
+
+  const isRefActive = (r: DirectorRefEntry) =>
+    r.enabled !== false &&
+    r.image.length > 0 &&
+    (model.outfitReferences || r.description !== NAI_REF_OUTFIT);
+
+  if (!enabled || isInfill || enabledCharacterCount < 2) {
+    const baseRefCount = references.filter(isRefActive).length;
+    return {
+      active: false,
+      strategy,
+      usesSheet: false,
+      usesPasses: false,
+      enabledCharacterCount,
+      baseRefCount,
+      groups: [],
+      resolvedTargets,
+    };
+  }
+
+  let baseRefCount = 0;
+  const groupMap = new Map<number, number>();
+  references.forEach((r, idx) => {
+    if (!isRefActive(r)) return;
+    const target = resolvedTargets[idx];
+    if (target !== null) {
+      groupMap.set(target, (groupMap.get(target) ?? 0) + 1);
+    } else {
+      baseRefCount += 1;
+    }
+  });
+
+  const groups = [...groupMap.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([characterIndex, refCount]) => ({ characterIndex, refCount }));
+  const active = groups.length > 0;
+
+  return {
+    active,
+    strategy,
+    usesSheet: active && strategy !== "passes",
+    usesPasses: active && strategy !== "sheet",
+    enabledCharacterCount,
+    baseRefCount,
+    groups,
+    resolvedTargets,
+  };
+}
+
+/** 97 buckets accepted by V5's Precise Reference encoder; mirrors `reference_canvas::V5_REFERENCE_BUCKETS`. */
+export const V5_REFERENCE_BUCKETS: readonly (readonly [number, number])[] = [
+  [256, 4096], [256, 4032], [256, 3968], [256, 3904], [256, 3840], [256, 3776],
+  [256, 3712], [256, 3648], [256, 3584], [256, 3520], [256, 3456], [256, 3392],
+  [256, 3328], [320, 3264], [320, 3200], [320, 3136], [320, 3072], [320, 3008],
+  [320, 2944], [320, 2880], [320, 2816], [320, 2752], [384, 2688], [384, 2624],
+  [384, 2560], [384, 2496], [384, 2432], [384, 2368], [448, 2304], [448, 2240],
+  [448, 2176], [448, 2112], [512, 2048], [512, 1984], [512, 1920], [512, 1856],
+  [576, 1792], [576, 1728], [576, 1664], [640, 1600], [640, 1536], [704, 1472],
+  [704, 1408], [768, 1344], [768, 1280], [832, 1216], [896, 1152], [960, 1088],
+  [1024, 1024], [1088, 960], [1152, 896], [1216, 832], [1280, 768], [1344, 768],
+  [1408, 704], [1472, 704], [1536, 640], [1600, 640], [1664, 576], [1728, 576],
+  [1792, 576], [1856, 512], [1920, 512], [1984, 512], [2048, 512], [2112, 448],
+  [2176, 448], [2240, 448], [2304, 448], [2368, 384], [2432, 384], [2496, 384],
+  [2560, 384], [2624, 384], [2688, 384], [2752, 320], [2816, 320], [2880, 320],
+  [2944, 320], [3008, 320], [3072, 320], [3136, 320], [3200, 320], [3264, 320],
+  [3328, 256], [3392, 256], [3456, 256], [3520, 256], [3584, 256], [3648, 256],
+  [3712, 256], [3776, 256], [3840, 256], [3904, 256], [3968, 256], [4032, 256],
+  [4096, 256],
+] as const;
+
+const ACCEPTED_V45_CANVASES: readonly (readonly [number, number])[] = [
+  [1024, 1536],
+  [1536, 1024],
+  [1472, 1472],
+];
+
+/** Pick the V5 bucket or V4.5 canvas closest in aspect ratio to `genW` x `genH`. */
+export function chooseNovelAiSheetCanvas(
+  genW: number,
+  genH: number,
+  isV5: boolean,
+): [number, number] {
+  const w = Math.max(1, genW);
+  const h = Math.max(1, genH);
+  if (isV5) {
+    const target = Math.log(w / h);
+    let best: readonly [number, number] = V5_REFERENCE_BUCKETS[0];
+    let bestDiff = Infinity;
+    for (const pair of V5_REFERENCE_BUCKETS) {
+      const diff = Math.abs(target - Math.log(pair[0] / pair[1]));
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = pair;
+      }
+    }
+    return [best[0], best[1]];
+  }
+  const aspect = w / h;
+  let best: readonly [number, number] = ACCEPTED_V45_CANVASES[0];
+  let bestDiff = Infinity;
+  for (const pair of ACCEPTED_V45_CANVASES) {
+    const diff = Math.abs(pair[0] / pair[1] - aspect);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = pair;
+    }
+  }
+  return [best[0], best[1]];
+}
+
+/** Automatic relative scale for items on the combined multi-character sheet. */
+export function autoSheetScale(canvasW: number, canvasH: number, itemCount: number): number {
+  const ratio = (canvasW / Math.max(1, canvasH)) / (Math.max(1, itemCount) * 0.55);
+  return Math.min(0.85, Math.max(0.45, ratio));
+}
+
+function clampRange(val: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, val));
+}
+
+/** Pixel rectangle on `canvasW` x `canvasH` mirroring Rust `compute_sheet_item_rect`. */
+export function computeSheetItemRect(
+  canvasW: number,
+  canvasH: number,
+  imgW: number,
+  imgH: number,
+  x: number,
+  y: number,
+  scale: number,
+): { left: number; top: number; width: number; height: number } {
+  const cw = Math.max(1, canvasW);
+  const ch = Math.max(1, canvasH);
+  const iw = Math.max(1, imgW);
+  const ih = Math.max(1, imgH);
+  const s = clampRange(Number.isFinite(scale) ? scale : 0.65, 0.2, 1.35);
+  const cx = clampRange(Number.isFinite(x) ? x : 0.5, 0.05, 0.95);
+  const cy = clampRange(Number.isFinite(y) ? y : 0.5, 0.05, 0.95);
+
+  const factor = Math.min((cw * s) / iw, (ch * s) / ih);
+  const width = Math.max(1, Math.round(iw * factor));
+  const height = Math.max(1, Math.round(ih * factor));
+  const left = Math.round(cx * cw - width / 2);
+  const top = Math.round(cy * ch - height / 2);
+  return { left, top, width, height };
+}
+
+export interface SheetLayoutItem<T extends DirectorRefEntry = DirectorRefEntry> {
+  refIndex: number;
+  characterIndex: number;
+  ref: T;
+  x: number;
+  y: number;
+  scale: number;
+}
+
+/** Resolve sheet item coordinates and scales, mirroring `resolve_sheet_placements`. */
+export function resolveMultiCharSheetLayout<T extends DirectorRefEntry>(
+  references: readonly T[],
+  resolvedTargets: readonly (number | null)[],
+  characters: readonly CharacterSlotLike[],
+  useCoords: boolean,
+  canvasW: number,
+  canvasH: number,
+  isRefActive: (r: T) => boolean = (r) => r.enabled !== false && r.image.length > 0,
+): SheetLayoutItem<T>[] {
+  const groupMap = new Map<number, { refIndex: number; ref: T }[]>();
+  references.forEach((ref, refIndex) => {
+    if (!isRefActive(ref)) return;
+    const target = resolvedTargets[refIndex];
+    if (target === null || target === undefined) return;
+    const list = groupMap.get(target);
+    if (list) list.push({ refIndex, ref });
+    else groupMap.set(target, [{ refIndex, ref }]);
+  });
+
+  const sortedGroups = [...groupMap.entries()].sort((a, b) => a[0] - b[0]);
+  const groupCount = Math.max(1, sortedGroups.length);
+  const totalItems = sortedGroups.reduce((acc, [, list]) => acc + list.length, 0);
+  if (totalItems === 0) return [];
+
+  const defaultScale = autoSheetScale(canvasW, canvasH, totalItems);
+  const out: SheetLayoutItem<T>[] = [];
+
+  sortedGroups.forEach(([characterIndex, items], groupOrd) => {
+    const ch = characters[characterIndex];
+    const baseX = useCoords
+      ? clampRange(ch?.center?.x ?? 0.5, 0.05, 0.95)
+      : (groupOrd + 0.5) / groupCount;
+    const baseY = useCoords ? clampRange(ch?.center?.y ?? 0.5, 0.05, 0.95) : 0.5;
+    const nInGroup = items.length;
+    items.forEach(({ refIndex, ref }, subIdx) => {
+      const spread = nInGroup > 1 ? (subIdx - (nInGroup - 1) / 2) * 0.06 : 0;
+      const autoX = clampRange(baseX + spread, 0.05, 0.95);
+      const x =
+        typeof ref.sheet_x === "number" && Number.isFinite(ref.sheet_x)
+          ? clampRange(ref.sheet_x, 0.05, 0.95)
+          : autoX;
+      const y =
+        typeof ref.sheet_y === "number" && Number.isFinite(ref.sheet_y)
+          ? clampRange(ref.sheet_y, 0.05, 0.95)
+          : baseY;
+      const scale =
+        typeof ref.sheet_scale === "number" && Number.isFinite(ref.sheet_scale)
+          ? clampRange(ref.sheet_scale, 0.2, 1.35)
+          : defaultScale;
+      out.push({ refIndex, characterIndex, ref, x, y, scale });
+    });
+  });
+
+  return out;
 }

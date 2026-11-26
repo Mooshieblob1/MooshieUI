@@ -105,6 +105,19 @@ pub struct NovelAiDirectorReference {
     /// in the UI with their settings without being sent or billed.
     #[serde(default = "default_reference_enabled")]
     pub enabled: bool,
+    /// Optional 0-based index into `NovelAiParams::characters` when
+    /// multi-character Precise Reference isolation is active. `None` means global.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_character_index: Option<usize>,
+    /// Normalized 0..1 horizontal center on the combined multi-character sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_x: Option<f64>,
+    /// Normalized 0..1 vertical center on the combined multi-character sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_y: Option<f64>,
+    /// Relative size fraction (`0.20..1.35`) on the combined multi-character sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_scale: Option<f64>,
 }
 
 impl Default for NovelAiDirectorReference {
@@ -115,7 +128,97 @@ impl Default for NovelAiDirectorReference {
             strength: default_reference_strength(),
             fidelity: default_reference_fidelity(),
             enabled: default_reference_enabled(),
+            target_character_index: None,
+            sheet_x: None,
+            sheet_y: None,
+            sheet_scale: None,
         }
+    }
+}
+
+/// Experimental multi-character Precise Reference isolation settings.
+///
+/// Supports stitching targeted character references onto a single spatial
+/// layout sheet (`"sheet"`), running isolated per-character `img2img` passes
+/// (`"passes"`), or combining both (`"hybrid"`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NovelAiMultiCharPr {
+    #[serde(default)]
+    pub enabled: bool,
+    /// `"sheet"`, `"passes"`, or `"hybrid"`. Unknown values fall back to `"sheet"`.
+    #[serde(default = "default_multi_char_strategy")]
+    pub strategy: String,
+    /// Automatically segment opaque character references onto transparent
+    /// cutouts before placing them on the combined sheet.
+    #[serde(default = "default_true")]
+    pub sheet_cutout: bool,
+    /// `"yolo"` or `"coords"`.
+    #[serde(default = "default_multi_char_locator")]
+    pub locator: String,
+    /// YOLO weight in `models/ultralytics`.
+    #[serde(default = "default_multi_char_detector")]
+    pub detector_model: String,
+    /// Minimum detection confidence.
+    #[serde(default = "default_multi_char_threshold")]
+    pub threshold: f64,
+    /// Bounding box expansion factor around detected person regions.
+    #[serde(default = "default_multi_char_padding")]
+    pub padding: f64,
+    /// img2img denoise strength for each isolated character pass.
+    #[serde(default = "default_multi_char_strength")]
+    pub strength: f64,
+    /// Composite feather radius in pixels.
+    #[serde(default = "default_multi_char_feather")]
+    pub feather: u32,
+    /// `"fit_free"` caps each isolated crop at 1 MP and 28 steps;
+    /// `"allow_paid"` keeps the main step count.
+    #[serde(default = "default_anlas_policy")]
+    pub anlas_policy: String,
+}
+
+impl Default for NovelAiMultiCharPr {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strategy: default_multi_char_strategy(),
+            sheet_cutout: true,
+            locator: default_multi_char_locator(),
+            detector_model: default_multi_char_detector(),
+            threshold: default_multi_char_threshold(),
+            padding: default_multi_char_padding(),
+            strength: default_multi_char_strength(),
+            feather: default_multi_char_feather(),
+            anlas_policy: default_anlas_policy(),
+        }
+    }
+}
+
+impl NovelAiMultiCharPr {
+    fn normalized_strategy(&self) -> &str {
+        if self.strategy.eq_ignore_ascii_case("passes") {
+            "passes"
+        } else if self.strategy.eq_ignore_ascii_case("hybrid") {
+            "hybrid"
+        } else {
+            "sheet"
+        }
+    }
+
+    pub fn is_sheet_only(&self) -> bool {
+        self.normalized_strategy() == "sheet"
+    }
+
+    pub fn uses_sheet(&self) -> bool {
+        matches!(self.normalized_strategy(), "sheet" | "hybrid")
+    }
+
+    pub fn uses_passes(&self) -> bool {
+        matches!(self.normalized_strategy(), "passes" | "hybrid")
+    }
+
+    /// Crops are kept inside the Opus 1 MP / 28-step free base window.
+    pub fn fits_free_window(&self) -> bool {
+        !self.anlas_policy.eq_ignore_ascii_case("allow_paid")
     }
 }
 
@@ -369,6 +472,9 @@ pub struct NovelAiParams {
     /// The NovelAI-mode face detailer panel's settings.
     #[serde(default)]
     pub face_detail: NovelAiFaceDetail,
+    /// Experimental multi-character Precise Reference isolation settings.
+    #[serde(default)]
+    pub multi_char_pr: NovelAiMultiCharPr,
 }
 
 impl NovelAiParams {
@@ -485,6 +591,34 @@ fn default_anlas_policy() -> String {
 
 fn default_tagger_threshold() -> f64 {
     0.4
+}
+
+fn default_multi_char_strategy() -> String {
+    "sheet".to_string()
+}
+
+fn default_multi_char_locator() -> String {
+    "yolo".to_string()
+}
+
+fn default_multi_char_detector() -> String {
+    "person_yolov8m-seg.pt".to_string()
+}
+
+fn default_multi_char_threshold() -> f64 {
+    0.35
+}
+
+fn default_multi_char_padding() -> f64 {
+    1.2
+}
+
+fn default_multi_char_strength() -> f64 {
+    0.65
+}
+
+fn default_multi_char_feather() -> u32 {
+    24
 }
 
 #[cfg(test)]

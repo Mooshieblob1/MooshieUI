@@ -23,6 +23,9 @@ const BACKGROUND_RETRY_BASE_MS = 30_000;
 const BACKGROUND_RETRY_MAX_MS = 5 * 60_000;
 const BACKGROUND_RETRY_LIMIT = 5;
 
+/** Local per-device opt-in for experimental multi-character Precise Reference isolation. */
+const EXPERIMENTAL_MULTI_CHAR_PR_KEY = "mooshieui.experimental.nai_multi_char_pr";
+
 /** Failures that retrying cannot fix: a bad key or an empty balance. */
 function isPermanentFailure(message: string): boolean {
   return /^API error \((401|402)\)/.test(message);
@@ -58,6 +61,53 @@ class NovelAiStore {
    * by that panel's scroll container. Runtime only, never persisted.
    */
   characterPositionOpen = $state(false);
+
+  /**
+   * Whether the experimental multi-character Precise Reference isolation UI is
+   * shown. Off by default; toggled in Settings, Appearance.
+   */
+  experimentalMultiCharPr = $state(false);
+
+  /** Session-only bounded cache of background-cutout base64 PNGs keyed by source image base64. */
+  sheetCutouts = $state<Record<string, string>>({});
+  private sheetCutoutKeys: string[] = [];
+
+  getSheetCutout(src: string): string | undefined {
+    return this.sheetCutouts[src];
+  }
+
+  setSheetCutout(src: string, cutout: string): void {
+    const next = { ...this.sheetCutouts, [src]: cutout };
+    if (!this.sheetCutoutKeys.includes(src)) {
+      this.sheetCutoutKeys.push(src);
+      while (this.sheetCutoutKeys.length > 24) {
+        const evicted = this.sheetCutoutKeys.shift();
+        if (evicted) delete next[evicted];
+      }
+    }
+    this.sheetCutouts = next;
+  }
+
+  /** Load experimental NovelAI feature toggles from localStorage. */
+  loadExperimentalFlags() {
+    try {
+      this.experimentalMultiCharPr =
+        localStorage.getItem(EXPERIMENTAL_MULTI_CHAR_PR_KEY) === "1";
+    } catch {
+      this.experimentalMultiCharPr = false;
+    }
+  }
+
+  /** Enable or disable the experimental multi-character Precise Reference toggle. */
+  setExperimentalMultiCharPr(value: boolean) {
+    this.experimentalMultiCharPr = value;
+    try {
+      if (value) localStorage.setItem(EXPERIMENTAL_MULTI_CHAR_PR_KEY, "1");
+      else localStorage.removeItem(EXPERIMENTAL_MULTI_CHAR_PR_KEY);
+    } catch {
+      /* private mode */
+    }
+  }
 
   /** True once the config has been consulted, so the UI can avoid a flash. */
   loaded = $state(false);
@@ -316,3 +366,4 @@ class NovelAiStore {
 }
 
 export const novelai = new NovelAiStore();
+novelai.loadExperimentalFlags();

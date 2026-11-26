@@ -917,6 +917,7 @@
   <CharacterExtractReviewModal
     matches={extractReview.matches}
     fresh={extractReview.fresh}
+    existingCharacters={savedCharacters.characters.filter((c) => c.architecture === extractReview!.arch)}
     sourceKind={extractReview.sourceKind}
     sourcePreviewUrl={extractReview.sourceImages?.thumbnail ?? null}
     onsave={applyExtractReview}

@@ -152,6 +152,69 @@ function germanCompound(word: string): boolean {
   return GERMAN_HEADS.some((head) => word.length >= head.length + 3 && word.endsWith(head));
 }
 
+/** Folded words for upper-body clothes, body/angles, and framing that pull beyond a portrait or fight PR. */
+const UPPER_BODY_OR_CLOTHING_WORDS = new Set([
+  // Upper-body garments & outerwear
+  "shirt", "shirts", "tshirt", "tee", "blouse", "blouses", "top", "tops", "tank", "camisole",
+  "sweater", "sweaters", "pullover", "cardigan", "hoodie", "hoodies", "jacket", "jackets",
+  "coat", "coats", "overcoat", "trench", "blazer", "vest", "vests", "waistcoat", "suit", "suits",
+  "tuxedo", "uniform", "uniforms", "serafuku", "dress", "dresses", "gown", "gowns", "sundress",
+  "kimono", "yukata", "haori", "cheongsam", "qipao", "hanfu", "hanbok", "robe", "robes",
+  "cloak", "cloaks", "cape", "capes", "capelet", "mantle", "poncho", "shawl", "apron",
+  "overalls", "jumpsuit", "armor", "armour", "breastplate", "cuirass", "pauldron", "pauldrons",
+  "corset", "bodice", "turtleneck", "necktie", "cravat", "ascot", "scarf", "scarves", "muffler",
+  // Upper anatomy & framing/angles that pull out
+  "shoulder", "shoulders", "collarbone", "clavicle", "nape",
+  "full-length", "foreshortening", "perspective",
+  // German
+  "hemd", "hemden", "bluse", "blusen", "kleid", "kleider", "kleidchen", "jacke", "jacken",
+  "mantel", "mäntel", "strickjacke", "schuluniform", "rüstung", "umhang", "schal", "krawatte",
+  "schulter", "schultern", "schlüsselbein", "rücken", "flügel",
+  // Spanish
+  "camisa", "camisas", "blusa", "blusas", "vestido", "vestidos", "chaqueta", "chaquetas",
+  "abrigo", "abrigos", "suéter", "sudadera", "uniforme", "uniformes", "armadura", "bufanda",
+  "corbata", "hombro", "hombros", "clavícula", "espalda", "alas",
+  // Portuguese
+  "camiseta", "jaqueta", "jaquetas", "casaco", "casacos", "moletom", "cachecol", "gravata",
+  "ombro", "ombros", "clavícula", "costas", "asas",
+].map(fold));
+
+const GERMAN_UPPER_HEADS = [
+  "kleid", "kleider", "kleidchen", "hemd", "bluse", "jacke", "mantel", "pullover",
+  "uniform", "rüstung", "umhang", "schal", "krawatte", "flügel",
+].map(fold);
+
+const UPPER_CLOTHING_PHRASES = [
+  "sailor uniform", "sailor suit", "sailor dress", "sailor shirt", "sailor collar",
+  "shirt collar", "high collar", "popped collar", "open collar", "fur collar", "lace collar",
+  "collared shirt", "peter pan collar", "stand collar", "crop top", "tank top", "hood down",
+  "wide shot", "long shot", "dynamic angle", "action pose", "three quarter view",
+].map(fold);
+
+const UPPER_CLOTHING_CJK = [
+  "制服", "セーラー服", "シャツ", "ブラウス", "セーター", "パーカー", "ジャケット", "コート",
+  "ドレス", "ワンピース", "着物", "浴衣", "和服", "鎧", "マント", "ケープ", "マフラー",
+  "ネクタイ", "襟", "肩", "鎖骨", "背中", "翼",
+  "水手服", "衬衫", "襯衫", "毛衣", "卫衣", "衛衣", "外套", "夹克", "夾克", "大衣", "风衣",
+  "風衣", "连衣裙", "連衣裙", "长袍", "長袍", "旗袍", "汉服", "漢服", "铠甲", "鎧甲", "盔甲",
+  "披风", "披風", "斗篷", "围巾", "圍巾", "领带", "領帶", "领结", "領結", "肩膀", "锁骨",
+  "鎖骨", "背部", "翅膀",
+];
+
+function mentionsUpperClothingOrBody(text: string): boolean {
+  if (UPPER_CLOTHING_CJK.some((term) => text.includes(term))) return true;
+  const list = words(text).filter((w) => !/^[\d.]+$/.test(w));
+  if (list.length === 0) return false;
+  if (list.some((w) => UPPER_BODY_OR_CLOTHING_WORDS.has(w))) return true;
+  if (list.some((w) => GERMAN_UPPER_HEADS.some((h) => w.length >= h.length + 3 && w.endsWith(h)))) return true;
+  // Bare "wings" pulls upper/full body unless specifically head/hair/ear wings.
+  if (list.includes("wings") && !list.some((w) => w === "head" || w === "hair" || w === "ear" || w === "ears")) {
+    return true;
+  }
+  const joined = ` ${list.join(" ")} `;
+  return UPPER_CLOTHING_PHRASES.some((p) => joined.includes(` ${p} `));
+}
+
 /** Does this piece of a prompt name something a neck-up, front-on portrait cannot show? */
 export function mentionsBelowNeck(text: string): boolean {
   if (CJK_TERMS.some((term) => text.includes(term))) return true;
@@ -161,6 +224,161 @@ export function mentionsBelowNeck(text: string): boolean {
   if (BELOW_NECK_TAGS.has(list.join(" "))) return true;
   const joined = ` ${list.join(" ")} `;
   return BELOW_NECK_PHRASES.some((p) => joined.includes(` ${p} `));
+}
+
+const EYE_AND_SKIN_COLOURS = new Set([
+  ...COLOURS,
+  "amber", "emerald", "crimson", "violet", "indigo", "magenta", "cyan", "aqua", "teal", "turquoise", "hazel",
+].map(fold));
+
+const FANTASY_SKIN_COLOURS = new Set([
+  "blue", "red", "green", "purple", "violet", "indigo", "pink", "orange", "yellow",
+  "grey", "gray", "black", "silver", "gold", "golden", "cyan", "aqua", "teal", "magenta",
+  "colored", "multicolored", "two-tone", "split",
+].map(fold));
+
+const EYE_WORDS = new Set(["eye", "eyes", "iris", "irises", "augen", "ojos", "olhos"]);
+
+const HETEROCHROMIA_PHRASES = [
+  "heterochromia", "odd eyes", "mismatched eyes", "two-tone eyes", "split-color eyes",
+  "verschiedenfarbige augen", "heterocromia",
+].map(fold);
+
+const HETEROCHROMIA_CJK = [
+  "オッドアイ", "ヘテロクロミア", "左右色違い", "异色瞳", "異色瞳", "鸳鸯眼", "鴛鴦眼",
+];
+
+const SUBJECT_COUNT_TAGS = new Set(["1girl", "1boy", "1other", "girl", "boy", "other", "solo"]);
+
+const PR_KEEP_WORDS = new Set([
+  // Eyewear
+  "glasses", "eyeglasses", "eyewear", "sunglasses", "monocle", "goggles", "eyepatch",
+  "blindfold", "spectacles",
+  "brille", "sonnenbrille", "monokel", "augenklappe",
+  "gafas", "lentes", "anteojos", "monóculo",
+  "óculos", "monóculo",
+  // Earrings & piercings
+  "earring", "earrings", "piercing", "piercings",
+  "ohrring", "ohrringe", "arete", "aretes", "pendiente", "pendientes", "brinco", "brincos",
+  // Hair ornaments & headwear
+  "hairclip", "hairclips", "hairpin", "hairpins", "hairband", "hairbands", "headband", "headbands",
+  "scrunchie", "scrunchies", "kanzashi", "barrette", "barrettes", "ribbon", "ribbons",
+  "hat", "hats", "cap", "caps", "beret", "berets", "fedora", "beanie", "bonnet",
+  "veil", "veils", "headscarf", "bandana", "kerchief", "crown", "crowns", "tiara", "tiaras",
+  "diadem", "circlet", "headpiece", "headdress", "headphones", "headset", "earphones", "earmuffs",
+  "hut", "mütze", "kappe", "krone", "schleier", "haarspange", "haarschmuck", "haarband",
+  "haarschleife", "kopfhörer",
+  "sombrero", "gorra", "boina", "corona", "velo", "auriculares",
+  "chapéu", "boné", "coroa", "véu",
+  // Neck accessories & masks
+  "choker", "chokers", "necklace", "necklaces", "pendant", "pendants", "locket", "collar", "collars",
+  "mask", "masks",
+  // Facial marks, teeth, cosmetics & special eye anatomy
+  "freckles", "mole", "moles", "scar", "scars", "scarred", "facepaint", "stitches",
+  "bandaid", "bandaids", "makeup", "lipstick", "eyeshadow", "eyeliner", "mascara", "vitiligo",
+  "fang", "fangs", "pupil", "pupils", "sclera", "eyelashes", "eyebrows",
+  "sommersprossen", "narbe", "narben", "reißzahn", "reißzähne", "lippenstift",
+  "pecas", "lunar", "lunares", "cicatriz", "cicatrices", "colmillo", "colmillos",
+  "sardas", "pinta", "cicatrizes", "presas",
+  // Non-human head features
+  "kemonomimi", "horn", "horns", "antler", "antlers", "halo", "halos", "ahoge",
+  "hörner", "geweih", "heiligenschein", "cuerno", "cuernos", "aureola", "chifres", "auréola",
+  // Special eye patterns (always kept)
+  "heterochromia",
+].map(fold));
+
+const PR_KEEP_PHRASES = [
+  "hair ornament", "hair ornaments", "hair ribbon", "hair bow", "hair flower", "hair tie",
+  "hair ties", "hair bell", "hair ring", "hair rings", "hair beads", "hair tube", "bobby pin",
+  "beauty mark", "under eye", "dark circles", "bags under eyes", "whisker markings",
+  "facial tattoo", "face tattoo", "cheek tattoo", "forehead tattoo", "neck tattoo",
+  "sharp teeth", "shark teeth", "forked tongue", "split tongue", "long tongue",
+  "pointy ears", "pointed ears", "elf ears", "animal ears", "cat ears", "dog ears",
+  "fox ears", "wolf ears", "rabbit ears", "bunny ears", "cow ears", "horse ears",
+  "sheep ears", "goat ears", "mouse ears", "dragon ears", "bat ears", "demon ears",
+  "lion ears", "tiger ears", "bear ears", "deer ears", "fake animal ears", "floppy ears",
+  "ear blush", "head wings", "hair wings", "ear wings", "antenna hair",
+  "multicolored hair", "two tone hair", "split color hair", "gradient hair", "streaked hair",
+  "colored inner hair", "mesh hair", "ombre hair", "peekaboo bangs",
+  "slit pupils", "cat eyes", "constricted pupils", "heart shaped pupils", "star shaped pupils",
+  "symbol shaped pupils", "cross shaped pupils", "flower shaped pupils", "diamond shaped pupils",
+  "x shaped pupils", "vertical pupils", "ringed eyes", "empty eyes", "glowing eyes",
+  "glowing eye", "sparkling eyes", "gradient eyes", "multicolored eyes", "rainbow eyes",
+  "spiral eyes", "parche en el ojo", "tapa olho", "fones de ouvido", "dog tags",
+].map(fold);
+
+const PR_KEEP_CJK = [
+  // Eyewear & masks
+  "眼鏡", "メガネ", "めがね", "サングラス", "ゴーグル", "眼帯", "目隠し", "マスク",
+  "眼镜", "墨镜", "护目镜", "護目鏡", "眼罩", "单片眼镜", "單片眼鏡", "口罩", "面具",
+  // Earrings & neck/hair accessories
+  "ピアス", "イヤリング", "チョーカー", "ネックレス", "ペンダント", "首輪",
+  "帽子", "ベレー帽", "王冠", "ティアラ", "ベール", "ヴェール", "カチューシャ", "ヘアバンド",
+  "ヘアピン", "髪飾り", "かんざし", "簪", "リボン", "ヘッドホン", "ヘッドフォン", "イヤホン",
+  "ヘイロー", "光輪",
+  "耳环", "耳環", "耳钉", "耳釘", "耳坠", "耳墜", "唇钉", "唇釘", "鼻环", "鼻環",
+  "颈圈", "頸圈", "项圈", "項圈", "项链", "項鍊", "吊坠", "吊墜",
+  "头饰", "頭飾", "发饰", "髮飾", "发卡", "髮卡", "发夹", "髮夾", "蝴蝶结", "蝴蝶結",
+  "皇冠", "头纱", "頭紗", "耳机", "耳機", "贝雷帽", "貝雷帽", "光环", "光環",
+  // Facial details, ears, horns, special hair, heterochromia
+  "そばかす", "ほくろ", "黒子", "傷跡", "絆創膏", "八重歯", "エルフ耳", "尖った耳",
+  "ケモミミ", "獣耳", "猫耳", "狐耳", "犬耳", "ウサギ耳", "うさ耳", "悪魔の角", "鬼の角",
+  "一本角", "二本角", "アホ毛", "ツートンヘア", "インナーカラー", "メッシュ",
+  "猫目", "ネコ目", "三白眼", "星目", "ハート目",
+  "雀斑", "伤疤", "伤痕", "创可贴", "創可貼", "口红", "口紅", "犬齿", "犬齒", "虎牙", "尖牙",
+  "精灵耳", "精靈耳", "尖耳", "兽耳", "獸耳", "貓耳", "兔耳", "恶魔角", "惡魔角",
+  "尖角", "龙角", "龍角", "鹿角", "牛角", "羊角", "呆毛", "挑染", "渐变发", "漸變髮",
+  "双色发", "雙色髮", "内层挑染", "內層挑染",
+  ...HETEROCHROMIA_CJK,
+];
+
+const EYE_SHADE_MODIFIERS = new Set([
+  "dark", "light", "pale", "dunkel", "hell", "oscuro", "claro", "escuro",
+]);
+
+function collectPromptEyeColors(prompt: string, out: Set<string>, hasCue: { value: boolean }): void {
+  const f = fold(prompt);
+  if (HETEROCHROMIA_CJK.some((t) => prompt.includes(t)) || HETEROCHROMIA_PHRASES.some((p) => f.includes(p))) {
+    hasCue.value = true;
+  }
+  for (const item of splitTopLevel(prompt)) {
+    const group = groupOf(item);
+    if (group && splitTopLevel(group.inner).length > 1) {
+      collectPromptEyeColors(group.inner, out, hasCue);
+      continue;
+    }
+    const list = words(item).filter((w) => !/^[\d.]+$/.test(w));
+    if (list.some((w) => EYE_WORDS.has(w))) {
+      for (const w of list) {
+        if (EYE_AND_SKIN_COLOURS.has(w) && !EYE_SHADE_MODIFIERS.has(w)) out.add(w);
+      }
+      if (list.includes("eye") && !list.includes("eyes") && list.some((w) => EYE_AND_SKIN_COLOURS.has(w))) {
+        hasCue.value = true;
+      }
+    }
+  }
+}
+
+function hasHeterochromiaCue(prompt: string): boolean {
+  const colors = new Set<string>();
+  const hasCue = { value: false };
+  collectPromptEyeColors(prompt, colors, hasCue);
+  return hasCue.value || colors.size >= 2;
+}
+
+function isPortraitPrEssential(text: string, heterochromia: boolean, keepSubjects: boolean): boolean {
+  if (mentionsBelowNeck(text) || mentionsUpperClothingOrBody(text)) return false;
+  const list = words(text).filter((w) => !/^[\d.]+$/.test(w));
+  if (keepSubjects && list.length === 1 && SUBJECT_COUNT_TAGS.has(list[0])) return true;
+  if (PR_KEEP_CJK.some((term) => text.includes(term))) return true;
+  if (heterochromia && (text.includes("目") || text.includes("瞳") || text.includes("眼"))) return true;
+  if (list.length === 0) return false;
+  if (list.some((w) => PR_KEEP_WORDS.has(w))) return true;
+  if (list.includes("skin") && list.some((w) => FANTASY_SKIN_COLOURS.has(w))) return true;
+  if (heterochromia && list.some((w) => EYE_WORDS.has(w))) return true;
+  if (list.includes("eye") && !list.includes("eyes") && list.some((w) => EYE_AND_SKIN_COLOURS.has(w))) return true;
+  const joined = ` ${list.join(" ")} `;
+  return PR_KEEP_PHRASES.some((p) => joined.includes(` ${p} `));
 }
 
 /**
@@ -217,11 +435,7 @@ export interface PortraitFilterResult {
   dropped: string[];
 }
 
-/**
- * Filter a comma-separated tag prompt. A weighted group that lists several
- * tags is filtered inside and kept with what is left.
- */
-export function neckUpTags(prompt: string): PortraitFilterResult {
+function filterTags(prompt: string, shouldDrop: (item: string) => boolean): PortraitFilterResult {
   const dropped: string[] = [];
   const filterList = (text: string): string[] => {
     const kept: string[] = [];
@@ -236,7 +450,7 @@ export function neckUpTags(prompt: string): PortraitFilterResult {
         if (inner.length > 0) kept.push(`${group.open}${inner.join(", ")}${group.close}`);
         continue;
       }
-      if (mentionsBelowNeck(item)) dropped.push(item);
+      if (shouldDrop(item)) dropped.push(item);
       else kept.push(item);
     }
     return kept;
@@ -245,11 +459,30 @@ export function neckUpTags(prompt: string): PortraitFilterResult {
 }
 
 /**
- * Filter a sentence prompt. Clauses that mention something below the neck
- * lose the part that does: "wearing a sailor uniform with a pleated skirt and
- * knee socks" keeps "wearing a sailor uniform".
+ * Filter a comma-separated tag prompt. A weighted group that lists several
+ * tags is filtered inside and kept with what is left.
  */
-export function neckUpProse(prompt: string): PortraitFilterResult {
+export function neckUpTags(prompt: string): PortraitFilterResult {
+  return filterTags(prompt, mentionsBelowNeck);
+}
+
+/**
+ * Aggressive portrait filter for Precise Reference: drops clothing, hair
+ * length/color, single eye colors, character names, and poses so PR owns
+ * identity and framing, keeping only accessories, heterochromia, unusual
+ * eye/head anatomy, and facial markings that PR often misses.
+ */
+export function portraitPrTags(prompt: string): PortraitFilterResult {
+  const heterochromia = hasHeterochromiaCue(prompt);
+  return filterTags(prompt, (item) => !isPortraitPrEssential(item, heterochromia, true));
+}
+
+function filterProse(
+  prompt: string,
+  dropWholeClauseFirst: boolean,
+  shouldDropClause: (clause: string) => boolean,
+  shouldDropPart: (part: string) => boolean,
+): PortraitFilterResult {
   const dropped: string[] = [];
   const clauses = prompt.split(/([,;、，；]\s*|(?<=[.!?])\s+|(?<=[。！？])\s*)/);
   const out: string[] = [];
@@ -257,13 +490,16 @@ export function neckUpProse(prompt: string): PortraitFilterResult {
   for (let i = 0; i < clauses.length; i += 2) {
     const clause = clauses[i];
     const sep = clauses[i + 1] ?? "";
-    if (!mentionsBelowNeck(clause)) {
-      out.push(clause + sep);
+    if (!shouldDropClause(clause)) {
+      const cleaned = out.length === 0 ? stripLeadingJoiner(clause) : clause;
+      out.push(cleaned + sep);
       continue;
     }
-    const kept = trimClause(clause, dropped);
-    if (kept) out.push(kept + sep);
-    else if (/[.!?。！？]\s*$/.test(clause) && out.length > 0 && !/[.!?。！？]\s*$/.test(out[out.length - 1])) {
+    const kept = trimClause(clause, dropped, dropWholeClauseFirst, shouldDropPart);
+    if (kept) {
+      const cleaned = out.length === 0 ? stripLeadingJoiner(kept) : kept;
+      out.push(cleaned + sep);
+    } else if (/[.!?。！？]\s*$/.test(clause) && out.length > 0 && !/[.!?。！？]\s*$/.test(out[out.length - 1])) {
       // A sentence that ends here keeps its full stop on what came before.
       const cjk = /[。！？]\s*$/.test(clause);
       out[out.length - 1] = out[out.length - 1].replace(/[,;、，；]\s*$/, "") + (cjk ? "。" : ". ");
@@ -277,19 +513,50 @@ export function neckUpProse(prompt: string): PortraitFilterResult {
   return { kept, dropped };
 }
 
-/** "with" and "and" in the Latin-script languages NovelAI V5 reads. */
-const JOINERS = /\s+(with|and|plus|while|mit|und|sowie|con|y|com|e)\s+/i;
-const AND = /^(and|und|y|e)$/i;
+/**
+ * Filter a sentence prompt. Clauses that mention something below the neck
+ * lose the part that does: "wearing a sailor uniform with a pleated skirt and
+ * knee socks" keeps "wearing a sailor uniform".
+ */
+export function neckUpProse(prompt: string): PortraitFilterResult {
+  return filterProse(prompt, true, mentionsBelowNeck, mentionsBelowNeck);
+}
 
 /**
- * One clause with its below-the-neck parts cut at "with" and "and". When the
- * clause's own head is what goes ("She is holding a katana and smiling"), the
- * whole clause goes, since what is left would not read as a sentence. Japanese
- * and Chinese clauses go whole.
+ * Precise Reference prose filter: keeps only segments describing
+ * portrait-visible accessories, heterochromia, or distinctive facial/head
+ * traits and drops body, pose, clothing, and plain appearance clauses.
  */
-function trimClause(clause: string, dropped: string[]): string {
+export function portraitPrProse(prompt: string): PortraitFilterResult {
+  const heterochromia = hasHeterochromiaCue(prompt);
+  const shouldDrop = (text: string) =>
+    !isUserToken(text.trim()) && !isPortraitPrEssential(text, heterochromia, false);
+  return filterProse(prompt, false, () => true, shouldDrop);
+}
+
+/** "with" and "and" in the Latin-script languages NovelAI V5 reads. */
+const JOINERS = /\s+(with|and|plus|while|mit|und|sowie|con|y|com|e)\s+/i;
+const LEADING_JOINER = /^(with|and|plus|while|mit|und|sowie|con|y|com|e)\s+/i;
+const AND = /^(and|und|y|e)$/i;
+
+function stripLeadingJoiner(text: string): string {
+  return text.replace(LEADING_JOINER, "");
+}
+
+/**
+ * One clause with unwanted parts cut at "with" and "and". When
+ * `dropWholeOnHead` is true and the clause's own head is what goes ("She is
+ * holding a katana and smiling"), the whole clause goes so no fragment stays.
+ */
+function trimClause(
+  clause: string,
+  dropped: string[],
+  dropWholeOnHead: boolean,
+  shouldDrop: (part: string) => boolean,
+): string {
   const end = /[.!?。！？]$/.test(clause.trim()) ? clause.trim().slice(-1) : "";
   const body = end ? clause.trim().slice(0, -1) : clause.trim();
+  if (!body) return "";
   const pieces = body.split(new RegExp(JOINERS.source, "i"));
   const parts: { sep: string; text: string }[] = [{ sep: "", text: pieces[0] }];
   for (let i = 1; i < pieces.length; i += 2) {
@@ -298,21 +565,26 @@ function trimClause(clause: string, dropped: string[]): string {
     const prev = parts[parts.length - 1];
     const lastWord = fold(prev.text.trim().split(/\s+/).pop() ?? "");
     const firstWord = fold(text.trim().split(/\s+/)[0] ?? "");
-    if (AND.test(sep) && COLOURS.has(lastWord) && COLOURS.has(firstWord)) {
+    if (AND.test(sep) && EYE_AND_SKIN_COLOURS.has(lastWord) && EYE_AND_SKIN_COLOURS.has(firstWord)) {
       prev.text = `${prev.text} ${sep} ${text}`;
     } else {
       parts.push({ sep, text });
     }
   }
-  if (mentionsBelowNeck(parts[0].text)) {
+  if (dropWholeOnHead && shouldDrop(parts[0].text)) {
     dropped.push(body.trim());
     return "";
   }
   const kept: { sep: string; text: string }[] = [];
   let carry: string | null = null;
+  let pushed = 0;
   for (const part of parts) {
-    if (mentionsBelowNeck(part.text)) {
-      dropped.push(part.text.trim());
+    if (shouldDrop(part.text)) {
+      const trimmed = part.text.trim();
+      if (trimmed) {
+        dropped.push(trimmed);
+        pushed++;
+      }
       // The first cut part's joining word goes to the next kept part.
       if (carry === null) carry = part.sep;
       continue;
@@ -320,7 +592,12 @@ function trimClause(clause: string, dropped: string[]): string {
     kept.push({ sep: carry ?? part.sep, text: part.text });
     carry = null;
   }
-  if (kept.length === 0) return "";
+  if (kept.length === 0) {
+    // Replace the per-piece drops from this empty clause with the whole clause
+    // so Left out chips read coherently.
+    dropped.splice(dropped.length - pushed, pushed, body.trim());
+    return "";
+  }
   const text = kept.map((p, i) => (i === 0 ? p.text : `${p.sep} ${p.text}`)).join(" ").trim();
   return text + end;
 }

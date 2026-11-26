@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::templates::face_detect::{self, FaceBox};
+use crate::templates::face_detect::{self, DetectedRegion, FaceBox};
 
 /// How long to wait for a free GPU worker.
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -37,10 +37,30 @@ pub async fn detect_faces(
     threshold: f64,
     max_faces: u32,
 ) -> Result<Vec<FaceBox>, AppError> {
+    let regions = detect_regions(
+        state,
+        image_bytes,
+        detector_model,
+        threshold,
+        max_faces,
+        false,
+    )
+    .await?;
+    Ok(regions.into_iter().map(|r| r.bbox).collect())
+}
+
+/// Detect regions (boxes and optional segmentation masks) in `image_bytes` (PNG),
+/// strongest first.
+pub async fn detect_regions(
+    state: &AppState,
+    image_bytes: Vec<u8>,
+    detector_model: &str,
+    threshold: f64,
+    max_detections: u32,
+    include_masks: bool,
+) -> Result<Vec<DetectedRegion>, AppError> {
     if detector_model.trim().is_empty() {
-        return Err(AppError::Other(
-            "No face detector model is selected".to_string(),
-        ));
+        return Err(AppError::Other("No detector model is selected".to_string()));
     }
 
     let filename = format!("mooshie-facedetect-{}.png", uuid::Uuid::new_v4());
@@ -51,7 +71,13 @@ pub async fn detect_faces(
         format!("{}/{}", upload.subfolder, upload.name)
     };
 
-    let workflow = face_detect::build_workflow(&input_name, detector_model, threshold, max_faces);
+    let workflow = face_detect::build_workflow_with_masks(
+        &input_name,
+        detector_model,
+        threshold,
+        max_detections,
+        include_masks,
+    );
 
     let client_id = format!("{}-facedetect", state.client_id);
     let (worker_id, response) = state
@@ -59,7 +85,7 @@ pub async fn detect_faces(
         .submit_prompt(workflow, &client_id, SUBMIT_TIMEOUT)
         .await?;
 
-    let result = poll_for_boxes(state, worker_id, &response.prompt_id).await;
+    let result = poll_for_regions(state, worker_id, &response.prompt_id).await;
 
     // `submit_prompt` may have reserved the worker for us, and nothing else
     // releases it: the websocket handler that normally does never sees this
@@ -74,11 +100,11 @@ pub async fn detect_faces(
     result
 }
 
-async fn poll_for_boxes(
+async fn poll_for_regions(
     state: &AppState,
     worker_id: u32,
     prompt_id: &str,
-) -> Result<Vec<FaceBox>, AppError> {
+) -> Result<Vec<DetectedRegion>, AppError> {
     let deadline = tokio::time::Instant::now() + POLL_TIMEOUT;
     loop {
         // Read from the worker that actually ran the prompt: in a multi-GPU
@@ -89,13 +115,13 @@ async fn poll_for_boxes(
             .get_history_from_worker(worker_id, prompt_id)
             .await?;
 
-        if let Some(outcome) = read_history_entry(&history, prompt_id) {
+        if let Some(outcome) = read_history_regions(&history, prompt_id) {
             return outcome.map_err(AppError::Other);
         }
 
         if tokio::time::Instant::now() >= deadline {
             return Err(AppError::Other(
-                "Face detection timed out waiting for ComfyUI".to_string(),
+                "Detection timed out waiting for ComfyUI".to_string(),
             ));
         }
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -106,7 +132,10 @@ async fn poll_for_boxes(
 ///
 /// `None` means the prompt has not finished yet, which is the only reason to
 /// keep polling. Anything else is terminal, success or failure.
-fn read_history_entry(history: &Value, prompt_id: &str) -> Option<Result<Vec<FaceBox>, String>> {
+fn read_history_regions(
+    history: &Value,
+    prompt_id: &str,
+) -> Option<Result<Vec<DetectedRegion>, String>> {
     let entry = history.get(prompt_id)?;
     let status = entry.get("status");
 
@@ -133,9 +162,15 @@ fn read_history_entry(history: &Value, prompt_id: &str) -> Option<Result<Vec<Fac
         return None;
     }
 
-    // `parse_boxes` reports a missing output itself, which is the right answer
+    // `parse_regions` reports a missing output itself, which is the right answer
     // for a prompt that completed with nothing to show.
-    Some(face_detect::parse_boxes(outputs.unwrap_or(&Value::Null)))
+    Some(face_detect::parse_regions(outputs.unwrap_or(&Value::Null)))
+}
+
+#[cfg(test)]
+fn read_history_entry(history: &Value, prompt_id: &str) -> Option<Result<Vec<FaceBox>, String>> {
+    read_history_regions(history, prompt_id)
+        .map(|res| res.map(|regions| regions.into_iter().map(|r| r.bbox).collect()))
 }
 
 /// Pull something readable out of ComfyUI's `status.messages` array.

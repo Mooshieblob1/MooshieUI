@@ -1264,7 +1264,10 @@ class MooshieFaceDetect:
                 "detector_model": (folder_paths.get_filename_list("ultralytics"),),
                 "bbox_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "max_faces": ("INT", {"default": 0, "min": 0, "max": 100}),
-            }
+            },
+            "optional": {
+                "include_masks": ("BOOLEAN", {"default": False}),
+            },
         }
 
     RETURN_TYPES = ()
@@ -1272,7 +1275,7 @@ class MooshieFaceDetect:
     CATEGORY = "mooshie"
     OUTPUT_NODE = True
 
-    def detect(self, image, detector_model, bbox_threshold, max_faces=0):
+    def detect(self, image, detector_model, bbox_threshold, max_faces=0, include_masks=False):
         from ultralytics import YOLO
 
         B, H, W, C = image.shape
@@ -1285,35 +1288,77 @@ class MooshieFaceDetect:
             return {"ui": {"text": [json.dumps(payload)]}}
 
         yolo = YOLO(model_path)
+        try:
+            # Only the first frame is inspected: the caller runs one image at a
+            # time, and a batch would have no way to say which boxes belong to
+            # which frame in a single flat list.
+            frame = image[0].cpu().numpy()
+            if np.isnan(frame).any():
+                print("[MooshieFaceDetect] WARNING: NaN values in input image, replacing with zeros")
+                frame = np.nan_to_num(frame, nan=0.0)
+            img_np = (frame * 255).astype(np.uint8)
 
-        # Only the first frame is inspected: the caller runs one image at a
-        # time, and a batch would have no way to say which boxes belong to
-        # which frame in a single flat list.
-        frame = image[0].cpu().numpy()
-        if np.isnan(frame).any():
-            print("[MooshieFaceDetect] WARNING: NaN values in input image, replacing with zeros")
-            frame = np.nan_to_num(frame, nan=0.0)
-        img_np = (frame * 255).astype(np.uint8)
-
-        detections = yolo(img_np, verbose=False)
-        if detections and len(detections[0].boxes) > 0:
-            boxes = [box for box in detections[0].boxes if box.conf[0].item() >= bbox_threshold]
-            # Sorted here rather than in Rust so max_faces means the same
-            # "strongest detections win" it does in MooshieFaceDetailer.
-            boxes = sorted(boxes, key=lambda box: box.conf[0].item(), reverse=True)
-            if max_faces > 0:
-                boxes = boxes[:max_faces]
-            for box in boxes:
-                x1, y1, x2, y2 = box.xyxy[0].cpu().int().tolist()
-                payload["boxes"].append(
-                    {
+            detections = yolo(img_np, verbose=False)
+            if detections and len(detections[0].boxes) > 0:
+                raw_boxes = detections[0].boxes
+                # Sorted by index rather than box object so kept detections stay
+                # paired with their segmentation masks.
+                order = [
+                    i
+                    for i in range(len(raw_boxes))
+                    if raw_boxes[i].conf[0].item() >= bbox_threshold
+                ]
+                order = sorted(
+                    order,
+                    key=lambda i: raw_boxes[i].conf[0].item(),
+                    reverse=True,
+                )
+                if max_faces > 0:
+                    order = order[:max_faces]
+                seg_masks = (
+                    detections[0].masks.data
+                    if (include_masks and detections[0].masks is not None)
+                    else None
+                )
+                for i in order:
+                    box = raw_boxes[i]
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().int().tolist()
+                    entry = {
                         "x1": int(x1),
                         "y1": int(y1),
                         "x2": int(x2),
                         "y2": int(y2),
                         "confidence": float(box.conf[0].item()),
                     }
-                )
+                    if seg_masks is not None:
+                        try:
+                            import base64
+                            from PIL import Image as PILImage
+
+                            m = torch.nn.functional.interpolate(
+                                seg_masks[i][None, None].float().cpu(),
+                                size=(int(H), int(W)),
+                                mode="bilinear",
+                                align_corners=False,
+                            )[0, 0]
+                            cx1 = max(0, int(x1))
+                            cy1 = max(0, int(y1))
+                            cx2 = min(int(W), int(x2))
+                            cy2 = min(int(H), int(y2))
+                            if cx2 > cx1 and cy2 > cy1:
+                                crop = (
+                                    (m[cy1:cy2, cx1:cx2].clamp(0.0, 1.0) * 255.0)
+                                    .to(torch.uint8)
+                                    .numpy()
+                                )
+                                buf = io.BytesIO()
+                                PILImage.fromarray(crop, mode="L").save(buf, format="PNG")
+                                entry["mask_png"] = base64.b64encode(buf.getvalue()).decode("ascii")
+                        except Exception as exc:
+                            print(f"[MooshieFaceDetect] Mask encode failed: {exc}")
+                    payload["boxes"].append(entry)
+        finally:
+            del yolo
 
         return {"ui": {"text": [json.dumps(payload)]}}
 

@@ -744,6 +744,7 @@ pub fn run() {
             commands::novelai::novelai_augment,
             commands::novelai::novelai_generate,
             commands::novelai::novelai_subscription,
+            commands::novelai::novelai_cutout_reference,
             commands::novelai::set_novelai_api_key,
             commands::novelai::list_novelai_keys,
             commands::novelai::save_novelai_key,

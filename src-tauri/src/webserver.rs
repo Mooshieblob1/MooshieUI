@@ -3905,6 +3905,17 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(sub).map_err(|e| e.to_string())
         }
+        "novelai_cutout_reference" => {
+            let image = args["image"].as_str().unwrap_or("");
+            let detector = args["detectorModel"]
+                .as_str()
+                .or_else(|| args["detector_model"].as_str())
+                .unwrap_or("");
+            let res = crate::novelai::char_pr::cutout_reference_bg(&state, image, detector)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(res).map_err(|e| e.to_string())
+        }
         // Cloud voice and video keys follow the NovelAI rule: a named
         // account manages only its own, so these are open to every account.
         "set_cloud_api_key" => {
@@ -9994,6 +10005,7 @@ mod nai_key_tests {
             "novelai_generate",
             "novelai_augment",
             "novelai_subscription",
+            "novelai_cutout_reference",
         ] {
             assert_eq!(min_role_for_command(command), UserRole::User);
         }

@@ -1007,6 +1007,7 @@ mod tests {
             strength: 0.8,
             fidelity: 1.0,
             enabled: true,
+            ..Default::default()
         }];
         let body = build(&input(), &n, v45()).unwrap();
         let p = &body["parameters"];
@@ -1029,6 +1030,7 @@ mod tests {
             strength: 1.0,
             fidelity: 0.75,
             enabled: true,
+            ..Default::default()
         }];
         let p = &build(&input(), &n, v45()).unwrap()["parameters"];
         // Missing this array is one of the two things #665 got wrong. Fidelity
@@ -1828,6 +1830,7 @@ mod tests {
                     strength: 2.5,
                     fidelity: 0.25,
                     enabled: true,
+                    ..Default::default()
                 },
                 NovelAiDirectorReference {
                     image: "refpng".into(),
@@ -1835,6 +1838,7 @@ mod tests {
                     strength: 1.5,
                     fidelity: 0.4,
                     enabled: true,
+                    ..Default::default()
                 },
                 NovelAiDirectorReference {
                     image: "refpng".into(),
@@ -1842,6 +1846,7 @@ mod tests {
                     strength: 3.0,
                     fidelity: 0.0,
                     enabled: true,
+                    ..Default::default()
                 },
             ];
             let p = &build(&input(), &n, model).unwrap()["parameters"];
@@ -1885,6 +1890,7 @@ mod tests {
             strength: 1.0,
             fidelity: 1.0,
             enabled: true,
+            ..Default::default()
         }];
         let mut i = input();
         i.input_image = Some("AAAA".into());
@@ -1916,6 +1922,7 @@ mod tests {
             strength: 1.2,
             fidelity: 0.5,
             enabled: true,
+            ..Default::default()
         }];
         let mut i = input();
         i.sampler = "k_dpmpp_2m".into();
@@ -1965,6 +1972,7 @@ mod tests {
                 strength: 1.0,
                 fidelity: 0.5,
                 enabled: true,
+                ..Default::default()
             },
             NovelAiDirectorReference {
                 image: "charpng".into(),
@@ -1972,6 +1980,7 @@ mod tests {
                 strength: 0.9,
                 fidelity: 0.75,
                 enabled: true,
+                ..Default::default()
             },
             NovelAiDirectorReference {
                 image: "bothpng".into(),
@@ -1979,6 +1988,7 @@ mod tests {
                 strength: 0.8,
                 fidelity: 0.5,
                 enabled: true,
+                ..Default::default()
             },
         ];
         n.action = "infill".into();
@@ -2022,6 +2032,7 @@ mod tests {
             strength: 1.0,
             fidelity: 1.0,
             enabled: true,
+            ..Default::default()
         }];
         let p = &build(&input(), &n, v45()).unwrap()["parameters"];
         assert_eq!(p["reference_image_multiple"], json!(["cached"]));
@@ -2042,6 +2053,7 @@ mod tests {
                 strength: 1.5,
                 fidelity: 1.0,
                 enabled: false,
+                ..Default::default()
             },
             NovelAiDirectorReference {
                 image: "active".into(),
@@ -2049,6 +2061,7 @@ mod tests {
                 strength: 2.0,
                 fidelity: 1.0,
                 enabled: true,
+                ..Default::default()
             },
         ];
         let body = build(&input(), &n, v5()).unwrap();

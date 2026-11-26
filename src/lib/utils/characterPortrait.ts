@@ -38,9 +38,15 @@ import {
 import { classifyGenerationError } from "./generationErrors.js";
 import { submitGeneration } from "./generationSubmit.js";
 import { NOVELAI_MAX_DIRECTOR_REFERENCES } from "./novelaiModels.js";
-import { neckUpProse, neckUpTags } from "./portraitFilter.js";
+import { neckUpProse, neckUpTags, portraitPrProse, portraitPrTags, splitTopLevel } from "./portraitFilter.js";
 import { BLANK_FACE_GUARD, splitExpressionTags } from "./portraitExpression.js";
-import { splitCountTags } from "./portraitCharacterBox.js";
+import {
+  buildTurnaroundCharacterSlots,
+  splitCountTags,
+  type SheetTurnaroundViews,
+} from "./portraitCharacterBox.js";
+
+export type { SheetTurnaroundViews };
 
 /** Framing preset when generating a character Precise Reference image. */
 export type CharacterRefFraming = "full_body" | "upper_body" | "portrait" | "sheet";
@@ -52,7 +58,22 @@ export const UPPER_BODY_REF_FRAMING_TAGS =
 export const UPPER_BODY_REF_AVOID_TAGS =
   `full body, from side, from behind, profile, ${BLANK_FACE_GUARD.tags}`;
 export const SHEET_REF_FRAMING_TAGS =
-  "character sheet, multiple views, full body, front view, side view, simple background, white background";
+  "reference sheet, character sheet, turnaround, multiple views, full body, front view, side view, back view, from behind, simple background, white background";
+
+/** Build sheet main-prompt framing tags with view count and optional angle omission for multi-slot character boxes. */
+export function sheetRefFramingTags(
+  views: SheetTurnaroundViews = 3,
+  characterBox = false,
+): string {
+  if (characterBox) {
+    return views === 4
+      ? "reference sheet, character sheet, turnaround, 4 views, multiple views, full body, standing, simple background, white background"
+      : "reference sheet, character sheet, turnaround, 3 views, multiple views, full body, standing, simple background, white background";
+  }
+  return views === 4
+    ? "reference sheet, character sheet, turnaround, 4 views, multiple views, full body, front view, left side view, back view, right side view, from behind, simple background, white background"
+    : SHEET_REF_FRAMING_TAGS;
+}
 
 /** Framing tags for tag-prompted models: one person, head and shoulders, facing the viewer. */
 export const PORTRAIT_FRAMING_TAGS =
@@ -91,12 +112,23 @@ export function portraitUsesCharacterBox(): boolean {
   return generation.isNovelAi && !!generation.novelAiModel?.v4Prompt;
 }
 
+/** Drop standalone `solo` when the portrait prompt already adds `solo` at the main prompt level. */
+function withoutSoloTag(prompt: string): string {
+  return splitTopLevel(prompt)
+    .filter((tag) => !/^solo$/i.test(tag))
+    .join(", ");
+}
+
 /**
  * The prompt and negative prompt a portrait starts from, written the way the
  * character's architecture is prompted: Danbooru tags, or a sentence. What a
  * neck-up portrait cannot show (legwear, shoes, poses, what they hold) is
- * left out of the card's prompt and listed in `dropped`. Expression tags the
- * card's prompt has come back as `expression`, for the dialog's own box.
+ * left out of the card's prompt and listed in `dropped`. When `prGuided` is
+ * true, unnecessary prompts beyond what Precise Reference already captures
+ * (clothes, body, hair, single eye colors, character names) are also left out,
+ * keeping accessories, heterochromia, and distinctive facial/head traits.
+ * Expression tags the card's prompt has come back as `expression`, for the
+ * dialog's own box.
  *
  * With `characterBox` (NovelAI V4+), the card's look and UC go in
  * `character` and the main prompt keeps the count, framing and portrait UC.
@@ -104,30 +136,40 @@ export function portraitUsesCharacterBox(): boolean {
 export function portraitPrompts(
   character: Pick<SavedCharacter, "prompt" | "negative" | "architecture">,
   characterBox = false,
+  prGuided = false,
 ): PortraitPrompts {
   const avoid = tidy(character.negative);
   if (architecturePromptStyle(character.architecture) === "tags") {
-    const look = neckUpTags(tidy(character.prompt));
-    const face = splitExpressionTags(look.kept);
+    const faceFirst = prGuided ? splitExpressionTags(tidy(character.prompt)) : null;
+    const look = prGuided
+      ? portraitPrTags(faceFirst!.rest)
+      : neckUpTags(tidy(character.prompt));
+    const face = faceFirst
+      ? { expression: faceFirst.expression, rest: look.kept }
+      : splitExpressionTags(look.kept);
     if (characterBox) {
       const cast = splitCountTags(face.rest);
+      const charLook = prGuided ? withoutSoloTag(cast.look) : cast.look;
       return {
         positive: joinParts([cast.counts, "solo", PORTRAIT_FRAMING_TAGS]),
         negative: PORTRAIT_AVOID_TAGS,
-        character: { positive: cast.look, negative: avoid },
+        character: { positive: charLook, negative: avoid },
         dropped: look.dropped,
         expression: face.expression,
       };
     }
+    const bodyRest = prGuided ? withoutSoloTag(face.rest) : face.rest;
     return {
-      positive: joinParts(["solo", face.rest, PORTRAIT_FRAMING_TAGS]),
+      positive: joinParts(["solo", bodyRest, PORTRAIT_FRAMING_TAGS]),
       negative: joinParts([avoid, PORTRAIT_AVOID_TAGS]),
       character: null,
       dropped: look.dropped,
       expression: face.expression,
     };
   }
-  const look = neckUpProse(tidy(character.prompt));
+  const look = prGuided
+    ? portraitPrProse(tidy(character.prompt))
+    : neckUpProse(tidy(character.prompt));
   const framing =
     "seen straight from the front and framed from the neck up, looking directly at the viewer against a plain background.";
   if (characterBox) {
@@ -178,8 +220,10 @@ export function referencePrompts(
   character: Pick<SavedCharacter, "prompt" | "negative" | "architecture">,
   framing: CharacterRefFraming,
   characterBox = false,
+  sheetViews: SheetTurnaroundViews = 3,
+  prGuided = false,
 ): PortraitPrompts {
-  if (framing === "portrait") return portraitPrompts(character, characterBox);
+  if (framing === "portrait") return portraitPrompts(character, characterBox, prGuided);
 
   const avoid = tidy(character.negative);
   const tagSpecs: Record<
@@ -198,9 +242,11 @@ export function referencePrompts(
         "seen straight from the front and framed from the waist up, looking directly at the viewer against a plain background.",
     },
     sheet: {
-      tags: SHEET_REF_FRAMING_TAGS,
+      tags: sheetRefFramingTags(sheetViews, characterBox),
       avoid: BLANK_FACE_GUARD.tags,
-      prose: "in a multi-view full-body character reference sheet against a plain white background.",
+      prose: characterBox
+        ? `in a ${sheetViews}-view full-body character turnaround sheet against a plain white background.`
+        : `in a ${sheetViews}-view full-body character turnaround reference sheet showing front, side, and back views against a plain white background.`,
     },
   };
   const spec = tagSpecs[framing];
@@ -210,7 +256,10 @@ export function referencePrompts(
     if (characterBox) {
       const cast = splitCountTags(face.rest);
       return {
-        positive: joinParts([cast.counts, "solo", spec.tags]),
+        positive:
+          framing === "sheet"
+            ? joinParts([cast.counts, spec.tags])
+            : joinParts([cast.counts, "solo", spec.tags]),
         negative: spec.avoid,
         character: { positive: cast.look, negative: avoid },
         dropped: [],
@@ -218,7 +267,10 @@ export function referencePrompts(
       };
     }
     return {
-      positive: joinParts(["solo", face.rest, spec.tags]),
+      positive:
+        framing === "sheet"
+          ? joinParts([face.rest, spec.tags])
+          : joinParts(["solo", face.rest, spec.tags]),
       negative: joinParts([avoid, spec.avoid]),
       character: null,
       dropped: [],
@@ -229,7 +281,10 @@ export function referencePrompts(
   const body = tidy(character.prompt);
   if (characterBox) {
     return {
-      positive: `One person, ${spec.prose}`,
+      positive:
+        framing === "sheet"
+          ? `A ${sheetViews}-view full-body character turnaround sheet against a plain white background.`
+          : `One person, ${spec.prose}`,
       negative: BLANK_FACE_GUARD.natural,
       character: { positive: body, negative: avoid },
       dropped: [],
@@ -277,12 +332,18 @@ function scaledAspectSize(ratioWidth: number, ratioHeight: number): { width: num
 }
 
 /** Canvas dimensions for generating a reference image under `framing`. */
-export function currentReferenceSize(framing: CharacterRefFraming): { width: number; height: number } {
+export function currentReferenceSize(
+  framing: CharacterRefFraming,
+  sheetViews: SheetTurnaroundViews = 3,
+): { width: number; height: number } {
   if (framing === "portrait" || framing === "upper_body") return currentPortraitSize();
+  const sheetDims = sheetViews === 4 ? { width: 1408, height: 704 } : { width: 1216, height: 832 };
   if (generation.isNovelAi) {
-    return framing === "sheet" ? { width: 1216, height: 832 } : { width: 832, height: 1216 };
+    return framing === "sheet" ? sheetDims : { width: 832, height: 1216 };
   }
-  return framing === "sheet" ? scaledAspectSize(1216, 832) : scaledAspectSize(832, 1216);
+  return framing === "sheet"
+    ? scaledAspectSize(sheetDims.width, sheetDims.height)
+    : scaledAspectSize(832, 1216);
 }
 
 /** Comma-separated artist names as prompt tags in the current mode's form. */
@@ -357,6 +418,8 @@ export function savePortraitExtras(extras: PortraitExtras): void {
 export interface CharacterImageGenerationOptions {
   target?: "portrait" | "reference";
   framing?: CharacterRefFraming;
+  sheetViews?: SheetTurnaroundViews;
+  expression?: string;
   directorReferences?: NovelAiDirectorReference[];
   referenceDescription?: string;
   enablePr?: boolean;
@@ -378,6 +441,7 @@ export async function generateCharacterPortrait(
 
   const target = options?.target ?? "portrait";
   const framing: CharacterRefFraming = options?.framing ?? (target === "reference" ? "full_body" : "portrait");
+  const sheetViews: SheetTurnaroundViews = options?.sheetViews ?? 3;
   const style = portraitStyle(character);
   // The character box, while the selected model still takes one. When the
   // model was switched since the dialog opened, or the box was emptied, the
@@ -412,7 +476,7 @@ export async function generateCharacterPortrait(
     seed: "-1",
     overrides: { mode: "txt2img", input_image: null, mask_image: null },
   });
-  const size = target === "reference" ? currentReferenceSize(framing) : currentPortraitSize();
+  const size = target === "reference" ? currentReferenceSize(framing, sheetViews) : currentPortraitSize();
   params.width = size.width;
   params.height = size.height;
   // One picture, nothing from the scene the prompt area is set up for.
@@ -444,19 +508,33 @@ export async function generateCharacterPortrait(
             enabled: true,
           }))
       : [];
+    const sheetSlots =
+      framing === "sheet" && box
+        ? buildTurnaroundCharacterSlots({
+            characterPrompt: box.positive.trim(),
+            characterNegative: boxNegative ? box.negative.trim() : "",
+            expression: options?.expression ?? "",
+            style,
+            views: sheetViews,
+            includeNegative: boxNegative,
+          }).slice(0, model?.maxCharacters ?? 4)
+        : null;
     params.novelai = {
       ...params.novelai,
-      // The character in its own box, with its own UC; nothing from the
-      // character boxes the prompt area is set up with.
-      characters: box
-        ? [{ ...createNovelAiCharacter(), prompt: box.positive.trim(), negative_prompt: boxNegative ? box.negative.trim() : "" }]
-        : [],
-      use_coords: false,
+      // Positioned turnaround slots when generating a NovelAI character sheet;
+      // otherwise the character in a single unpositioned box.
+      characters: sheetSlots
+        ? sheetSlots
+        : box
+          ? [{ ...createNovelAiCharacter(), prompt: box.positive.trim(), negative_prompt: boxNegative ? box.negative.trim() : "" }]
+          : [],
+      use_coords: !!sheetSlots && sheetSlots.length > 1,
       vibes: [],
       director_references: guideRefs,
       transparent_background: false,
       local_post_process: false,
       face_detail: { ...params.novelai.face_detail, enabled: false },
+      multi_char_pr: { ...params.novelai.multi_char_pr, enabled: false },
     };
   }
 

@@ -197,6 +197,20 @@
     missing_model: "missing_model",
     run_failed: "run_failed",
   };
+  const NAI_CHAR_PR_PASS_BODIES: Record<string, string> = {
+    no_characters: "no_characters",
+    few_characters: "few_characters",
+    needs_coords: "needs_coords",
+    detector_failed: "detector_failed",
+    nothing_painted: "nothing_painted",
+    transparency: "transparency",
+    batch: "batch",
+    run_failed: "run_failed",
+    request_rejected: "run_failed",
+    generate_failed: "generate_failed",
+    empty_result: "generate_failed",
+    readback_failed: "generate_failed",
+  };
 
   /**
    * Refresh the installed-vs-pinned ComfyUI version and, if it is still behind,
@@ -3105,6 +3119,16 @@
         notifications.addLocalNotification({
           title: locale.t(`notifications.nai_local_pass.${status}_title`),
           body: locale.t(`notifications.nai_local_pass.${body}`),
+          kind: status === "skipped" ? "info" : "warning",
+        });
+      }),
+      ipcListen("novelai:char_pr_pass", (event: any) => {
+        const data = event.payload;
+        const status = data?.status === "skipped" || data?.status === "partial" ? data.status : "failed";
+        const body = NAI_CHAR_PR_PASS_BODIES[data?.reason] ?? "run_failed";
+        notifications.addLocalNotification({
+          title: locale.t(`notifications.nai_char_pr_pass.${status}_title`),
+          body: locale.t(`notifications.nai_char_pr_pass.${body}`),
           kind: status === "skipped" ? "info" : "warning",
         });
       }),
