@@ -3998,6 +3998,29 @@ async fn dispatch_command(
                     .map_err(|e| e.to_string())?;
             serde_json::to_value(take).map_err(|e| e.to_string())
         }
+        "scene_generate_sfx" => {
+            let request: crate::cloud::sfx::SfxRequest =
+                serde_json::from_value(args["request"].clone())
+                    .map_err(|e| format!("Invalid request: {e}"))?;
+            let clip = crate::cloud::sfx::generate(&state, username, request)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(clip).map_err(|e| e.to_string())
+        }
+        "scene_list_sfx" => {
+            let clips = crate::cloud::sfx::list(username).map_err(|e| e.to_string())?;
+            serde_json::to_value(clips).map_err(|e| e.to_string())
+        }
+        "scene_load_sfx" => {
+            let clip = crate::cloud::sfx::load(username, args["clipId"].as_str().unwrap_or(""))
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(clip).map_err(|e| e.to_string())
+        }
+        "scene_delete_sfx" => {
+            crate::cloud::sfx::delete(username, args["clipId"].as_str().unwrap_or(""))
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
         "scene_video_capabilities" => {
             serde_json::to_value(crate::cloud::scene::job::capabilities())
                 .map_err(|e| e.to_string())
@@ -9933,6 +9956,10 @@ mod nai_key_tests {
             "scene_clip_info",
             "scene_upgrade_draft",
             "scene_exact_voice",
+            "scene_generate_sfx",
+            "scene_list_sfx",
+            "scene_load_sfx",
+            "scene_delete_sfx",
         ] {
             assert_eq!(min_role_for_command(command), UserRole::User);
         }

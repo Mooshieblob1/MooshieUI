@@ -25,6 +25,8 @@ pub const USER_AGENT: &str = concat!("MooshieUI/", env!("CARGO_PKG_VERSION"));
 pub const DESIGN_MODEL: &str = "eleven_ttv_v3";
 /// Speech model. The prototype's listener strongly preferred v4 over v3.
 pub const TTS_MODEL: &str = "eleven_v4";
+/// Sound effects model. v3 is the current ElevenLabs SFX endpoint model.
+pub const SFX_MODEL: &str = "eleven_text_to_sound_v3";
 /// MP3 at 44.1 kHz, which Seedance accepts as an audio reference as is.
 const OUTPUT_FORMAT: &str = "mp3_44100_128";
 
@@ -43,6 +45,10 @@ pub const PREVIEW_TEXT_MIN: usize = 100;
 pub const PREVIEW_TEXT_MAX: usize = 1000;
 /// Eleven v4's per-request limit (best practices page, rule E5).
 pub const TTS_TEXT_MAX: usize = 10_000;
+/// ElevenLabs v3 sound generation limits.
+pub const SFX_TEXT_MAX: usize = 1000;
+pub const SFX_DURATION_MIN: f32 = 0.5;
+pub const SFX_DURATION_MAX: f32 = 30.0;
 
 pub struct ElevenLabsClient<'a> {
     http: &'a reqwest::Client,
@@ -113,6 +119,13 @@ pub struct SpeechSettings {
     /// Better Japanese pronunciation at a large latency cost (rule E4).
     pub normalize_text: bool,
     pub seed: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SfxSettings {
+    pub duration_seconds: Option<f32>,
+    pub prompt_influence: f32,
+    pub loop_audio: bool,
 }
 
 impl<'a> ElevenLabsClient<'a> {
@@ -237,26 +250,26 @@ impl<'a> ElevenLabsClient<'a> {
             .json(&body)
             .send()
             .await?;
-        match moderated_status(res).await? {
-            Moderated::Blocked { message } => Ok(Moderated::Blocked { message }),
-            Moderated::Ok { value: res } => {
-                let character_cost = res
-                    .headers()
-                    .get("character-cost")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.trim().parse::<u64>().ok());
-                let bytes = read_bounded(res, MAX_AUDIO_BYTES).await?;
-                if bytes.is_empty() {
-                    return Err(AppError::Other("ElevenLabs returned no audio.".into()));
-                }
-                Ok(Moderated::Ok {
-                    value: SpeechAudio {
-                        bytes,
-                        character_cost,
-                    },
-                })
-            }
-        }
+        read_moderated_audio(res).await
+    }
+
+    pub async fn generate_sound_effect(
+        &self,
+        text: &str,
+        settings: &SfxSettings,
+    ) -> Result<Moderated<SpeechAudio>, AppError> {
+        let trimmed = validate_sfx_request(text, settings)?;
+        let body = sfx_body(trimmed, settings);
+        let res = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/v1/sound-generation?output_format={OUTPUT_FORMAT}"),
+            )
+            .timeout(GENERATION_TIMEOUT)
+            .json(&body)
+            .send()
+            .await?;
+        read_moderated_audio(res).await
     }
 }
 
@@ -357,6 +370,65 @@ fn speech_body(text: &str, settings: &SpeechSettings) -> Value {
         body["seed"] = serde_json::json!(seed);
     }
     body
+}
+
+pub fn validate_sfx_request<'a>(
+    text: &'a str,
+    settings: &SfxSettings,
+) -> Result<&'a str, AppError> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Other("Enter a sound effect description.".into()));
+    }
+    if trimmed.chars().count() > SFX_TEXT_MAX {
+        return Err(AppError::Other(format!(
+            "Sound effect description exceeds {SFX_TEXT_MAX} characters."
+        )));
+    }
+    if let Some(duration) = settings.duration_seconds {
+        if !duration.is_finite() || !(SFX_DURATION_MIN..=SFX_DURATION_MAX).contains(&duration) {
+            return Err(AppError::Other(format!(
+                "Duration must be between {SFX_DURATION_MIN} and {SFX_DURATION_MAX} seconds."
+            )));
+        }
+    }
+    Ok(trimmed)
+}
+
+fn sfx_body(text: &str, settings: &SfxSettings) -> Value {
+    let mut body = serde_json::json!({
+        "text": text,
+        "model_id": SFX_MODEL,
+        "prompt_influence": settings.prompt_influence.clamp(0.0, 1.0),
+        "loop": settings.loop_audio,
+    });
+    if let Some(duration) = settings.duration_seconds {
+        body["duration_seconds"] = serde_json::json!(duration);
+    }
+    body
+}
+
+async fn read_moderated_audio(res: reqwest::Response) -> Result<Moderated<SpeechAudio>, AppError> {
+    match moderated_status(res).await? {
+        Moderated::Blocked { message } => Ok(Moderated::Blocked { message }),
+        Moderated::Ok { value: res } => {
+            let character_cost = res
+                .headers()
+                .get("character-cost")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            let bytes = read_bounded(res, MAX_AUDIO_BYTES).await?;
+            if bytes.is_empty() {
+                return Err(AppError::Other("ElevenLabs returned no audio.".into()));
+            }
+            Ok(Moderated::Ok {
+                value: SpeechAudio {
+                    bytes,
+                    character_cost,
+                },
+            })
+        }
+    }
 }
 
 /// A voice id goes into a URL path, so accept only the characters ElevenLabs
@@ -697,5 +769,52 @@ mod tests {
         );
         assert!(plain.get("language_code").is_none());
         assert!(plain.get("apply_language_text_normalization").is_none());
+    }
+
+    #[test]
+    fn sfx_body_uses_v3_model_and_optional_duration() {
+        let auto = sfx_body(
+            "distant thunder rumble",
+            &SfxSettings {
+                duration_seconds: None,
+                prompt_influence: 1.4,
+                loop_audio: true,
+            },
+        );
+        assert_eq!(auto["model_id"], SFX_MODEL);
+        assert_eq!(auto["prompt_influence"], 1.0);
+        assert_eq!(auto["loop"], true);
+        assert!(auto.get("duration_seconds").is_none());
+
+        let timed = sfx_body(
+            "footsteps",
+            &SfxSettings {
+                duration_seconds: Some(4.5),
+                prompt_influence: -0.5,
+                loop_audio: false,
+            },
+        );
+        assert_eq!(timed["duration_seconds"], 4.5);
+        assert_eq!(timed["prompt_influence"], 0.0);
+        assert_eq!(timed["loop"], false);
+
+        assert!(validate_sfx_request(
+            "   ",
+            &SfxSettings {
+                duration_seconds: None,
+                prompt_influence: 0.3,
+                loop_audio: false,
+            }
+        )
+        .is_err());
+        assert!(validate_sfx_request(
+            "wind",
+            &SfxSettings {
+                duration_seconds: Some(45.0),
+                prompt_influence: 0.3,
+                loop_audio: false,
+            }
+        )
+        .is_err());
     }
 }

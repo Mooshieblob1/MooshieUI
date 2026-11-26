@@ -12,6 +12,7 @@
 
 pub mod elevenlabs;
 pub mod scene;
+pub mod sfx;
 pub mod takes;
 pub mod video;
 pub mod voice;

@@ -3,6 +3,7 @@
   import { animeScene } from "../../stores/animeScene.svelte.js";
   import { cloudKeyStatus } from "../../utils/api.js";
   import SceneVoicePanel from "./SceneVoicePanel.svelte";
+  import SceneSfxPanel from "./SceneSfxPanel.svelte";
   import SceneScriptPanel from "./SceneScriptPanel.svelte";
   import SceneVideoPanel from "./SceneVideoPanel.svelte";
   import SceneClipsPanel from "./SceneClipsPanel.svelte";
@@ -87,6 +88,7 @@
       </section>
 
       <SceneVoicePanel />
+      <SceneSfxPanel />
       <SceneScriptPanel />
       <SceneVideoPanel hasKey={hasVideoKey} {onOpenSettings} />
       <SceneClipsPanel hasKey={hasVideoKey} />

@@ -196,3 +196,26 @@ pub async fn scene_exact_voice(
 ) -> Result<serde_json::Value, AppError> {
     job::exact_voice(state.inner(), None, &filename).await
 }
+
+#[tauri::command]
+pub async fn scene_generate_sfx(
+    state: State<'_, Arc<AppState>>,
+    request: crate::cloud::sfx::SfxRequest,
+) -> Result<Moderated<crate::cloud::sfx::SfxClipData>, AppError> {
+    crate::cloud::sfx::generate(state.inner(), None, request).await
+}
+
+#[tauri::command]
+pub async fn scene_list_sfx() -> Result<Vec<crate::cloud::sfx::SfxClipSummary>, AppError> {
+    crate::cloud::sfx::list(None)
+}
+
+#[tauri::command]
+pub async fn scene_load_sfx(clip_id: String) -> Result<crate::cloud::sfx::SfxClipData, AppError> {
+    crate::cloud::sfx::load(None, &clip_id)
+}
+
+#[tauri::command]
+pub async fn scene_delete_sfx(clip_id: String) -> Result<(), AppError> {
+    crate::cloud::sfx::delete(None, &clip_id)
+}
