@@ -1091,6 +1091,8 @@ const pl: Record<string, string> = {
   "generation.dimensions.result": "Wynik",
   "generation.dimensions.pixel_budget": "Budżet pikseli",
   "generation.dimensions.pixel_budget_tip": "Każdy kadr zachowuje ten budżet pikseli, dopasowany do kształtu w układzie.",
+  "generation.dimensions.self_correction": "Autokorekta",
+  "generation.dimensions.self_correction_tip": "Sprawdza wygenerowany obraz i poprawia błędy w maksymalnie 5 przebiegach (SenseNova U1.6).",
   "generation.dimensions.transparent": "Przezroczyste tło",
   "generation.dimensions.transparent_tip": "Prosi model o przezroczyste tło. Skalowanie, poprawa twarzy i detal segmentów wymagają nieprzezroczystego obrazu, więc przy nich tło zostaje wypełnione.",
   "generation.swap_panels": "Zamień lewy/prawy panel",

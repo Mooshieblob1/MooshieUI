@@ -969,6 +969,8 @@ const it: Record<string, string> = {
   "generation.dimensions.result": "Risultato",
   "generation.dimensions.pixel_budget": "Budget di pixel",
   "generation.dimensions.pixel_budget_tip": "Ogni vignetta mantiene questo budget di pixel, adattato alla propria forma nel layout.",
+  "generation.dimensions.self_correction": "Autocorrezione",
+  "generation.dimensions.self_correction_tip": "Controlla l'immagine generata e corregge gli errori fino a 5 passaggi (SenseNova U1.6).",
   "generation.dimensions.transparent": "Sfondo trasparente",
   "generation.dimensions.transparent_tip": "Chiede al modello uno sfondo trasparente. Upscale, correzione volti e dettaglio per segmenti richiedono un'immagine opaca, quindi con loro attivi lo sfondo viene riempito.",
   "generation.swap_panels": "Scambia pannelli sinistra/destra",

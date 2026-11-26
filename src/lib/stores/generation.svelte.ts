@@ -828,6 +828,8 @@ class GenerationStore {
   /** Ask for a transparent background (Ming-Image Design, see
    *  `transparentBackgroundActive`). */
   transparentBackground = $state(false);
+  /** Enable iterative SenseNova U1.6 self-correction passes (`selfCorrectionActive`). */
+  selfCorrection = $state(false);
   /** The rest of the Moody Moss workflow (detailers, skin contrast, SeedVR2 final). */
   moodyMoss = $state<MoodyMossSettings>({ ...MOODY_MOSS_FINISH_DEFAULTS });
   smartGuidance = $state(false);
@@ -1388,6 +1390,16 @@ class GenerationStore {
   /** Whether the next generation asks for a transparent background. */
   get transparentBackgroundActive(): boolean {
     return this.supportsTransparentBackground && this.transparentBackground;
+  }
+
+  /** Whether the active model supports SenseNova U1.6 self-correction passes. */
+  get supportsSelfCorrection(): boolean {
+    return this.modelFamily === "sensenova_u16";
+  }
+
+  /** Whether the next generation enables iterative self-correction. */
+  get selfCorrectionActive(): boolean {
+    return this.supportsSelfCorrection && this.selfCorrection;
   }
 
   /** Whether the next generation runs the Moody Moss 4K HD two passes (txt2img only). */
@@ -3276,6 +3288,7 @@ class GenerationStore {
     if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
     if (saved.moodyMossHd !== undefined) this.moodyMossHd = saved.moodyMossHd;
     if (saved.transparentBackground !== undefined) this.transparentBackground = saved.transparentBackground;
+    if (saved.selfCorrection !== undefined) this.selfCorrection = saved.selfCorrection;
     if (saved.moodyMoss !== undefined) this.moodyMoss = restoreMoodyMossSettings(saved.moodyMoss);
     if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
     if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
@@ -3615,6 +3628,7 @@ class GenerationStore {
         smartGuidance: this.smartGuidance,
         moodyMossHd: this.moodyMossHd,
         transparentBackground: this.transparentBackground,
+        selfCorrection: this.selfCorrection,
         moodyMoss: $state.snapshot(this.moodyMoss),
         vpredRescaleCfg: this.vpredRescaleCfg,
         vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
@@ -3822,6 +3836,7 @@ class GenerationStore {
       smartGuidance: this.smartGuidance,
       moodyMossHd: this.moodyMossHd,
       transparentBackground: this.transparentBackground,
+      selfCorrection: this.selfCorrection,
       moodyMoss: $state.snapshot(this.moodyMoss),
       vpredRescaleCfg: this.vpredRescaleCfg,
       vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
@@ -4870,6 +4885,7 @@ class GenerationStore {
       smart_guidance: this.smartGuidance,
       moody_moss_hd: this.moodyMossHdActive,
       transparent_background: this.transparentBackgroundActive,
+      self_correction: this.selfCorrectionActive,
       moody_moss: this.isMoodyMossMix ? moodyMossFinishPayload(this.moodyMoss) : undefined,
       vpred_rescale_cfg: this.vpredRescaleCfg,
       vpred_rescale_cfg_multiplier: this.vpredRescaleCfgMultiplier,

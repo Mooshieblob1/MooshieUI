@@ -1109,6 +1109,8 @@ const en: Record<string, string> = {
   "generation.dimensions.result": "Result",
   "generation.dimensions.pixel_budget": "Pixel budget",
   "generation.dimensions.pixel_budget_tip": "Each panel keeps this pixel budget, reshaped to match its layout box.",
+  "generation.dimensions.self_correction": "Self-correction",
+  "generation.dimensions.self_correction_tip": "Reviews generated output and refines errors across up to 5 passes (SenseNova U1.6).",
   "generation.dimensions.transparent": "Transparent background",
   "generation.dimensions.transparent_tip": "Asks the model for a see-through background. Upscale, face fix and segment detail need an opaque image, so with them on the background is filled in.",
   "generation.swap_panels": "Swap left/right panels",

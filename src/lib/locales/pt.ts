@@ -969,6 +969,8 @@ const pt: Record<string, string> = {
   "generation.dimensions.result": "Resultado",
   "generation.dimensions.pixel_budget": "Orçamento de pixels",
   "generation.dimensions.pixel_budget_tip": "Cada quadro mantém esse total de pixels, ajustado ao formato no layout.",
+  "generation.dimensions.self_correction": "Autocorreção",
+  "generation.dimensions.self_correction_tip": "Revisa a imagem gerada e corrige erros em até 5 passagens (SenseNova U1.6).",
   "generation.dimensions.transparent": "Fundo transparente",
   "generation.dimensions.transparent_tip": "Pede ao modelo um fundo transparente. Upscale, correção de rosto e detalhe por segmento precisam de uma imagem opaca, então com eles o fundo é preenchido.",
   "generation.swap_panels": "Trocar painéis esquerdo/direito",

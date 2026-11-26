@@ -981,6 +981,8 @@ const fr: Record<string, string> = {
   "generation.dimensions.result": "Résultat",
   "generation.dimensions.pixel_budget": "Budget de pixels",
   "generation.dimensions.pixel_budget_tip": "Chaque case garde ce budget de pixels, adapté au format de son cadre dans la mise en page.",
+  "generation.dimensions.self_correction": "Autocorrection",
+  "generation.dimensions.self_correction_tip": "Vérifie l'image générée et corrige les erreurs en 5 passes maximum (SenseNova U1.6).",
   "generation.dimensions.transparent": "Fond transparent",
   "generation.dimensions.transparent_tip": "Demande au modèle un fond transparent. L'agrandissement, la correction des visages et le détail par segment demandent une image opaque, donc avec eux le fond est rempli.",
   "generation.swap_panels": "Échanger les panneaux gauche/droite",

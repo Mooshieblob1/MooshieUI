@@ -969,6 +969,8 @@ const zh: Record<string, string> = {
   "generation.dimensions.result": "结果",
   "generation.dimensions.pixel_budget": "像素预算",
   "generation.dimensions.pixel_budget_tip": "每个分格都会保留该像素总量，并按版面中分格的形状调整宽高。",
+  "generation.dimensions.self_correction": "自我修正",
+  "generation.dimensions.self_correction_tip": "检查生成结果并在最多 5 轮中修正错误 (SenseNova U1.6)。",
   "generation.dimensions.transparent": "透明背景",
   "generation.dimensions.transparent_tip": "要求模型生成透明背景。放大、面部修复和分段细化需要不透明图像，开启它们时背景会被填充。",
   "generation.swap_panels": "切换左右面板",

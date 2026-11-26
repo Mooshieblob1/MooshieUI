@@ -492,4 +492,15 @@
       {locale.t('generation.dimensions.transparent')}<InfoTip text={locale.t('generation.dimensions.transparent_tip')} />
     </label>
   {/if}
+  {#if generation.supportsSelfCorrection}
+    <label class="flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">
+      <input
+        type="checkbox"
+        bind:checked={generation.selfCorrection}
+        onchange={() => generation.saveSettings()}
+        class="accent-indigo-500"
+      />
+      {locale.t('generation.dimensions.self_correction')}<InfoTip text={locale.t('generation.dimensions.self_correction_tip')} />
+    </label>
+  {/if}
 </div>

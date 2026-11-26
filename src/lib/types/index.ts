@@ -453,6 +453,8 @@ export interface GenerationParams {
   moody_moss_hd?: boolean;
   /** Ask for a transparent background (Ming-Image Design only). */
   transparent_background?: boolean;
+  /** Enable SenseNova U1.6 iterative self-correction review passes. */
+  self_correction?: boolean;
   moody_moss?: import("../utils/moodyMoss.js").MoodyMossFinishPayload;
   /** RescaleCFG blend (0 = plain CFG, 0.7 = recommended, 1 = full rescale). */
   vpred_rescale_cfg_multiplier?: number;

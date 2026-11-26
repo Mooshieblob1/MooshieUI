@@ -969,6 +969,8 @@ const ru: Record<string, string> = {
   "generation.dimensions.result": "Результат",
   "generation.dimensions.pixel_budget": "Бюджет пикселей",
   "generation.dimensions.pixel_budget_tip": "Каждая панель сохраняет этот объём пикселей, подстраиваясь под форму в раскладке.",
+  "generation.dimensions.self_correction": "Самокоррекция",
+  "generation.dimensions.self_correction_tip": "Проверяет результат и исправляет ошибки за 1–5 проходов (SenseNova U1.6).",
   "generation.dimensions.transparent": "Прозрачный фон",
   "generation.dimensions.transparent_tip": "Просит модель сделать прозрачный фон. Апскейл, исправление лиц и детализация сегментов требуют непрозрачного изображения, поэтому с ними фон заполняется.",
   "generation.swap_panels": "Поменять левую/правую панели",

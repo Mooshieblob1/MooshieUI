@@ -981,6 +981,7 @@ fn overrides(
         scheduler: plan.scheduler.clone(),
         loras: None,
         transparent_background: None,
+        self_correction: None,
         ..Default::default()
     }
 }

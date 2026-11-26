@@ -835,6 +835,30 @@
     const registered = registeredRecommendedModels().flatMap(({ arch, family, model }) => {
       const encoder = family.text_encoder ?? arch.text_encoder;
       const vae = family.vae ?? arch.vae;
+      const autoSettings = family.sampling
+        ? {
+            steps: family.sampling.steps,
+            cfg: family.sampling.cfg,
+            samplerName: family.sampling.sampler,
+            scheduler: family.sampling.scheduler,
+          }
+        : undefined;
+      // A registered architecture can carry a licence note, keyed by its id.
+      const noticeKey = `generation.model.notice.${arch.id}`;
+      const notice = locale.t(noticeKey) !== noticeKey ? noticeKey : undefined;
+
+      if (!arch.split_only && model.diffusion_model.category === "checkpoints") {
+        const entry: RecommendedModel = {
+          label: model.label,
+          size: model.size,
+          minComputeCapability: model.min_compute_capability ?? undefined,
+          checkpoint: architectureModelFile(model.diffusion_model),
+          autoSettings,
+        };
+        if (notice) entry.noticeKey = notice;
+        return [entry];
+      }
+
       if (!encoder?.download || !vae?.download) return [];
       const entry: RecommendedModel = {
         label: model.label,
@@ -845,18 +869,9 @@
           clipModel: { ...architectureModelFile(encoder.download), clipType: encoder.clip_type },
           vaeModel: architectureModelFile(vae.download),
         },
-        autoSettings: family.sampling
-          ? {
-              steps: family.sampling.steps,
-              cfg: family.sampling.cfg,
-              samplerName: family.sampling.sampler,
-              scheduler: family.sampling.scheduler,
-            }
-          : undefined,
+        autoSettings,
       };
-      // A registered architecture can carry a licence note, keyed by its id.
-      const noticeKey = `generation.model.notice.${arch.id}`;
-      if (locale.t(noticeKey) !== noticeKey) entry.noticeKey = noticeKey;
+      if (notice) entry.noticeKey = notice;
       return [entry];
     });
     return [...builtinRecommendedModels, ...registered];
