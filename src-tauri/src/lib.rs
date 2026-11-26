@@ -841,6 +841,7 @@ pub fn run() {
             commands::video_export::copy_file_to_clipboard,
             commands::video_export::copy_file_to,
             commands::video_interpolate::interpolate_video,
+            commands::video_deflicker::deflicker_video,
             commands::video_drafts::get_h3_upscaler_status,
             commands::video_drafts::install_h3_upscaler,
             commands::video_drafts::get_video_draft_status,

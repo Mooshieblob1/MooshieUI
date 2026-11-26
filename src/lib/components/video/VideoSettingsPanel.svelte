@@ -52,6 +52,7 @@
     H3_TURBO_LORA,
     H3_TURBO_PRESETS,
     isPddPreset,
+    isH3TinyDiffusionModel,
     h3Stack,
     h3TierFiles,
     h3TierForDiffusionModel,
@@ -267,6 +268,10 @@
    * visible reason and no way back.
    */
   const turboLoraLocked = $derived(generation.videoTurboEnabled && loraPresetSelected);
+  const tinyTurboMismatch = $derived(
+    generation.videoTurboEnabled &&
+      (selectedTier === "tiny_int8" || isH3TinyDiffusionModel(generation.videoDiffusionModel)),
+  );
   $effect(() => { generation.videoPresetLora = loraPresetSelected ? turboLoraName : null; });
   /** Whether a LoRA filename (any basename) is present in the LoRA list. */
   function loraInstalled(filename: string): boolean {
@@ -1638,6 +1643,9 @@
         {/each}
       </select>
       {#if loraPresetSelected}<p class="text-[11px] text-neutral-400">{locale.t("generation.video.lightx_hint", { steps: turboPreset.steps ?? 8, video: turboPreset.videoShift })}</p>{/if}
+      {#if tinyTurboMismatch}
+        <p class="text-[11px] text-amber-300">{locale.t("generation.video.tiny_turbo_warning")}</p>
+      {/if}
     {/if}
     <p class="text-[11px] text-neutral-500">
       {generation.videoTurboEnabled
@@ -1862,6 +1870,12 @@
     {#if tierUnderpowered}
       <p class="text-[11px] text-amber-300">
         {locale.t("generation.video.stack_requires_blackwell")}
+      </p>
+    {/if}
+
+    {#if tinyTurboMismatch}
+      <p class="text-[11px] text-amber-300">
+        {locale.t("generation.video.tiny_turbo_warning")}
       </p>
     {/if}
 

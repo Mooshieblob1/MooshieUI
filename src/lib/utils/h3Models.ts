@@ -15,6 +15,7 @@ import type { VideoVariant, VideoTurboPreset } from "../types/index.js";
  */
 
 const COMFY_ORG = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main";
+const H3_TINY_REPO = "https://huggingface.co/H3-Tiny/MiniMax-H3-Tiny-ComfyUI/resolve/d2fcb8e74751895630ffa54107b9f0cd0c952ee0";
 const NVFP4_REPO = "https://huggingface.co/lilcheaty/MiniMax-H3-NVFP4/resolve/main";
 const TURBO_REPO = "https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora/resolve/main";
 
@@ -31,7 +32,7 @@ export interface H3ModelFile {
   sha256?: string;
 }
 
-export type H3TierId = "nvfp4" | "int8" | "fp8" | "bf16" | "custom";
+export type H3TierId = "nvfp4" | "int8" | "tiny_int8" | "fp8" | "bf16" | "custom";
 
 /**
  * Locale key for the custom tier label. The tier has no fixed files and no
@@ -204,6 +205,26 @@ export const H3_TIERS: readonly H3Tier[] = [
     },
   },
   {
+    id: "tiny_int8",
+    labelKey: "generation.video.stack.tiny_int8",
+    diffusion: {
+      fl2va: {
+        filename: "minimax_h3_tiny_17b_fl2va_int8_convrot.safetensors",
+        url: `${H3_TINY_REPO}/minimax_h3_tiny_17b_fl2va_int8_convrot.safetensors`,
+        category: "diffusion_models",
+        sizeBytes: 18_075_272_736,
+        sha256: "7f9032a32bc44cbe135c2803faf100745d394c3ebb94522d23717678a7a0be96",
+      },
+      ref2va: {
+        filename: "minimax_h3_tiny_17b_ref2va_int8_convrot.safetensors",
+        url: `${H3_TINY_REPO}/minimax_h3_tiny_17b_ref2va_int8_convrot.safetensors`,
+        category: "diffusion_models",
+        sizeBytes: 18_075_272_736,
+        sha256: "88ebaf43a09a48b501503bd0db56750f11267a2f951b6e79d4c05d264245af68",
+      },
+    },
+  },
+  {
     id: "fp8",
     labelKey: "generation.video.stack.fp8",
     diffusion: {
@@ -310,16 +331,23 @@ export function h3TierFiles(id: H3TierId): H3StackEntry[] {
   ];
 }
 
+export function isH3TinyDiffusionModel(filename: string | null | undefined): boolean {
+  const name = (filename ?? "").toLowerCase();
+  return name.includes("h3_tiny") || name.includes("h3-tiny");
+}
+
 /**
  * Which preset tier a DiT filename belongs to, or null when it is not a stack
- * file we know (including custom-tier or unrecognised files). Order matters: the
- * int8-over-NVFP4 mixed builds carry both markers, and they are NVFP4 first.
- * Never returns "custom" — the panel tracks that separately via
+ * file we know (including custom-tier or unrecognised files). Order matters:
+ * H3-Tiny 17B checkpoints also carry `int8`, so check `h3_tiny`/`h3-tiny` before
+ * `int8`; and the int8-over-NVFP4 mixed builds carry both markers, and they are
+ * NVFP4 first. Never returns "custom" -- the panel tracks that separately via
  * `generation.videoModelTier`.
  */
 export function h3TierForDiffusionModel(filename: string | null | undefined): Exclude<H3TierId, "custom"> | null {
   const name = (filename ?? "").toLowerCase();
   if (!name) return null;
+  if (isH3TinyDiffusionModel(name)) return "tiny_int8";
   if (name.includes("nvfp4")) return "nvfp4";
   if (name.includes("int8")) return "int8";
   if (name.includes("fp8")) return "fp8";
