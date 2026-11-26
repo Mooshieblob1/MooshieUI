@@ -1,3 +1,21 @@
+## What's New in v2.4.11
+
+### NovelAI Precise Reference & Characters
+- **Experimental multi-character Precise Reference isolation**: enable **Experimental: Multi-character Precise Reference isolation** under **Settings > Appearance** to show **Isolate character references (Experimental)** in the NovelAI **Precise Reference** panel. Supports **Combined sheet (1-pass)** with an interactive drag-and-resize **Sheet layout** preview plus **Auto-cutout opaque references** / **Cut out BG** using local YOLO person segmentation, **Separate passes (img2img)** via **Auto detect (YOLO)** or **Coordinates (Voronoi)** per-character repaint passes, and **Hybrid (sheet + img2img)**.
+- **V5 turnaround character sheets**: **Generate reference** (**Sheet** framing) now offers **3-view** (`Front / Side / Back`) and **4-view** (`Front / Left / Back / Right`) positioned character slots with back-view facial and gaze tag scrubbing so front and side views stop repeating.
+- **PR-aware portrait prompts**: generating a **Portrait** (or **Portrait** framing in **Generate reference**) while a **Character** or **Character and style** Guide Precise Reference is active moves unnecessary clothing, hair length, single eye color, body, and character name tags into clickable **Left out** chips while keeping accessories, heterochromia + mismatched eye colors, facial marks, non-human head features, and expression.
+- **Edit Character with AI & Extract to existing**: click **Chat edit** on any saved character card (or switch via **Edit character** / **Scene Enhance** inside Enhance chat) to refine cards conversationally with per-character chat history, **Attach card picture**, Undo-backed **Update character**, and **Save as variant**. Inside **Extract** review, any row can now pick a **Target character** from the searchable visual character picker to **Update existing**, **Replace saved**, or save as a variant.
+
+### Models, Video & Scene Studio
+- **SenseNova U1.6 architecture**: added single-file checkpoint support for `txt2img` and `image_edit` (up to 16 reference images) alongside a **Self-correction** toggle that runs up to 5 review-and-refine passes (also controllable via MCP `generate_image`).
+- **H3-Tiny 17B & Video Deflicker**: added the **Tiny 17B int8 - 18.1 GB, pruned** H3 video tier (with compatibility warning when combined with 33B Turbo LoRAs), LightX2V Turbo Fusion Ref2VA 4-step and 8-step **Turbo LoRA** presets, and core **Video Deflicker** (**Deflicker** action in the video player with one-click **Download RAFT-large**).
+- **ElevenLabs Sound Effects (SFX v3)**: added the **Sound Effects (SFX v3)** panel in Scene Studio with description, **Auto duration** or custom duration, **Prompt influence**, **Seamless loop**, audio playback, download, and delete.
+
+### ComfyUI & Maintenance
+- **ComfyUI v0.46.2 & rollback snapshots**: updated the pinned managed ComfyUI version to `v0.46.2`, added pre-update **Rollback snapshots** with one-click **Roll back** in **Settings > Performance**, guarded against the removed `--directml` CLI flag, tracked `server_boot_id` across restarts to clear stale progress, and updated the README screenshot.
+
+---
+
 ## What's New in v2.4.10
 
 ### Fixes & Improvements
