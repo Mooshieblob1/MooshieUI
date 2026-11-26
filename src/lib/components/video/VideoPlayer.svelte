@@ -12,6 +12,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import VideoExportPopover from "./VideoExportPopover.svelte";
   import VideoInterpolatePopover from "./VideoInterpolatePopover.svelte";
+  import VideoDeflickerPopover from "./VideoDeflickerPopover.svelte";
   import VideoDraftAction from "./VideoDraftAction.svelte";
 
   interface Props {
@@ -61,6 +62,7 @@
 
   let exportOpen = $state(false);
   let interpolateOpen = $state(false);
+  let deflickerOpen = $state(false);
   let videoWidth = $state(0);
   let videoHeight = $state(0);
 
@@ -538,8 +540,35 @@
                 <div class="relative">
                   <button
                     class="px-2 py-1 rounded-lg text-xs text-neutral-100"
+                    class:bg-neutral-700={deflickerOpen}
+                    onclick={() => {
+                      deflickerOpen = !deflickerOpen;
+                      if (deflickerOpen) {
+                        interpolateOpen = false;
+                        exportOpen = false;
+                      }
+                    }}
+                  >
+                    {locale.t("video.deflicker.open")}
+                  </button>
+                  {#if deflickerOpen}
+                    <VideoDeflickerPopover
+                      {filename}
+                      onClose={() => (deflickerOpen = false)}
+                    />
+                  {/if}
+                </div>
+                <div class="relative">
+                  <button
+                    class="px-2 py-1 rounded-lg text-xs text-neutral-100"
                     class:bg-neutral-700={interpolateOpen}
-                    onclick={() => (interpolateOpen = !interpolateOpen)}
+                    onclick={() => {
+                      interpolateOpen = !interpolateOpen;
+                      if (interpolateOpen) {
+                        deflickerOpen = false;
+                        exportOpen = false;
+                      }
+                    }}
                   >
                     {locale.t("video.interpolate.open")}
                   </button>
@@ -558,7 +587,13 @@
                   <button
                     class="px-2 py-1 rounded-lg text-xs text-neutral-100"
                     class:bg-neutral-700={exportOpen}
-                    onclick={() => (exportOpen = !exportOpen)}
+                    onclick={() => {
+                      exportOpen = !exportOpen;
+                      if (exportOpen) {
+                        deflickerOpen = false;
+                        interpolateOpen = false;
+                      }
+                    }}
                   >
                     {locale.t("video.export.open")}
                   </button>

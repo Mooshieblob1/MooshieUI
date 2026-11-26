@@ -18,6 +18,7 @@ fn is_optional_model_category(category: &str) -> bool {
             | "controlnet"
             | "ultralytics"
             | "model_patches"
+            | "optical_flow"
     )
 }
 

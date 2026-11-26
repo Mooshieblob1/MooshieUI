@@ -482,6 +482,7 @@ fn known_model_subdirs() -> Vec<&'static str> {
         "text_encoders",
         "ultralytics",
         "model_patches",
+        "optical_flow",
         "style_models",
         "ipadapter",
         "clip_vision",
@@ -545,6 +546,8 @@ fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
         "text_encoders"
     } else if name.contains("unet") || name.contains("diffusion") {
         "diffusion_models"
+    } else if name.contains("optical_flow") || name.contains("opticalflow") {
+        "optical_flow"
     } else {
         "loras"
     }
@@ -8204,6 +8207,12 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "models/model_patches",
             "Models/model_patches",
         ],
+        "optical_flow" => &[
+            "optical_flow",
+            "OpticalFlow",
+            "models/optical_flow",
+            "Models/optical_flow",
+        ],
         "style_models" => &[
             "style_models",
             "StyleModels",
@@ -9157,6 +9166,7 @@ fn append_models_section(output: &mut String, comfyui_path: &str, extra_model_pa
         "text_encoders",
         "ultralytics",
         "model_patches",
+        "optical_flow",
     ];
     const MAX_FILES_PER_CATEGORY: usize = 200;
 

@@ -6968,6 +6968,28 @@ async fn dispatch_command(
             .map_err(|e| e.to_string())?;
             Ok(serde_json::json!({ "prompt_id": prompt_id }))
         }
+        "deflicker_video" => {
+            let filename = args["filename"].as_str().ok_or("Missing filename")?;
+            let dir = user_gallery_dir(username).ok_or("Gallery unavailable")?;
+            let source = crate::commands::video_interpolate::resolve_gallery_video(&dir, filename)
+                .map_err(|e| e.to_string())?;
+            let settings = crate::templates::video_deflicker::DeflickerSettings::sanitized(
+                args["strength"].as_f64().unwrap_or(1.0),
+                args["direction"].as_str().unwrap_or("bidirectional"),
+                args["threshold"].as_f64().unwrap_or(0.1),
+            );
+            let optical_flow_model = args["opticalFlowModel"].as_str();
+            let prompt_id = crate::commands::video_deflicker::submit_deflicker(
+                &state,
+                &source,
+                optical_flow_model,
+                settings,
+                username.map(|u| u.to_string()),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "prompt_id": prompt_id }))
+        }
         "probe_video_export" => {
             let cap = crate::commands::video_export::probe_export_inner(&state).await;
             serde_json::to_value(cap).map_err(|e| e.to_string())

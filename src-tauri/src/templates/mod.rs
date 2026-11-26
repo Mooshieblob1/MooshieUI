@@ -20,6 +20,7 @@ pub mod txt2img;
 pub mod upscale;
 pub mod upscale_standalone;
 pub mod video;
+pub mod video_deflicker;
 pub mod video_interpolate;
 pub mod video_refine;
 pub mod video_retake;

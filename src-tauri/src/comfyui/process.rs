@@ -510,6 +510,8 @@ fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
         "diffusion_models"
     } else if name.contains("model_patch") || name.contains("modelpatch") {
         "model_patches"
+    } else if name.contains("optical_flow") || name.contains("opticalflow") {
+        "optical_flow"
     } else {
         // Unknown flat directory — default to loras (most common fringe case)
         "loras"
@@ -643,6 +645,12 @@ fn build_extra_model_paths_yaml(model_dirs_str: &str) -> Option<(String, usize)>
                     "    models/model_patches\n",
                     "    Models/model_patches\n",
                     "    dlbackend/comfyui/models/model_patches\n",
+                    "  optical_flow: |\n",
+                    "    optical_flow\n",
+                    "    OpticalFlow\n",
+                    "    models/optical_flow\n",
+                    "    Models/optical_flow\n",
+                    "    dlbackend/comfyui/models/optical_flow\n",
                 ),
                 idx = i + 1,
                 dir = quoted_dir

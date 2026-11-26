@@ -17,6 +17,8 @@ class ModelsStore {
   ultralyticsModels = $state<string[]>([]);
   /** ModelPatchLoader weights (`models/model_patches/`), e.g. Anima LLLite. */
   modelPatches = $state<string[]>([]);
+  /** Optical flow models (`models/optical_flow/`), e.g. RAFT for VideoDeflicker. */
+  opticalFlowModels = $state<string[]>([]);
   loading = $state(false);
   remote = $state(false);
   serverUrl = $state("");
@@ -49,6 +51,7 @@ class ModelsStore {
     this.controlnetModels = [];
     this.ultralyticsModels = [];
     this.modelPatches = [];
+    this.opticalFlowModels = [];
     this.samplers = [];
     this.schedulers = [];
   }
@@ -129,7 +132,7 @@ class ModelsStore {
       // files are invisible under `diffusion_models`/`text_encoders`. The
       // ComfyUI-GGUF pack exposes them as `unet_gguf`/`clip_gguf` (same folders,
       // same relative names); those categories 404 when the pack is missing.
-      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, unetModels, ggufDiffusionModels, textEncoders, clipEncoders, ggufEncoders, controlnetModels, ultralyticsModels, modelPatches] =
+      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, unetModels, ggufDiffusionModels, textEncoders, clipEncoders, ggufEncoders, controlnetModels, ultralyticsModels, modelPatches, opticalFlowModels] =
         await Promise.all([
           getModels("checkpoints"),
           getModels("vae"),
@@ -146,6 +149,7 @@ class ModelsStore {
           getModels("controlnet").catch(() => [] as string[]),
           getModels("ultralytics").catch(() => [] as string[]),
           getModels("model_patches").catch(() => [] as string[]),
+          getModels("optical_flow").catch(() => [] as string[]),
         ]);
 
       console.log("ModelsStore: got checkpoints:", checkpoints);
@@ -160,6 +164,7 @@ class ModelsStore {
         text_encoders: mergedEncoders, clip: mergedEncoders,
         controlnet: controlnetModels ?? [], ultralytics: ultralyticsModels ?? [],
         model_patches: modelPatches ?? [],
+        optical_flow: opticalFlowModels ?? [],
       };
       const localOnly = Object.fromEntries(await Promise.all(
         Object.entries(inventory).map(async ([category, available]) => {
@@ -181,6 +186,7 @@ class ModelsStore {
       this.controlnetModels = inventory.controlnet;
       this.ultralyticsModels = inventory.ultralytics;
       this.modelPatches = inventory.model_patches;
+      this.opticalFlowModels = inventory.optical_flow;
       this.samplers = samplerInfo.samplers;
       this.schedulers = samplerInfo.schedulers;
       this.reachable = true;

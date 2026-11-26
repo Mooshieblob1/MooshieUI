@@ -1411,6 +1411,37 @@ export async function interpolateVideo(
   });
 }
 
+export const RAFT_OPTICAL_FLOW_MODEL = {
+  filename: "raft_large_C_T_SKHT_V2-ff5fadd5.safetensors",
+  url: "https://huggingface.co/Comfy-Org/void-model/resolve/f9c9e565920002478ab9477f4c99c29c52d16db3/optical_flow/raft_large_C_T_SKHT_V2-ff5fadd5.safetensors",
+  category: "optical_flow",
+  sizeBytes: 21_060_840,
+  sha256: "aac3561dbbb49a30853bc7d9bb1bf39ce59cc260f670911d43c900ba27a4a8bb",
+} as const;
+
+export type DeflickerDirection = "bidirectional" | "forward";
+
+/**
+ * Queue a ComfyUI core `VideoDeflicker` pass over a finished gallery clip.
+ * The deflickered clip arrives as a new gallery entry through the normal video
+ * output path, so the source clip is never overwritten.
+ */
+export async function deflickerVideo(
+  filename: string,
+  strength: number,
+  direction: DeflickerDirection,
+  threshold: number,
+  opticalFlowModel?: string,
+): Promise<{ prompt_id: string }> {
+  return ipcInvoke("deflicker_video", {
+    filename,
+    strength,
+    direction,
+    threshold,
+    opticalFlowModel,
+  });
+}
+
 /**
  * Is the MiniMax-H3 Turbo node pack on disk? Only the pack: the adapter is a
  * regular LoRA download, so the panel checks `models.loras` for that half.
