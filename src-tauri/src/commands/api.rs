@@ -5643,6 +5643,32 @@ mod split_model_pairing_tests {
     }
 
     #[test]
+    fn sensenova_u16_tensor_keys_are_detected() {
+        let int8 = [
+            "model.diffusion_model.fm_modules.fm_head.conv1.weight",
+            "model.diffusion_model.fm_modules.vision_model_mot_gen.embeddings.patch_embedding.weight",
+            "model.diffusion_model.language_model.model.layers.0.self_attn.q_proj_mot_gen.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&int8).as_deref(),
+            Some("sensenova_u16")
+        );
+        let bare = [
+            "head.conv1.weight",
+            "patch_embed.patch_embedding.weight",
+            "layers.0.self_attn.q_proj.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&bare).as_deref(),
+            Some("sensenova_u16")
+        );
+        assert_eq!(
+            family_from_architecture("sensenova_u16"),
+            Some("sensenova_u16")
+        );
+    }
+
+    #[test]
     fn pixart_tensor_keys_tell_sigma_from_alpha_in_both_layouts() {
         // Diffusers `transformer/` safetensors (what the Model Hub downloads).
         let sigma = [
@@ -7604,6 +7630,18 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     // tokens; Design has none.
     if has_key("__ming_image__") {
         return Some(ming_image_architecture(has_key("cap_pad_token")).to_string());
+    }
+
+    // SenseNova U1.6: unified multimodal transformer with `fm_modules.fm_head`
+    // and `_mot_gen` attention/vision projections (or compact unprefixed names).
+    if contains("fm_modules.fm_head.conv1.weight")
+        || (contains("vision_model_mot_gen.embeddings.patch_embedding.weight")
+            && contains("q_proj_mot_gen"))
+        || (has_key("head.conv1.weight")
+            && has_key("patch_embed.patch_embedding.weight")
+            && starts_with("layers.0.self_attn.q_proj."))
+    {
+        return Some("sensenova_u16".to_string());
     }
 
     // MiniMax-H3-Image: the H3 DiT (video patch embed plus the conditioning

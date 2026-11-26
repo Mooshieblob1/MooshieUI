@@ -990,6 +990,8 @@ const de: Record<string, string> = {
   "generation.dimensions.result": "Ergebnis",
   "generation.dimensions.pixel_budget": "Pixelbudget",
   "generation.dimensions.pixel_budget_tip": "Jedes Panel behält dieses Pixelbudget, angepasst an seine Form im Layout.",
+  "generation.dimensions.self_correction": "Selbstkorrektur",
+  "generation.dimensions.self_correction_tip": "Prüft das generierte Bild und korrigiert Fehler in bis zu 5 Durchgängen (SenseNova U1.6).",
   "generation.dimensions.transparent": "Transparenter Hintergrund",
   "generation.dimensions.transparent_tip": "Bittet das Modell um einen durchsichtigen Hintergrund. Hochskalieren, Gesichtskorrektur und Segment-Detail brauchen ein deckendes Bild, daher wird der Hintergrund mit ihnen gefüllt.",
   "generation.swap_panels": "Linkes/rechtes Panel tauschen",

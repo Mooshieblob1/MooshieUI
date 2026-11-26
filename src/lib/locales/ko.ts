@@ -969,6 +969,8 @@ const ko: Record<string, string> = {
   "generation.dimensions.result": "결과",
   "generation.dimensions.pixel_budget": "픽셀 예산",
   "generation.dimensions.pixel_budget_tip": "각 컷은 레이아웃의 비율에 맞춰 이 총 픽셀 수를 유지합니다.",
+  "generation.dimensions.self_correction": "자가 수정",
+  "generation.dimensions.self_correction_tip": "생성된 이미지를 검토하고 최대 5단계로 오류를 수정합니다 (SenseNova U1.6).",
   "generation.dimensions.transparent": "투명 배경",
   "generation.dimensions.transparent_tip": "모델에 투명한 배경을 요청합니다. 업스케일, 얼굴 보정, 세그먼트 디테일은 불투명한 이미지가 필요하므로 켜면 배경이 채워집니다.",
   "generation.swap_panels": "왼쪽/오른쪽 패널 전환",

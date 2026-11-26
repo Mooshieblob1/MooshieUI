@@ -981,6 +981,8 @@ const ja: Record<string, string> = {
   "generation.dimensions.result": "結果",
   "generation.dimensions.pixel_budget": "ピクセル予算",
   "generation.dimensions.pixel_budget_tip": "各コマはこのピクセル数を保ったまま、レイアウト上の枠の比率に合わせて生成されます。",
+  "generation.dimensions.self_correction": "自己修正",
+  "generation.dimensions.self_correction_tip": "生成画像を確認し、最大5パスで誤りを修正します (SenseNova U1.6)。",
   "generation.dimensions.transparent": "透明な背景",
   "generation.dimensions.transparent_tip": "モデルに透明な背景を指定します。アップスケール、顔補正、セグメント補正は不透明な画像が必要なため、有効にすると背景が塗りつぶされます。",
   "generation.swap_panels": "左右パネルを入れ替える",

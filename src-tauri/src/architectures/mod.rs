@@ -43,10 +43,12 @@ mod moss_image;
 mod pixart;
 mod qwen_image_21;
 pub mod sd3;
+pub mod sensenova;
 
 /// Every registered architecture. Add one line per architecture file.
 pub static ALL: &[&ArchitectureSpec] = &[
     &qwen_image_21::SPEC,
+    &sensenova::SPEC,
     &minimax_h3_image::SPEC,
     &moss_image::SPEC,
     &ming_image::SPEC,

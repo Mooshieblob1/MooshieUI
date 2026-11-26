@@ -84,6 +84,7 @@ fn generate_image_schema() -> Value {
                     }
                 },
                 "transparent_background": { "type": "boolean", "description": "Ask for a see-through (RGBA) background, for logos, stickers and design assets. Only models that support it (Ming-Image Design) use it. Default: the setup's." },
+                "self_correction": { "type": "boolean", "description": "Enable iterative self-correction review passes (up to 5). Only SenseNova U1.6 uses it. Default: the setup's." },
                 "wait": { "type": "boolean", "description": "Default true." },
                 "include_images": { "type": "boolean", "description": "Return image previews. Default true." }
             }

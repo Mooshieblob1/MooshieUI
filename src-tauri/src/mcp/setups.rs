@@ -314,6 +314,8 @@ pub struct Overrides {
     /// Ask for a transparent background (models that support it, Ming-Image
     /// Design; ignored by the rest).
     pub transparent_background: Option<bool>,
+    /// Enable iterative self-correction review passes (SenseNova U1.6; ignored by others).
+    pub self_correction: Option<bool>,
     pub outpaint_top: Option<u32>,
     pub outpaint_bottom: Option<u32>,
     pub outpaint_left: Option<u32>,
@@ -463,6 +465,9 @@ pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams,
     }
     if let Some(t) = o.transparent_background {
         p.transparent_background = t;
+    }
+    if let Some(sc) = o.self_correction {
+        p.self_correction = sc;
     }
     for (name, val, target) in [
         ("outpaint_top", o.outpaint_top, &mut p.outpaint_top),
@@ -696,6 +701,23 @@ mod tests {
                 .unwrap()
                 .transparent_background
         );
+    }
+
+    #[test]
+    fn self_correction_is_an_override_and_otherwise_kept() {
+        let mut base = GenerationParams {
+            model_architecture: "sensenova_u16".into(),
+            ..Default::default()
+        };
+        let o = |sc: Option<bool>| Overrides {
+            prompt: "a poster with crisp typography".into(),
+            self_correction: sc,
+            ..Default::default()
+        };
+        assert!(apply(&base, &o(Some(true))).unwrap().self_correction);
+        base.self_correction = true;
+        assert!(apply(&base, &o(None)).unwrap().self_correction);
+        assert!(!apply(&base, &o(Some(false))).unwrap().self_correction);
     }
 
     #[test]

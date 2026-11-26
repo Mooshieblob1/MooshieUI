@@ -240,6 +240,10 @@ pub struct GenerationParams {
     /// ignore it.
     #[serde(default)]
     pub transparent_background: bool,
+    /// Enable iterative SenseNova U1.6 self-correction passes (`task = "self-correction"`).
+    /// Models that do not support self-correction ignore this flag.
+    #[serde(default)]
+    pub self_correction: bool,
     /// The rest of the Moody Moss 4K HD workflow: its face and area
     /// detailers, skin contrast pass and SeedVR2 final. Sent only for a Moody
     /// Moss Mix model; see `templates::moody_moss`.

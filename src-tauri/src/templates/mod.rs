@@ -1265,6 +1265,9 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     if crate::architectures::wan::two_expert_active(params) {
         crate::architectures::wan::sync_high_noise_pass(&mut result);
     }
+    if crate::architectures::sensenova::self_correction_active(params) {
+        crate::architectures::sensenova::sync_self_correction_samplers(&mut result);
+    }
 
     result
 }

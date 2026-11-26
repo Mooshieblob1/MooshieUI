@@ -1024,6 +1024,8 @@ const es: Record<string, string> = {
   "generation.dimensions.result": "Resultado",
   "generation.dimensions.pixel_budget": "Presupuesto de píxeles",
   "generation.dimensions.pixel_budget_tip": "Cada viñeta mantiene este total de píxeles, adaptado a la forma que tiene en el diseño.",
+  "generation.dimensions.self_correction": "Autocorrección",
+  "generation.dimensions.self_correction_tip": "Revisa la imagen generada y corrige errores en hasta 5 pasadas (SenseNova U1.6).",
   "generation.dimensions.transparent": "Fondo transparente",
   "generation.dimensions.transparent_tip": "Pide al modelo un fondo transparente. El escalado, la corrección de caras y el detalle por segmentos necesitan una imagen opaca, así que con ellos el fondo se rellena.",
   "generation.swap_panels": "Intercambiar paneles izquierdo/derecho",

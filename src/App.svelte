@@ -2047,6 +2047,9 @@
     if (params.transparent_background) {
       metadata.mooshie_transparent_background = "true";
     }
+    if (params.self_correction) {
+      metadata.mooshie_self_correction = "true";
+    }
 
     if (params.smart_guidance) {
       metadata.mooshie_smart_guidance = "true";
@@ -2220,6 +2223,9 @@
       }
 
       // MooshieUI-exclusive params round-trip
+      if (metadata.mooshie_self_correction !== undefined) {
+        generation.selfCorrection = metadata.mooshie_self_correction === "true";
+      }
       if (metadata.mooshie_smart_guidance !== undefined) {
         generation.smartGuidance = metadata.mooshie_smart_guidance === "true";
       }
