@@ -384,6 +384,26 @@ export async function sceneLoadTake(takeId: string): Promise<TakeInfo> {
   return ipcInvoke("scene_load_take", { takeId });
 }
 
+/** Generate a sound effect with ElevenLabs v3 (`eleven_text_to_sound_v3`). */
+export async function sceneGenerateSfx(request: import("../types/scene.js").SfxRequest): Promise<Moderated<import("../types/scene.js").SfxClipData>> {
+  return ipcInvoke("scene_generate_sfx", { request });
+}
+
+/** List saved sound effect clips for the active account. */
+export async function sceneListSfx(): Promise<import("../types/scene.js").SfxClipSummary[]> {
+  return ipcInvoke("scene_list_sfx");
+}
+
+/** Load a cached sound effect clip from disk. */
+export async function sceneLoadSfx(clipId: string): Promise<import("../types/scene.js").SfxClipData> {
+  return ipcInvoke("scene_load_sfx", { clipId });
+}
+
+/** Delete a cached sound effect clip from disk. */
+export async function sceneDeleteSfx(clipId: string): Promise<void> {
+  return ipcInvoke("scene_delete_sfx", { clipId });
+}
+
 // --- Anime scene: video step ---
 
 /** Limits and options for every cloud video model. */

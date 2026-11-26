@@ -37,13 +37,20 @@ assert.equal(h3TurboPreset("unknown", "ref2va").id, "larryvrh");
 assert.equal(h3TurboPreset("larryvrh", "ref2va").id, "larryvrh");
 assert.equal(h3TurboPreset("lightx2v_fl2v_4", "ref2va").id, "lightx2v_ref2v_8");
 assert.equal(h3TurboPreset("lightx2v_ref2v_8", "fl2va").id, "lightx2v_fl2v_8");
+assert.equal(h3TurboPreset("lightx2v_fusion_ref2v_4", "ref2va").id, "lightx2v_fusion_ref2v_4");
+assert.equal(h3TurboPreset("lightx2v_fusion_ref2v_4", "fl2va").id, "lightx2v_fl2v_4");
+assert.equal(h3TurboPreset("lightx2v_fusion_ref2v_8", "ref2va").id, "lightx2v_fusion_ref2v_8");
+assert.equal(h3TurboPreset("lightx2v_fusion_ref2v_8", "fl2va").id, "lightx2v_fl2v_8");
 for (const preset of H3_TURBO_PRESETS.filter(p => p.id !== "larryvrh")) {
   assert.equal(h3TurboPreset(preset.id, preset.variant).id, preset.id);
   assert.match(preset.file.sha256, /^[a-f0-9]{64}$/);
   assert.match(preset.file.url, /resolve\/[a-f0-9]{40}\//);
-  assert.equal(preset.file.sizeBytes, 1956193000);
+  assert.ok(
+    [1_956_193_000, 1_725_921_392, 818_925_468].includes(preset.file.sizeBytes),
+    `Unexpected sizeBytes for ${preset.id}: ${preset.file.sizeBytes}`,
+  );
 }
-console.log("Turbo presets: legacy defaults, task switching and three pinned download manifests passed.");
+console.log("Turbo presets: legacy defaults, task switching and pinned download manifests passed.");
 
 // Run the production accessors with controlled model/server state. Extracting
 // them avoids booting the full rune store or copying its readiness conditions.

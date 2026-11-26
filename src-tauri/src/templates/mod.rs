@@ -64,7 +64,14 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
                 "" | "larryvrh" => (),
                 "lightx2v_fl2v_4" | "lightx2v_fl2v_8" if params.video_variant == "fl2va" => (),
                 "pdd_fl2va_8" if params.video_variant == "fl2va" => (),
-                "lightx2v_ref2v_8" | "pdd_ref2va_8" if params.video_variant == "ref2va" => (),
+                "lightx2v_ref2v_8"
+                | "lightx2v_fusion_ref2v_4"
+                | "lightx2v_fusion_ref2v_8"
+                | "pdd_ref2va_8"
+                    if params.video_variant == "ref2va" =>
+                {
+                    ()
+                }
                 _ => {
                     return Err(
                         "Choose a Turbo preset that matches the selected video variant.".into(),

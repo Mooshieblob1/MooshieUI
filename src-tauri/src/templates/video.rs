@@ -61,7 +61,7 @@ pub fn lora_preset(params: &GenerationParams) -> Option<(&'static str, u32, f64)
 
 /// `(preset id, adapter filename, steps, video sigma shift)` for every
 /// LoRA-loaded Turbo preset. See [`lora_preset`].
-const LORA_PRESETS: [(&str, &str, u32, f64); 5] = [
+const LORA_PRESETS: [(&str, &str, u32, f64); 7] = [
     (
         "lightx2v_fl2v_4",
         "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
@@ -77,6 +77,18 @@ const LORA_PRESETS: [(&str, &str, u32, f64); 5] = [
     (
         "lightx2v_ref2v_8",
         "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+        8,
+        12.0,
+    ),
+    (
+        "lightx2v_fusion_ref2v_4",
+        "minimax_h3_ref2v_turbo_fusion_4step_v1.0_lite_r32_pruned_comfyui.safetensors",
+        4,
+        12.0,
+    ),
+    (
+        "lightx2v_fusion_ref2v_8",
+        "minimax_h3_ref2v_turbo_fusion_8step_v1.0_lite_r32_pruned_comfyui.safetensors",
         8,
         12.0,
     ),
@@ -1043,6 +1055,8 @@ mod tests {
             ("lightx2v_fl2v_4", "fl2va", 4, 6.0),
             ("lightx2v_fl2v_8", "fl2va", 8, 6.0),
             ("lightx2v_ref2v_8", "ref2va", 8, 12.0),
+            ("lightx2v_fusion_ref2v_4", "ref2va", 4, 12.0),
+            ("lightx2v_fusion_ref2v_8", "ref2va", 8, 12.0),
             ("pdd_fl2va_8", "fl2va", 8, 12.0),
             ("pdd_ref2va_8", "ref2va", 8, 12.0),
         ] {
@@ -1170,15 +1184,32 @@ mod tests {
 
     #[test]
     fn lightx_validation_rejects_wrong_variant_and_adapter() {
+        for bad_ref2va in [
+            "lightx2v_ref2v_8",
+            "lightx2v_fusion_ref2v_4",
+            "lightx2v_fusion_ref2v_8",
+        ] {
+            let mut params = video_params("fl2va");
+            params.video_acceleration = "turbo".into();
+            params.video_turbo_preset = bad_ref2va.into();
+            assert!(super::super::validate_generation_params(&params).is_err());
+        }
         let mut params = video_params("fl2va");
         params.video_acceleration = "turbo".into();
-        params.video_turbo_preset = "lightx2v_ref2v_8".into();
-        assert!(super::super::validate_generation_params(&params).is_err());
         params.video_turbo_preset = "lightx2v_fl2v_4".into();
         params.video_turbo_lora = Some("wrong.safetensors".into());
         assert!(super::super::validate_generation_params(&params).is_err());
         params.video_turbo_lora = Some(format!("nested/{}", lora_preset(&params).unwrap().0));
         assert!(super::super::validate_generation_params(&params).is_ok());
+
+        let mut ref_params = video_params("ref2va");
+        ref_params.video_ref_images = vec!["ref.png".to_string()];
+        ref_params.video_acceleration = "turbo".into();
+        ref_params.video_turbo_preset = "lightx2v_fusion_ref2v_4".into();
+        ref_params.video_turbo_lora = Some("wrong.safetensors".into());
+        assert!(super::super::validate_generation_params(&ref_params).is_err());
+        ref_params.video_turbo_lora = Some(lora_preset(&ref_params).unwrap().0.to_string());
+        assert!(super::super::validate_generation_params(&ref_params).is_ok());
     }
 
     #[test]

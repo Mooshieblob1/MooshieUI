@@ -208,3 +208,27 @@ export interface KeyframeRequest {
   aspect: string;
   minor: boolean;
 }
+
+export interface SfxRequest {
+  prompt: string;
+  duration_seconds: number | null;
+  prompt_influence: number | null;
+  loop_audio: boolean;
+}
+
+export interface SfxClipSummary {
+  id: string;
+  prompt: string;
+  created_unix: number;
+  duration_seconds: number | null;
+  prompt_influence: number;
+  loop_audio: boolean;
+  credits: number | null;
+  size_bytes: number;
+}
+
+export interface SfxClipData {
+  summary: SfxClipSummary;
+  audio_base64: string;
+  media_type: string;
+}

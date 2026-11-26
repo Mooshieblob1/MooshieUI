@@ -115,6 +115,10 @@ const LIGHTX2V_REPO = "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/
 function lightxFile(filename: string, sha256: string): H3ModelFile {
   return { filename, url: `${LIGHTX2V_REPO}/${filename}`, category: "loras", sizeBytes: 1_956_193_000, sha256 };
 }
+const LIGHTX2V_FUSION_REPO = "https://huggingface.co/lightx2v/Minimax-H3-Turbo-Fusion/resolve/660ce29d8082a504bc14bf6b7299e60441c05633/pruned";
+function lightxFusionFile(filename: string, sha256: string): H3ModelFile {
+  return { filename, url: `${LIGHTX2V_FUSION_REPO}/${filename}`, category: "loras", sizeBytes: 818_925_468, sha256 };
+}
 /**
  * Alibaba PAI's Parallel Decoding Distillation adapters, in Kijai's ComfyUI
  * conversion. The pruned pair matches the pruned DiT every tier ships. Needs
@@ -132,6 +136,10 @@ export const H3_TURBO_PRESETS: readonly H3TurboPreset[] = [
     file: lightxFile("minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", "08cfe946033af7d27719b964b6e0a0e50c32138daabbd6ce4137e23df6bf9980") },
   { id: "lightx2v_ref2v_8", label: "LightX2V Ref2V v1.0 · 8", variant: "ref2va", steps: 8, videoShift: 12,
     file: lightxFile("minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", "6a56f41ab4229c9dd845b9501bbd475ee57e112d846cf2e819d534a1ae928c5a") },
+  { id: "lightx2v_fusion_ref2v_4", label: "LightX2V Turbo Fusion Ref2V · 4", variant: "ref2va", steps: 4, videoShift: 12,
+    file: lightxFusionFile("minimax_h3_ref2v_turbo_fusion_4step_v1.0_lite_r32_pruned_comfyui.safetensors", "fc088567ba9452137a3d91007b92aa2e045bfe79325f881f8da50d74a620df81") },
+  { id: "lightx2v_fusion_ref2v_8", label: "LightX2V Turbo Fusion Ref2V · 8", variant: "ref2va", steps: 8, videoShift: 12,
+    file: lightxFusionFile("minimax_h3_ref2v_turbo_fusion_8step_v1.0_lite_r32_pruned_comfyui.safetensors", "425d1c1c105effdb04c360a235710d36e6cf0680b51d40c132d48f8ad422ef72") },
   { id: "pdd_fl2va_8", label: "PDD FL2VA · 8", variant: "fl2va", steps: 8, videoShift: 12,
     file: pddFile("MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors", "e97b813a6f857b9dab310f31ec30a8334f63a3e7dcb5d07c0c91933d3447a897") },
   { id: "pdd_ref2va_8", label: "PDD Ref2VA · 8", variant: "ref2va", steps: 8, videoShift: 12,
@@ -149,7 +157,11 @@ export function h3TurboPreset(id: unknown, variant: VideoVariant): H3TurboPreset
   if (!preset.variant || preset.variant === variant) return preset;
   const counterpart: VideoTurboPreset = isPddPreset(preset.id)
     ? (variant === "ref2va" ? "pdd_ref2va_8" : "pdd_fl2va_8")
-    : (variant === "ref2va" ? "lightx2v_ref2v_8" : "lightx2v_fl2v_8");
+    : variant === "ref2va"
+      ? "lightx2v_ref2v_8"
+      : preset.steps === 4
+        ? "lightx2v_fl2v_4"
+        : "lightx2v_fl2v_8";
   return H3_TURBO_PRESETS.find(p => p.id === counterpart)!;
 }
 
