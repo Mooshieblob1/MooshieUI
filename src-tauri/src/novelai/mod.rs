@@ -7,6 +7,8 @@
 //! the progress store need no NovelAI-specific handling.
 
 pub mod augment;
+pub mod char_pr;
+pub mod char_pr_pass;
 pub mod client;
 pub mod detect;
 pub mod face_detail;
@@ -1030,7 +1032,12 @@ async fn run_inner(
     // resolved to pixels. The face pass builds its crop requests from the same
     // thing so it inherits the encoded vibes rather than re-paying for them.
     let resolved = with_uploads.as_ref().or(encoded.as_ref()).unwrap_or(params);
-    let body = build_request(resolved)?;
+    let (base_override, char_pr_plan, char_pr_skip) =
+        char_pr::prepare_base_request(state, resolved, transparency_requested(resolved)).await;
+    if let Some(reason) = char_pr_skip {
+        char_pr::notify(sink, prompt_id, "skipped", reason.as_str());
+    }
+    let body = build_request(base_override.as_ref().unwrap_or(resolved))?;
     log_vibe_summary(&body);
     log_character_summary(&body);
     log_director_reference_summary(&body);
@@ -1081,12 +1088,11 @@ async fn run_inner(
         })
         .await?;
 
-    // A NovelAI face pass sends more requests after the local pass, so the
-    // account stays with this job until then. Otherwise NovelAI is done with
-    // it, and the next queued generation can start while this one finishes
-    // locally.
+    // A NovelAI character or face pass sends more requests, so the account
+    // stays with this job until then. Otherwise NovelAI is done with it, and
+    // the next queued generation can start while this one finishes locally.
     let face_pass = novelai_face_pass_requested(params);
-    if !face_pass {
+    if !face_pass && char_pr_plan.is_none() {
         client.release();
     }
 
@@ -1096,6 +1102,31 @@ async fn run_inner(
     }
 
     let mut images = images;
+    if let Some(plan) = char_pr_plan {
+        if let [png] = images.as_slice() {
+            match char_pr::run_character_pr_pass(
+                state, sink, prompt_id, resolved, &plan, &client, png,
+            )
+            .await
+            {
+                Ok(Some(composite)) => images = vec![composite],
+                Ok(None) => {}
+                Err(err) => {
+                    log::warn!(
+                        "NovelAI {prompt_id}: character PR isolation failed ({err}); delivering the base image"
+                    );
+                    char_pr::notify(sink, prompt_id, "failed", "run_failed");
+                }
+            }
+        }
+        if !face_pass {
+            client.release();
+        }
+        if state.prompt_queue.is_cancelled(prompt_id) {
+            state.prompt_queue.cleanup_alias(prompt_id);
+            return Ok(RunOutcome::Completed);
+        }
+    }
     // The free local pass. NovelAI has already been paid for these pixels, so
     // any failure here falls back to delivering the image untouched rather
     // than surfacing an error the user would read as "my Anlas bought nothing".

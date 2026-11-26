@@ -144,3 +144,15 @@ test("names from the assistant fill in by index and never touch the prompts", ()
   );
   assert.equal(applyCharacterNames("Sure! Here are the names.", boxes), null);
 });
+
+import { characterUpdateRequest } from "../../src/lib/utils/characterExtract.ts";
+
+test("characterUpdateRequest assumes a confirmed match when assumeMatch is enabled", () => {
+  const saved = { name: "Ani", prompt: "girl, blonde hair", negative: "" };
+  const autoReq = characterUpdateRequest(saved, "girl, blonde hair, ribbon", "", null, false);
+  assert.match(autoReq.system, /reply \{"found":false\}/);
+
+  const confirmedReq = characterUpdateRequest(saved, "unrelated summary", "", null, true);
+  assert.match(confirmedReq.system, /do NOT reply \{"found":false\}/);
+  assert.match(confirmedReq.system, /always treat it as matching/i);
+});

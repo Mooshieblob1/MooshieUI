@@ -24,8 +24,9 @@ import { gallery } from "../stores/gallery.svelte.js";
 import { generation } from "../stores/generation.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
 import { promptAssistant } from "../stores/promptAssistant.svelte.js";
-import { savedCharacters } from "../stores/savedCharacters.svelte.js";
+import { architectureLabel, architecturePromptStyle, NOVELAI_ARCHITECTURE, savedCharacters } from "../stores/savedCharacters.svelte.js";
 import { isLlmCancelled } from "./api.js";
+import { serializeCharacterChatProposal } from "./characterChat.js";
 import {
   buildPendingLearnedFacts,
   characterNotesBlock,
@@ -64,6 +65,9 @@ import { naiSavedCharacterDirective } from "./naiSavedCharacters.js";
  * to be told what to write.
  */
 export function canSend(flow: EnhanceFlow): boolean {
+  if (flow === "character") {
+    return Boolean(enhanceChat.targetCharacterId) && (enhanceChat.input.trim() !== "" || enhanceChat.references.length > 0);
+  }
   if (enhanceChat.input.trim() !== "" || enhanceChat.references.length > 0) return true;
   return flow !== "nai" && generation.naiEnhanceIncludeExisting && !!generation.positivePrompt?.trim();
 }
@@ -96,8 +100,13 @@ export async function redoLast(flow: EnhanceFlow, at: number, priority?: "saved"
 
 async function run(flow: EnhanceFlow, request: ChatRequest): Promise<void> {
   const tabId = enhanceChat.activeTabId;
-  const signal = enhanceChat.beginRequest(flow, request.text, request.references, tabId);
+  const characterId = flow === "character" ? enhanceChat.targetCharacterId : null;
+  const signal = enhanceChat.beginRequest(flow, request.text, request.references, tabId, characterId);
   try {
+    if (flow === "character") {
+      await runCharacter(request, characterId, signal, tabId);
+      return;
+    }
     if (flow !== "h3" && detectRecipeCreationIntent(request.text)) {
       await runCreateRecipe(flow, request, signal, tabId);
       return;
@@ -504,4 +513,68 @@ async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string |
     ...(matchedCharacterIds.length > 0 ? { matchedCharacterIds } : {}),
     ...learnedMeta(learned, sentIds, !!prompt && result.problems.length === 0),
   }, signal, tabId);
+}
+
+async function runCharacter(
+  request: ChatRequest,
+  characterId: string | null,
+  signal: AbortSignal,
+  tabId: string | null,
+): Promise<void> {
+  const card = characterId ? savedCharacters.characters.find((c) => c.id === characterId) : null;
+  if (!card) {
+    enhanceChat.fail("character", locale.t("characters.chat.missing_character"), request, tabId);
+    return;
+  }
+  const parent = card.parentId
+    ? savedCharacters.characters.find((c) => c.id === card.parentId) ?? null
+    : null;
+  const useMemory = promptAssistant.canUseMemory && enhanceChat.useMemory;
+  const historyTurns = enhanceChat.characterTurns(card.id);
+  const result = await promptAssistant.chatForCharacter(
+    {
+      name: card.name,
+      prompt: card.prompt,
+      negative: card.negative,
+      architecture: card.architecture,
+      architectureLabel: architectureLabel(card.architecture),
+      promptStyle: architecturePromptStyle(card.architecture),
+      variantOf: parent ? { name: parent.name, prompt: parent.prompt } : null,
+      ...(useMemory
+        ? {
+            memoryFiles: savedCharacters.memoryOf(card),
+            memoryBudgetChars: promptAssistant.memoryBudget.perCharacter,
+          }
+        : {}),
+    },
+    request.text,
+    historyTurns,
+    {
+      useMemory,
+      referenceLabels: request.references.map((r) => r.label),
+      images: request.references.map((r) => r.base64),
+      naiVariant:
+        card.architecture === NOVELAI_ARCHITECTURE
+          ? (naiV5Variant(generation.checkpoint) ?? "full")
+          : null,
+      signal,
+    },
+  );
+  if (signal.aborted) return;
+  enhanceChat.noteCharacterDropped(card.id, result.droppedTurns);
+  const serialized = result.proposal ? serializeCharacterChatProposal(result.proposal) : "";
+  const learned = result.proposal?.memory ?? [];
+  file(
+    "character",
+    request,
+    result.sessionUser,
+    result.reply,
+    serialized,
+    {
+      characterTargetId: card.id,
+      ...learnedMeta(learned, new Set([card.id]), !!serialized),
+    },
+    signal,
+    tabId,
+  );
 }

@@ -278,6 +278,20 @@ export async function novelaiSubscription(): Promise<NovelAiSubscription> {
   return ipcInvoke("novelai_subscription", {});
 }
 
+export interface NovelAiCutoutResult {
+  image: string;
+  already_transparent: boolean;
+  applied: boolean;
+}
+
+/** Cut out opaque background on a Precise Reference using local YOLO person segmentation. */
+export async function novelaiCutoutReference(
+  image: string,
+  detectorModel?: string,
+): Promise<NovelAiCutoutResult> {
+  return ipcInvoke("novelai_cutout_reference", { image, detectorModel });
+}
+
 /**
  * Store the NovelAI API key, or clear it with an empty string. Returns whether
  * a key is now configured.

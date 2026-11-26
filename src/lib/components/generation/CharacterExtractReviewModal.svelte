@@ -3,7 +3,8 @@
   import type { ExtractedCharacter } from "../../utils/characterExtract.js";
   import type { ExtractSourceKind } from "../../utils/characterImageExtract.js";
 
-  export type DuplicateAction = "update" | "variant" | "new" | "disregard";
+  export type DuplicateAction = "update" | "replace" | "variant" | "new" | "disregard";
+  export type NewCharacterAction = "new" | "update" | "replace" | "variant";
 
   export interface DuplicateMatch {
     item: ExtractedCharacter;
@@ -20,12 +21,16 @@
     useImage?: boolean;
   }
 
-  /** A character that matched nothing saved, with the name the user gave it. */
+  /** A character that matched nothing saved, with the name and optional existing target the user gave it. */
   export interface NewCharacterDecision {
     item: ExtractedCharacter;
     /** Starts as the name the prompt assistant suggested. */
     name: string;
     keep: boolean;
+    /** How to apply this extracted character when keeping it. */
+    action?: NewCharacterAction;
+    /** Existing saved character ID when `action` is `update`, `replace`, or `variant`. */
+    targetId?: string;
     /** Attach the inspected source image as this card's thumbnail/reference. */
     useImage?: boolean;
   }
@@ -35,20 +40,23 @@
   /**
    * Review for what Extract found, before anything is saved. Each new
    * character gets a name field prefilled with the prompt assistant's
-   * suggestion and can be left out. Each one that looks already saved gets a
-   * choice: merge the new details into the saved card, keep it as a variant
-   * card, save it as a new character (the match was wrong), or disregard it.
-   * What was found is editable everywhere, so a wrong tag is fixed here
-   * rather than after saving. Only Cancel or the close button leave: a stray
-   * click outside does not throw away an extraction that took a while.
+   * suggestion (or can target an existing card for Update / Replace / Variant).
+   * Each matched character gets a choice: merge the new details into a saved card,
+   * replace a saved card outright, keep it as a variant, save it as new, or
+   * disregard it. Only Cancel or the close button leave: a stray click outside
+   * does not throw away an extraction that took a while.
    */
+  import { untrack } from "svelte";
   import { portal } from "../../utils/portal.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import CharacterPickerModal from "./CharacterPickerModal.svelte";
 
   interface Props {
     matches: DuplicateMatch[];
     /** Characters that matched nothing saved. */
     fresh: ExtractedCharacter[];
+    /** Existing saved cards in this architecture for Update/Replace/Variant targets. */
+    existingCharacters?: SavedCharacter[];
     sourceKind?: ExtractSourceKind;
     sourcePreviewUrl?: string | null;
     canSwitchToInterrogator?: boolean;
@@ -64,6 +72,7 @@
   let {
     matches,
     fresh,
+    existingCharacters = [],
     sourceKind,
     sourcePreviewUrl = null,
     canSwitchToInterrogator = false,
@@ -78,21 +87,30 @@
 
   let rows = $state<DuplicateDecision[]>([]);
   let newRows = $state<NewCharacterDecision[]>([]);
+  let pickerTarget = $state<
+    { kind: "new"; row: NewCharacterDecision } | { kind: "dupe"; row: DuplicateDecision } | null
+  >(null);
+
+  function defaultVariantLabel(card: SavedCharacter, item: ExtractedCharacter): string {
+    return `${card.name} (${item.variant || locale.t("characters.dupes.variant_default")})`;
+  }
 
   // Re-initialize editable rows when the incoming match/fresh lists change
   // (e.g. initial open or switching from metadata to interrogator).
   $effect(() => {
     const mList = matches;
     const fList = fresh;
+    pickerTarget = null;
     const hasImg = Boolean(sourcePreviewUrl);
     const singleChar = mList.length + fList.length === 1;
+    const defaultTargetId = untrack(() => existingCharacters[0]?.id ?? "");
     rows = mList.map((m) => {
       const action: DuplicateAction = m.item.variant ? "variant" : "update";
       const defaultUse = hasImg && singleChar && (action !== "update" || !m.saved.thumbnail);
       return {
         ...m,
         action,
-        variantName: `${m.saved.name} (${m.item.variant || locale.t("characters.dupes.variant_default")})`,
+        variantName: defaultVariantLabel(m.saved, m.item),
         newName: m.item.name,
         useImage: defaultUse,
       };
@@ -101,23 +119,88 @@
       item,
       name: item.name,
       keep: true,
+      action: "new" as NewCharacterAction,
+      targetId: defaultTargetId,
       useImage: hasImg && singleChar,
     }));
   });
 
-  const choices: { action: DuplicateAction; key: string }[] = [
-    { action: "update", key: "characters.dupes.update" },
+  const choices: { action: DuplicateAction; key: string; tipKey?: string }[] = [
+    { action: "update", key: "characters.dupes.update", tipKey: "characters.dupes.update_tip" },
+    { action: "replace", key: "characters.dupes.replace", tipKey: "characters.dupes.replace_tip" },
     { action: "variant", key: "characters.dupes.variant" },
     { action: "new", key: "characters.dupes.new" },
     { action: "disregard", key: "characters.dupes.disregard" },
   ];
 
+  const newChoices: { action: NewCharacterAction; key: string; tipKey?: string }[] = [
+    { action: "new", key: "characters.dupes.new" },
+    {
+      action: "update",
+      key: "characters.review.action_update_existing",
+      tipKey: "characters.review.action_update_existing_tip",
+    },
+    { action: "replace", key: "characters.dupes.replace", tipKey: "characters.dupes.replace_tip" },
+    { action: "variant", key: "characters.dupes.variant" },
+  ];
+
+  function findExisting(id: string | undefined): SavedCharacter | null {
+    if (!id) return null;
+    return existingCharacters.find((c) => c.id === id) ?? null;
+  }
+
+  function setDuplicateTarget(row: DuplicateDecision, targetId: string) {
+    const next = findExisting(targetId);
+    if (!next) return;
+    const prevAuto = defaultVariantLabel(row.saved, row.item);
+    if (!row.variantName.trim() || row.variantName === prevAuto) {
+      row.variantName = defaultVariantLabel(next, row.item);
+    }
+    row.saved = next;
+  }
+
+  function setNewRowAction(row: NewCharacterDecision, nextAction: NewCharacterAction) {
+    const prevAction = row.action ?? "new";
+    const target = findExisting(row.targetId) ?? existingCharacters[0] ?? null;
+    if (target) row.targetId = target.id;
+    if (nextAction === "variant" && target) {
+      const prevDefault = prevAction === "variant" ? defaultVariantLabel(target, row.item) : row.item.name;
+      if (!row.name.trim() || row.name === prevDefault) {
+        row.name = defaultVariantLabel(target, row.item);
+      }
+    } else if (nextAction === "new" && target) {
+      const varDefault = defaultVariantLabel(target, row.item);
+      if (!row.name.trim() || row.name === varDefault) {
+        row.name = row.item.name;
+      }
+    }
+    row.action = nextAction;
+  }
+
+  function setNewRowTarget(row: NewCharacterDecision, targetId: string) {
+    const prevTarget = findExisting(row.targetId);
+    const nextTarget = findExisting(targetId);
+    if (row.action === "variant" && nextTarget) {
+      const prevAuto = prevTarget ? defaultVariantLabel(prevTarget, row.item) : row.item.name;
+      if (!row.name.trim() || row.name === prevAuto || row.name === row.item.name) {
+        row.name = defaultVariantLabel(nextTarget, row.item);
+      }
+    }
+    row.targetId = targetId;
+  }
+
   const canSave = $derived(
-    newRows.some((r) => r.keep && r.name.trim() && r.item.prompt.trim()) ||
+    newRows.some((r) => {
+      if (!r.keep || !r.item.prompt.trim()) return false;
+      const action = r.action ?? "new";
+      if (action === "update" || action === "replace") return Boolean(findExisting(r.targetId));
+      return Boolean(r.name.trim()) && (action === "new" || Boolean(findExisting(r.targetId)));
+    }) ||
       rows.some(
         (r) =>
           r.item.prompt.trim() &&
           (r.action === "update" ||
+            r.action === "replace" ||
             (r.action === "variant" && r.variantName.trim()) ||
             (r.action === "new" && r.newName.trim())),
       ),
@@ -222,8 +305,10 @@
           <p class="text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("characters.naming.new_heading")}</p>
         {/if}
         {#each newRows as row, i (i)}
+          {@const rowAction = row.action ?? "new"}
+          {@const targetCard = findExisting(row.targetId)}
           <div class="rounded-lg border border-neutral-800 bg-neutral-950/40 p-2.5 {row.keep ? '' : 'opacity-50'}">
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               <input
                 type="checkbox"
                 bind:checked={row.keep}
@@ -231,19 +316,78 @@
                 title={locale.t("characters.naming.keep", { name: row.name.trim() || row.item.name })}
                 class="h-3.5 w-3.5 shrink-0 accent-indigo-500"
               />
-              <input
-                type="text"
-                bind:value={row.name}
-                use:focusFirst={i === 0}
-                disabled={!row.keep}
-                maxlength={80}
-                aria-label={locale.t("characters.naming.name")}
-                placeholder={row.item.name}
-                class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 disabled:cursor-not-allowed"
-                onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
-              />
+              {#if rowAction === "new" || rowAction === "variant"}
+                <input
+                  type="text"
+                  bind:value={row.name}
+                  use:focusFirst={i === 0}
+                  disabled={!row.keep}
+                  maxlength={80}
+                  aria-label={locale.t(rowAction === "variant" ? "characters.dupes.variant_name" : "characters.naming.name")}
+                  placeholder={rowAction === "variant" ? locale.t("characters.dupes.variant_name") : row.item.name}
+                  class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 disabled:cursor-not-allowed"
+                  onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
+                />
+              {:else}
+                <span class="text-xs font-medium text-neutral-200 truncate">
+                  {row.item.name} → {targetCard?.name ?? ""}
+                </span>
+              {/if}
+              {#if rowAction !== "new" && existingCharacters.length > 0 && row.keep}
+                <button
+                  type="button"
+                  onclick={() => { pickerTarget = { kind: "new", row }; }}
+                  aria-label={locale.t("characters.review.target_character")}
+                  title={locale.t("characters.review.target_character")}
+                  class="flex max-w-[14rem] items-center gap-1.5 rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-100 hover:border-indigo-500/70 hover:bg-neutral-700/80"
+                >
+                  {#if targetCard?.thumbnail}
+                    <img src={targetCard.thumbnail} alt="" class="h-4 w-4 shrink-0 rounded-sm object-cover" />
+                  {/if}
+                  <span class="truncate">{targetCard?.name ?? locale.t("characters.review.target_character")}</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+              {/if}
             </div>
-            {@render editor(row.item, !row.keep)}
+            {#if row.keep && existingCharacters.length > 0}
+              <div class="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label={row.item.name}>
+                {#each newChoices as choice (choice.action)}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={rowAction === choice.action}
+                    title={choice.tipKey ? locale.t(choice.tipKey) : undefined}
+                    class="rounded-lg border px-2 py-0.5 text-[10px] {rowAction === choice.action
+                      ? 'border-indigo-400 bg-indigo-500/25 text-white'
+                      : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800'}"
+                    onclick={() => setNewRowAction(row, choice.action)}
+                  >
+                    {locale.t(choice.key)}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            {#if row.keep && (rowAction === "update" || rowAction === "replace") && targetCard}
+              <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                <div class="min-w-0">
+                  <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("characters.dupes.saved")}</p>
+                  <div class="max-h-32 overflow-y-auto rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5 font-mono text-[11px] text-neutral-300">
+                    <p class="whitespace-pre-wrap break-words">{targetCard.prompt}</p>
+                    {#if targetCard.negative}
+                      <p class="mt-1 whitespace-pre-wrap break-words text-neutral-500">
+                        {locale.t("characters.negative_prefix")} {targetCard.negative}
+                      </p>
+                    {/if}
+                  </div>
+                </div>
+                <div class="min-w-0">
+                  <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("characters.dupes.found")}</p>
+                  {@render editor(row.item, !row.keep)}
+                </div>
+              </div>
+            {:else}
+              {@render editor(row.item, !row.keep)}
+            {/if}
             {#if sourcePreviewUrl && row.keep}
               <label class="mt-2 inline-flex items-center gap-1.5 text-[11px] text-neutral-300 select-none cursor-pointer">
                 <input
@@ -263,9 +407,26 @@
       {/if}
       {#each rows as row, i (i)}
         <div class="rounded-lg border border-neutral-800 bg-neutral-950/40 p-2.5">
-          <p class="text-xs font-medium text-neutral-200">
-            {locale.t("characters.dupes.looks_like", { name: row.item.name, saved: row.saved.name })}
-          </p>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="text-xs font-medium text-neutral-200">
+              {locale.t("characters.dupes.looks_like", { name: row.item.name, saved: row.saved.name })}
+            </p>
+            {#if existingCharacters.length > 1 && (row.action === "update" || row.action === "replace" || row.action === "variant")}
+              <button
+                type="button"
+                onclick={() => { pickerTarget = { kind: "dupe", row }; }}
+                aria-label={locale.t("characters.review.target_character")}
+                title={locale.t("characters.review.target_character")}
+                class="flex max-w-[14rem] items-center gap-1.5 rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-100 hover:border-indigo-500/70 hover:bg-neutral-700/80"
+              >
+                {#if row.saved.thumbnail}
+                  <img src={row.saved.thumbnail} alt="" class="h-4 w-4 shrink-0 rounded-sm object-cover" />
+                {/if}
+                <span class="truncate">{row.saved.name}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            {/if}
+          </div>
           <div class="mt-2 grid gap-2 sm:grid-cols-2">
             <div class="min-w-0">
               <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("characters.dupes.saved")}</p>
@@ -292,7 +453,7 @@
                 class="rounded-lg border px-2 py-0.5 text-[10px] {row.action === choice.action
                   ? 'border-indigo-400 bg-indigo-500/25 text-white'
                   : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800'}"
-                title={choice.action === "update" ? locale.t("characters.dupes.update_tip") : undefined}
+                title={choice.tipKey ? locale.t(choice.tipKey) : undefined}
                 onclick={() => { row.action = choice.action; }}
               >
                 {locale.t(choice.key)}
@@ -351,3 +512,16 @@
     </div>
   </div>
 </div>
+
+{#if pickerTarget}
+  <CharacterPickerModal
+    characters={existingCharacters}
+    selectedId={pickerTarget.kind === "new" ? (pickerTarget.row.targetId ?? null) : pickerTarget.row.saved.id}
+    onselect={(card) => {
+      if (pickerTarget?.kind === "new") setNewRowTarget(pickerTarget.row, card.id);
+      else if (pickerTarget?.kind === "dupe") setDuplicateTarget(pickerTarget.row, card.id);
+      pickerTarget = null;
+    }}
+    onclose={() => { pickerTarget = null; }}
+  />
+{/if}

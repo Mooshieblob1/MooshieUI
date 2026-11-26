@@ -9,6 +9,7 @@
    */
   import { untrack } from "svelte";
   import { portal } from "../../utils/portal.js";
+  import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
   import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -177,6 +178,16 @@
   function close() {
     if (dirty && !confirm(locale.t("characters.editor.discard_confirm", { name: initial.name }))) return;
     onclose();
+  }
+
+  function openChatEdit() {
+    if (!promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    if (dirty && !confirm(locale.t("characters.editor.discard_confirm", { name: initial.name }))) return;
+    onclose();
+    enhanceChat.openCharacterChat(character.id);
   }
 
   function save() {
@@ -585,6 +596,14 @@
         {architectureLabel(character.architecture)}
       </span>
       <span class="flex-1"></span>
+      <button
+        type="button"
+        class="rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-medium text-indigo-200 hover:bg-indigo-500/25"
+        title={locale.t("characters.chat.open_tip")}
+        onclick={openChatEdit}
+      >
+        {locale.t("characters.chat.open")}
+      </button>
       <button
         type="button"
         class="text-neutral-500 hover:text-neutral-200 text-lg leading-none"

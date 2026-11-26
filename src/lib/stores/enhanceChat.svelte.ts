@@ -4,6 +4,8 @@ import { enhanceRecipes } from "./enhanceRecipes.svelte.js";
 import { gallery } from "./gallery.svelte.js";
 import { locale } from "./locale.svelte.js";
 import { savedCharacters, type SavedCharacter } from "./savedCharacters.svelte.js";
+import { userScopedKey } from "../utils/ipc.js";
+import { parseCharacterChatResponse } from "../utils/characterChat.js";
 import { recipePromptFingerprint } from "../utils/enhanceRecipes.js";
 import { stripPromptComments } from "../utils/promptComments.js";
 import { joinPromptBoxes } from "../utils/promptSanitize.js";
@@ -18,7 +20,7 @@ import { NOVELAI_MAX_DIRECTOR_REFERENCES, naiV5Variant, novelAiMaxCharacters } f
 import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
 import { parseNaiResponse } from "../utils/naiParse.js";
 import type { NaiParsedResponse } from "../utils/naiParse.js";
-import type { EnhancerFlow } from "../utils/enhancerSession.js";
+import type { EnhancerFlow, SessionTurn } from "../utils/enhancerSession.js";
 import { splitReply } from "../utils/enhanceChat.js";
 import { resolveNaiLanguage } from "../utils/naiLanguage.js";
 import {
@@ -61,7 +63,44 @@ import type { PendingLearnedFact } from "../utils/characterMemory.js";
 /** Which part of the window is showing: the conversation, a V5 answer's per-field review, learned memory review, or concept recipes. */
 export type EnhanceChatView = "chat" | "review" | "memory" | "recipes";
 
-export type EnhanceFlow = "nai" | "general" | "h3";
+export type EnhanceFlow = "nai" | "general" | "h3" | "character";
+
+const CHARACTER_CHAT_KEY = "mooshieui.characterChat.v1";
+const MAX_CHARACTER_CHAT_TURNS = 20;
+const MAX_CHARACTER_CHATS = 25;
+
+function loadCharacterChatSessions(): Record<string, SessionTurn[]> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(userScopedKey(CHARACTER_CHAT_KEY));
+    if (!raw) return {};
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+    const out: Record<string, SessionTurn[]> = {};
+    for (const [id, list] of Object.entries(data)) {
+      if (!id || !Array.isArray(list)) continue;
+      const valid = list
+        .filter(
+          (t): t is SessionTurn =>
+            !!t && typeof t.user === "string" && typeof t.assistant === "string" && typeof t.at === "number",
+        )
+        .slice(-MAX_CHARACTER_CHAT_TURNS);
+      if (valid.length > 0) out[id] = valid;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveCharacterChatSessions(sessions: Record<string, SessionTurn[]>): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(userScopedKey(CHARACTER_CHAT_KEY), JSON.stringify(sessions));
+  } catch (e) {
+    console.warn("[enhanceChat] could not save character chat sessions", e);
+  }
+}
 
 /** One reviewable field: what is there now, what the rewrite proposes. */
 export interface NaiEnhanceRow {
@@ -232,7 +271,8 @@ let referenceSeq = 0;
 
 /** The session each Enhance flow keeps its conversation in. */
 export function sessionFlowOf(flow: EnhanceFlow): EnhancerFlow {
-  return flow === "general" ? "enhance" : flow;
+  if (flow === "nai" || flow === "h3") return flow;
+  return "enhance";
 }
 
 /** The Enhance flow for what is being generated right now. */
@@ -284,6 +324,10 @@ export interface ChatAnswerMeta {
   matchedCharacterIds?: string[];
   /** Subset of `matchedCharacterIds` unchecked by the user for PR auto-attach on this answer. */
   disabledCharacterRefIds?: string[];
+  /** Saved character ID targeted by a direct character-chat answer. */
+  characterTargetId?: string;
+  /** How a direct character-chat proposal was applied to the card. */
+  characterApplied?: "updated" | "variant";
   applied?: boolean;
 }
 
@@ -321,7 +365,13 @@ class EnhanceChatStore {
   /** The flow whose answer is on its way, or null when nothing is running. */
   busyFlow = $state<EnhanceFlow | null>(null);
   /** The message on its way, shown in the conversation until its answer lands. */
-  sending = $state<{ flow: EnhanceFlow; tabId: string | null; text: string; references: NaiEnhanceReference[] } | null>(null);
+  sending = $state<{ flow: EnhanceFlow; tabId: string | null; characterId?: string | null; text: string; references: NaiEnhanceReference[] } | null>(null);
+  /** Active saved character ID when `flow === "character"`. */
+  targetCharacterId = $state<string | null>(null);
+  /** Per-character direct edit conversations (capped and stored locally). */
+  characterSessions = $state<Record<string, SessionTurn[]>>(loadCharacterChatSessions());
+  /** How many oldest turns were omitted for a given character's last request. */
+  characterDropped = $state<Record<string, number>>({});
   /** The newest failure, shown at the end of its flow's conversation. */
   error = $state<{ flow: EnhanceFlow; text: string } | null>(null);
   /** Per-answer extras, by the answer's session timestamp. */
@@ -409,7 +459,7 @@ class EnhanceChatStore {
       this.canonPriority = "saved";
       this.useMemory = true;
       this.clearUndo();
-      if (this.open) this.flow = currentEnhanceFlow();
+      if (this.open && this.flow !== "character") this.flow = currentEnhanceFlow();
     }
     this.activeTabId = activeId;
     this.parked.delete(activeId);
@@ -494,6 +544,51 @@ class EnhanceChatStore {
     this.editingRecipeId = null;
   }
 
+  /** Open the chat window directly on a saved character's edit conversation. */
+  openCharacterChat(characterId?: string): void {
+    const resolvedId =
+      (characterId && savedCharacters.characters.find((c) => c.id === characterId)?.id) ||
+      (this.targetCharacterId &&
+        savedCharacters.characters.find((c) => c.id === this.targetCharacterId)?.id) ||
+      savedCharacters.currentCharacters[0]?.id ||
+      savedCharacters.characters[0]?.id ||
+      null;
+    if (!this.open) this.useMemory = true;
+    this.targetCharacterId = resolvedId;
+    this.flow = "character";
+    this.view = "chat";
+    this.pending = null;
+    this.memoryReview = null;
+    this.recipeDraftSeed = null;
+    this.editingRecipeId = null;
+    if (this.error?.flow === "character") this.error = null;
+    this.open = true;
+  }
+
+  /** Switch the character targeted by direct character chat. */
+  selectTargetCharacter(characterId: string): void {
+    if (this.targetCharacterId === characterId) return;
+    this.targetCharacterId = characterId;
+    if (this.error?.flow === "character") this.error = null;
+  }
+
+  characterTurns(characterId: string | null = this.targetCharacterId): SessionTurn[] {
+    return characterId ? (this.characterSessions[characterId] ?? []) : [];
+  }
+
+  droppedCount(flow: EnhanceFlow): number {
+    if (flow === "character") {
+      return this.targetCharacterId ? (this.characterDropped[this.targetCharacterId] ?? 0) : 0;
+    }
+    return enhancerSessions.dropped[sessionFlowOf(flow)];
+  }
+
+  noteCharacterDropped(characterId: string, count: number): void {
+    if (this.characterDropped[characterId] !== count) {
+      this.characterDropped = { ...this.characterDropped, [characterId]: count };
+    }
+  }
+
   /**
    * Mark a request as started and hand back the signal its calls should carry.
    * Any request still running is cancelled first: only one answer can land.
@@ -503,11 +598,12 @@ class EnhanceChatStore {
     text: string,
     references: NaiEnhanceReference[],
     tabId: string | null = this.activeTabId,
+    characterId: string | null = flow === "character" ? this.targetCharacterId : null,
   ): AbortSignal {
     this.cancelRequest();
     this.request = new AbortController();
     this.busyFlow = flow;
-    this.sending = { flow, tabId, text, references };
+    this.sending = { flow, tabId, characterId, text, references };
     if (tabId && this.activeTabId && tabId !== this.activeTabId) {
       const entry = this.parked.get(tabId);
       if (entry?.error?.flow === flow) this.parked.set(tabId, { ...entry, error: null });
@@ -562,6 +658,30 @@ class EnhanceChatStore {
     meta: ChatAnswerMeta,
     tabId: string | null = this.activeTabId,
   ): number | null {
+    if (flow === "character") {
+      if (!user.trim() || !assistant.trim()) return null;
+      const cid = meta.characterTargetId ?? this.targetCharacterId;
+      if (!cid) return null;
+      const existing = this.characterSessions[cid] ?? [];
+      const last = existing[existing.length - 1];
+      const at = Math.max(Date.now(), (last?.at ?? 0) + 1);
+      const updated = [...existing, { user, assistant, at }].slice(-MAX_CHARACTER_CHAT_TURNS);
+      const next: Record<string, SessionTurn[]> = {};
+      for (const [key, turns] of Object.entries(this.characterSessions)) {
+        if (key !== cid) next[key] = turns;
+      }
+      next[cid] = updated;
+      const keys = Object.keys(next);
+      if (keys.length > MAX_CHARACTER_CHATS) {
+        for (const oldKey of keys.slice(0, keys.length - MAX_CHARACTER_CHATS)) {
+          delete next[oldKey];
+        }
+      }
+      this.characterSessions = next;
+      saveCharacterChatSessions(next);
+      this.meta = { ...this.meta, [at]: meta };
+      return at;
+    }
     const isParked = !!tabId && !!this.activeTabId && tabId !== this.activeTabId;
     if (isParked && !this.openTabIds.has(tabId)) return null;
     const at = enhancerSessions.record(sessionFlowOf(flow), user, assistant, tabId ?? undefined);
@@ -607,7 +727,11 @@ class EnhanceChatStore {
 
   /** A flow's conversation, oldest first. */
   exchanges(flow: EnhanceFlow): ChatExchange[] {
-    return enhancerSessions.turns(sessionFlowOf(flow)).map((t) => {
+    const turns =
+      flow === "character"
+        ? this.characterTurns(this.targetCharacterId)
+        : enhancerSessions.turns(sessionFlowOf(flow));
+    return turns.map((t) => {
       const { reply, prompt } = splitReply(t.assistant);
       return { at: t.at, user: t.user, reply, prompt, meta: this.meta[t.at] };
     });
@@ -615,6 +739,22 @@ class EnhanceChatStore {
 
   /** Take back a flow's newest exchange, so it can be asked again. */
   takeBackLast(flow: EnhanceFlow): void {
+    if (flow === "character") {
+      const cid = this.targetCharacterId;
+      if (!cid) return;
+      const turns = this.characterSessions[cid] ?? [];
+      const last = turns[turns.length - 1];
+      if (!last) return;
+      const restTurns = turns.slice(0, -1);
+      const next = { ...this.characterSessions };
+      if (restTurns.length > 0) next[cid] = restTurns;
+      else delete next[cid];
+      this.characterSessions = next;
+      saveCharacterChatSessions(next);
+      const { [last.at]: _, ...rest } = this.meta;
+      this.meta = rest;
+      return;
+    }
     const turns = enhancerSessions.turns(sessionFlowOf(flow));
     const last = turns[turns.length - 1];
     if (!last) return;
@@ -625,6 +765,26 @@ class EnhanceChatStore {
 
   /** Start the flow's conversation over, stopping an answer still on its way. */
   newChat(flow: EnhanceFlow): void {
+    if (flow === "character") {
+      if (
+        this.busyFlow === "character" &&
+        (!this.sending?.characterId || this.sending.characterId === this.targetCharacterId)
+      ) {
+        this.cancelRequest();
+      }
+      const cid = this.targetCharacterId;
+      if (cid) {
+        const gone = new Set((this.characterSessions[cid] ?? []).map((t) => t.at));
+        const next = { ...this.characterSessions };
+        delete next[cid];
+        this.characterSessions = next;
+        saveCharacterChatSessions(next);
+        this.characterDropped = { ...this.characterDropped, [cid]: 0 };
+        this.meta = Object.fromEntries(Object.entries(this.meta).filter(([at]) => !gone.has(Number(at))));
+      }
+      if (this.error?.flow === "character") this.error = null;
+      return;
+    }
     if (this.busyFlow === flow && (!this.sending?.tabId || this.sending.tabId === this.activeTabId)) {
       this.cancelRequest();
     }
@@ -633,6 +793,73 @@ class EnhanceChatStore {
     this.meta = Object.fromEntries(Object.entries(this.meta).filter(([at]) => !gone.has(Number(at))));
     if (this.error?.flow === flow) this.error = null;
     if (this.view === "review" || this.view === "memory") this.backToChat();
+  }
+
+  /** Apply a direct character-chat proposal onto the live saved character card (with Undo). */
+  applyCharacterUpdate(at: number, targetId?: string): boolean {
+    const cid = targetId ?? this.meta[at]?.characterTargetId ?? this.targetCharacterId;
+    if (!cid) return false;
+    const card = savedCharacters.characters.find((c) => c.id === cid);
+    const turn = this.characterTurns(cid).find((t) => t.at === at);
+    if (!card || !turn) return false;
+    const { proposal } = parseCharacterChatResponse(turn.assistant, card.name, card.negative);
+    if (!proposal?.prompt.trim()) return false;
+    const prev = { name: card.name, prompt: card.prompt, negative: card.negative };
+    const nextName = proposal.name.trim();
+    savedCharacters.update(card.id, {
+      ...(nextName ? { name: nextName } : {}),
+      prompt: proposal.prompt,
+      negative: proposal.negative,
+    });
+    this.markApplied(at);
+    this.meta = {
+      ...this.meta,
+      [at]: { ...(this.meta[at] ?? {}), applied: true, characterApplied: "updated" },
+    };
+    gallery.showToast(
+      locale.t("characters.chat.toast_updated", { name: nextName || card.name }),
+      "success",
+      {
+        actionLabel: locale.t("characters.undo"),
+        onAction: () => savedCharacters.update(card.id, prev),
+        durationMs: 8000,
+      },
+    );
+    return true;
+  }
+
+  /** Save a direct character-chat proposal as a variant under the target card. */
+  applyCharacterAsVariant(at: number, variantName: string, targetId?: string): boolean {
+    const cid = targetId ?? this.meta[at]?.characterTargetId ?? this.targetCharacterId;
+    if (!cid) return false;
+    const card = savedCharacters.characters.find((c) => c.id === cid);
+    const turn = this.characterTurns(cid).find((t) => t.at === at);
+    if (!card || !turn) return false;
+    const { proposal } = parseCharacterChatResponse(turn.assistant, card.name, card.negative);
+    if (!proposal?.prompt.trim()) return false;
+    const parentId = card.parentId ?? card.id;
+    const parentCard = savedCharacters.characters.find((c) => c.id === parentId) ?? card;
+    const cleanName =
+      variantName.trim() ||
+      `${parentCard.name} (${proposal.variant || locale.t("characters.dupes.variant_default")})`;
+    savedCharacters.saveExtracted(
+      [
+        {
+          name: cleanName,
+          prompt: proposal.prompt,
+          negative: proposal.negative,
+          parentId,
+        },
+      ],
+      card.architecture,
+    );
+    this.markApplied(at);
+    this.meta = {
+      ...this.meta,
+      [at]: { ...(this.meta[at] ?? {}), applied: true, characterApplied: "variant" },
+    };
+    gallery.showToast(locale.t("characters.chat.toast_variant_saved", { name: cleanName }), "success");
+    return true;
   }
 
   /** Save or dismiss inline learned-memory suggestions right from a chat answer card. */

@@ -11,15 +11,25 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { models } from "../../stores/models.svelte.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
   import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
   import {
+    downloadModel,
+    installPipPackage,
+    novelaiCutoutReference,
     readClipboardImageSafe,
     readImageMetadata,
     readImageMetadataBytes,
   } from "../../utils/api.js";
   import { matchImageToSavedCharacter } from "../../utils/characterPreciseRef.js";
-  import { detectSingleCharacterFromMetadata } from "../../utils/characterPreciseRefLogic.js";
+  import {
+    detectSingleCharacterFromMetadata,
+    normalizeMultiCharPrStrategy,
+    summarizeMultiCharPrPlan,
+  } from "../../utils/characterPreciseRefLogic.js";
   import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
+  import { isBrowserMode } from "../../utils/ipc.js";
   import {
     NAI_REF_OUTFIT,
     NAI_REF_STYLE,
@@ -34,15 +44,39 @@
   } from "../../utils/novelaiModels.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { portal } from "../../utils/portal.js";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
   import { VIBE_ENCODE_COST } from "../../utils/novelaiCost.js";
   import { CHECKERBOARD_CLASS } from "../../utils/transparentBackdrop.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import NovelAiReferenceSheetPreview from "./NovelAiReferenceSheetPreview.svelte";
   import type { NovelAiVibe, OutputImage } from "../../types/index.js";
+
+  const PERSON_DETECTORS = [
+    {
+      filename: "person_yolov8m-seg.pt",
+      labelKey: "generation.novelai.reference.isolate_detector_m",
+      url: "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/person_yolov8m-seg.pt",
+      sha256: "c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e",
+    },
+    {
+      filename: "person_yolov8s-seg.pt",
+      labelKey: "generation.novelai.reference.isolate_detector_s",
+      url: "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/person_yolov8s-seg.pt",
+      sha256: "53c54aec2239355faffc6c5b70d0f3d05042f386f956cbec39cec46ad456f050",
+    },
+    {
+      filename: "person_yolov8n-seg.pt",
+      labelKey: "generation.novelai.reference.isolate_detector_n",
+      url: "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/person_yolov8n-seg.pt",
+      sha256: "38fc8aaae97cb6e70be4ec44770005b26ed473471362afcda62a0037d7ccf432",
+    },
+  ] as const;
 
   const uid = $props.id();
   let busy = $state(false);
+  let downloadingDetector = $state<string | null>(null);
   let dragOverTarget = $state<"vibe" | "reference" | null>(null);
   let pasteTarget = $state<"vibe" | "reference" | null>(null);
   let pickerTarget = $state<"vibe" | "reference" | null>(null);
@@ -88,6 +122,143 @@
       ? Math.max(1, NOVELAI_MAX_DIRECTOR_REFERENCES - references.length)
       : Math.max(1, NOVELAI_MAX_VIBES - vibes.length),
   );
+  const multiCharCfg = $derived(generation.novelaiSettings.multi_char_pr);
+  const multiCharStrategy = $derived(normalizeMultiCharPrStrategy(multiCharCfg.strategy));
+  const multiCharUsesPasses = $derived(
+    multiCharStrategy === "passes" || multiCharStrategy === "hybrid",
+  );
+  const multiCharUsesSheet = $derived(
+    multiCharStrategy === "sheet" || multiCharStrategy === "hybrid",
+  );
+  const multiCharNeedsDetector = $derived(
+    (multiCharUsesPasses && multiCharCfg.locator !== "coords") ||
+      (multiCharUsesSheet && multiCharCfg.sheet_cutout),
+  );
+  const showMultiCharIsolation = $derived(
+    novelai.experimentalMultiCharPr &&
+      generation.supportsNovelAiPreciseReference &&
+      references.length > 0,
+  );
+  const naiCharacters = $derived(generation.novelaiSettings.characters);
+  const multiCharPlan = $derived(
+    summarizeMultiCharPrPlan(
+      novelAiModel,
+      references,
+      naiCharacters,
+      savedCharacters.characters,
+      generation.isNovelAiInfill,
+      showMultiCharIsolation && multiCharCfg.enabled,
+      multiCharStrategy,
+    ),
+  );
+  const isolationTransparencyConflict = $derived(
+    multiCharCfg.enabled &&
+      generation.novelaiSettings.transparent_background &&
+      generation.supportsNovelAiTransparency,
+  );
+  let cuttingOutRefs = $state(false);
+  const personDetectorOptions = $derived.by(() => {
+    const installed = models.ultralyticsModels;
+    const opts: { value: string; label: string }[] = PERSON_DETECTORS.map((rec) => ({
+      value: rec.filename,
+      label: installed.includes(rec.filename)
+        ? locale.t(rec.labelKey)
+        : `⬇ ${locale.t(rec.labelKey)}`,
+    }));
+    for (const m of installed) {
+      if (!PERSON_DETECTORS.some((r) => r.filename === m)) {
+        opts.push({ value: m, label: m });
+      }
+    }
+    return opts;
+  });
+
+  async function selectPersonDetector(filename: string) {
+    if (!filename) return;
+    if (!(await ensureDetectorInstalled(filename))) return;
+    generation.updateNovelAiMultiCharPr({ detector_model: filename });
+  }
+
+  async function ensureDetectorInstalled(detector: string): Promise<boolean> {
+    const rec = PERSON_DETECTORS.find((r) => r.filename === detector);
+    if (rec && !models.ultralyticsModels.includes(detector)) {
+      downloadingDetector = detector;
+      try {
+        await downloadModel(rec.url, "ultralytics", rec.filename, undefined, rec.sha256);
+        if (!isBrowserMode) {
+          await installPipPackage("ultralytics==8.4.34");
+        }
+        await models.refresh();
+      } catch (err) {
+        console.error("Failed to download person detector:", err);
+        gallery.showToast(
+          locale.t("generation.novelai.reference.isolate_detector_unavailable", { name: detector }),
+          "error",
+        );
+        return false;
+      } finally {
+        downloadingDetector = null;
+      }
+    }
+    return true;
+  }
+
+  async function cutoutTargetedReferences() {
+    if (cuttingOutRefs) return;
+    const targets = references.filter(
+      (r, idx) =>
+        r.enabled !== false &&
+        r.image.length > 0 &&
+        multiCharPlan.resolvedTargets[idx] !== null,
+    );
+    if (targets.length === 0) return;
+
+    cuttingOutRefs = true;
+    try {
+      const detector = multiCharCfg.detector_model || "person_yolov8m-seg.pt";
+      if (!(await ensureDetectorInstalled(detector))) return;
+
+      let appliedCount = 0;
+      const seen = new Set<string>();
+      for (const ref of targets) {
+        if (seen.has(ref.image)) continue;
+        seen.add(ref.image);
+        const res = await novelaiCutoutReference(ref.image, detector);
+        if (res.applied && res.image) {
+          novelai.setSheetCutout(ref.image, res.image);
+          appliedCount += 1;
+        }
+      }
+      if (appliedCount > 0 && !multiCharCfg.sheet_cutout) {
+        generation.updateNovelAiMultiCharPr({ sheet_cutout: true });
+      }
+      gallery.showToast(
+        appliedCount > 0
+          ? locale.t("generation.novelai.reference.isolate_sheet_cutout_done", {
+              count: String(appliedCount),
+            })
+          : locale.t("generation.novelai.reference.isolate_sheet_cutout_none"),
+        appliedCount > 0 ? "success" : "info",
+      );
+    } catch (err) {
+      console.error("Reference background cutout failed:", err);
+      gallery.showToast(
+        locale.t("generation.novelai.reference.isolate_sheet_cutout_failed"),
+        "warning",
+      );
+    } finally {
+      cuttingOutRefs = false;
+    }
+  }
+
+  function resetSheetLayout() {
+    const next = references.map((r, idx) =>
+      multiCharPlan.resolvedTargets[idx] !== null
+        ? { ...r, sheet_x: null, sheet_y: null, sheet_scale: null }
+        : r,
+    );
+    generation.updateNovelAiSettings({ director_references: next });
+  }
 
   async function addBlobs(
     blobs: readonly Blob[],
@@ -485,32 +656,78 @@
                   {locale.t("generation.novelai.reference.remove")}
                 </button>
               </div>
-              {#if baseDescription !== NAI_REF_STYLE && (savedCharacters.currentCharacters.length > 0 || sourceChar)}
-                <div class="flex items-center gap-1.5">
-                  <select
-                    class="max-w-full min-w-0 truncate rounded border px-1.5 py-0.5 text-[10px] focus:outline-none {sourceChar
-                      ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200 focus:border-indigo-400'
-                      : 'border-neutral-800 bg-neutral-950 text-neutral-400 focus:border-indigo-600'}"
-                    value={reference.source_character_id ?? ""}
-                    title={locale.t("generation.novelai.reference.link_character_tip")}
-                    aria-label={locale.t("generation.novelai.reference.link_character_tip")}
-                    onchange={(e) => {
-                      const val = e.currentTarget.value;
-                      generation.updateNovelAiDirectorReference(index, {
-                        source_character_id: val || undefined,
-                        source_ref_id: undefined,
-                        ...(val ? {} : { auto_attached: false }),
-                      });
-                    }}
-                  >
-                    <option value="">{locale.t("generation.novelai.reference.character_unassigned")}</option>
-                    {#each savedCharacters.currentCharacters as char (char.id)}
-                      <option value={char.id}>{char.name}</option>
-                    {/each}
-                    {#if sourceChar && !savedCharacters.currentCharacters.some((c) => c.id === sourceChar.id)}
-                      <option value={sourceChar.id}>{sourceChar.name}</option>
-                    {/if}
-                  </select>
+              {#if (baseDescription !== NAI_REF_STYLE && (savedCharacters.currentCharacters.length > 0 || sourceChar)) || (showMultiCharIsolation && multiCharCfg.enabled && baseDescription !== NAI_REF_STYLE)}
+                <div class="flex flex-wrap items-center gap-1.5">
+                  {#if baseDescription !== NAI_REF_STYLE && (savedCharacters.currentCharacters.length > 0 || sourceChar)}
+                    <select
+                      class="max-w-full min-w-0 truncate rounded border px-1.5 py-0.5 text-[10px] focus:outline-none {sourceChar
+                        ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200 focus:border-indigo-400'
+                        : 'border-neutral-800 bg-neutral-950 text-neutral-400 focus:border-indigo-600'}"
+                      value={reference.source_character_id ?? ""}
+                      title={locale.t("generation.novelai.reference.link_character_tip")}
+                      aria-label={locale.t("generation.novelai.reference.link_character_tip")}
+                      onchange={(e) => {
+                        const val = e.currentTarget.value;
+                        generation.updateNovelAiDirectorReference(index, {
+                          source_character_id: val || undefined,
+                          source_ref_id: undefined,
+                          ...(val ? {} : { auto_attached: false }),
+                        });
+                      }}
+                    >
+                      <option value="">{locale.t("generation.novelai.reference.character_unassigned")}</option>
+                      {#each savedCharacters.currentCharacters as char (char.id)}
+                        <option value={char.id}>{char.name}</option>
+                      {/each}
+                      {#if sourceChar && !savedCharacters.currentCharacters.some((c) => c.id === sourceChar.id)}
+                        <option value={sourceChar.id}>{sourceChar.name}</option>
+                      {/if}
+                    </select>
+                  {/if}
+                  {#if showMultiCharIsolation && multiCharCfg.enabled && baseDescription !== NAI_REF_STYLE}
+                    {@const rawTarget = reference.target_character_index}
+                    {@const resolvedTarget = multiCharPlan.resolvedTargets[index]}
+                    {@const targetSelectVal =
+                      rawTarget === -1
+                        ? "-1"
+                        : typeof rawTarget === "number" && rawTarget >= 0
+                          ? String(rawTarget)
+                          : ""}
+                    <select
+                      class="max-w-full min-w-0 truncate rounded border px-1.5 py-0.5 text-[10px] focus:outline-none {resolvedTarget !== null
+                        ? 'border-amber-500/40 bg-amber-500/15 text-amber-200 focus:border-amber-400'
+                        : 'border-neutral-800 bg-neutral-950 text-neutral-400 focus:border-indigo-600'}"
+                      value={targetSelectVal}
+                      title={locale.t("generation.novelai.reference.isolate_target_tip")}
+                      aria-label={locale.t("generation.novelai.reference.isolate_target_tip")}
+                      onchange={(e) => {
+                        const val = e.currentTarget.value;
+                        generation.updateNovelAiDirectorReference(index, {
+                          target_character_index: val === "" ? null : Number(val),
+                        });
+                      }}
+                    >
+                      <option value="">
+                        {resolvedTarget !== null
+                          ? locale.t("generation.novelai.reference.isolate_target_auto_resolved", {
+                              slot: locale.t("generation.novelai.reference.isolate_target_character", {
+                                index: String(resolvedTarget + 1),
+                              }),
+                            })
+                          : locale.t("generation.novelai.reference.isolate_target_auto_global")}
+                      </option>
+                      <option value="-1">{locale.t("generation.novelai.reference.isolate_target_global")}</option>
+                      {#each naiCharacters as ch, charIdx (charIdx)}
+                        {#if ch.enabled || rawTarget === charIdx}
+                          <option value={String(charIdx)}>
+                            {locale.t("generation.novelai.reference.isolate_target_character", {
+                              index: String(charIdx + 1),
+                            })}
+                          </option>
+                        {/if}
+                      {/each}
+                    </select>
+                  {/if}
                 </div>
               {/if}
               {#if supportsOutfits && novelAiReferenceSupportsSameOutfit(reference.description)}
@@ -597,6 +814,220 @@
             </div>
           </div>
         {/each}
+
+        {#if showMultiCharIsolation}
+          <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 p-2.5 space-y-2.5">
+            <label class="flex items-center gap-2 text-xs text-neutral-300">
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                checked={multiCharCfg.enabled}
+                onchange={(e) =>
+                  generation.updateNovelAiMultiCharPr({ enabled: e.currentTarget.checked })}
+              />
+              <span>{locale.t("generation.novelai.reference.isolate_title")}</span>
+              <InfoTip text={locale.t("generation.novelai.reference.isolate_tip")} />
+            </label>
+
+            {#if multiCharCfg.enabled}
+              {#if multiCharPlan.enabledCharacterCount < 2 || multiCharPlan.groups.length === 0}
+                <p class="text-[11px] text-amber-400/90">
+                  {locale.t("generation.novelai.reference.isolate_needs_two_characters")}
+                </p>
+              {/if}
+              {#if multiCharUsesPasses && multiCharCfg.locator === "coords" && !generation.novelaiSettings.use_coords}
+                <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-400/90">
+                  <span>{locale.t("generation.novelai.reference.isolate_needs_coords")}</span>
+                  <button
+                    type="button"
+                    class="px-2 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200"
+                    onclick={() => {
+                      generation.updateNovelAiSettings({ use_coords: true });
+                      novelai.characterPositionOpen = true;
+                    }}
+                  >
+                    {locale.t("generation.novelai.reference.isolate_enable_coords")}
+                  </button>
+                </div>
+              {/if}
+              {#if multiCharUsesPasses && generation.batchSize > 1}
+                <p class="text-[11px] text-amber-400/90">
+                  {locale.t("generation.novelai.reference.isolate_batch_unsupported")}
+                </p>
+              {/if}
+              {#if multiCharUsesPasses && isolationTransparencyConflict}
+                <p class="text-[11px] text-amber-400/90">
+                  {locale.t("generation.novelai.reference.isolate_transparency_unsupported")}
+                </p>
+              {/if}
+
+              <div class="grid grid-cols-1 gap-2">
+                <div>
+                  <span class="flex items-center gap-1.5 text-[11px] text-neutral-400 mb-1">
+                    {locale.t("generation.novelai.reference.isolate_strategy")}
+                    <InfoTip text={locale.t("generation.novelai.reference.isolate_strategy_tip")} />
+                  </span>
+                  <select
+                    value={multiCharStrategy}
+                    onchange={(e) =>
+                      generation.updateNovelAiMultiCharPr({
+                        strategy: e.currentTarget.value as "sheet" | "passes" | "hybrid",
+                      })}
+                    class="w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
+                  >
+                    <option value="sheet">{locale.t("generation.novelai.reference.isolate_strategy_sheet")}</option>
+                    <option value="passes">{locale.t("generation.novelai.reference.isolate_strategy_passes")}</option>
+                    <option value="hybrid">{locale.t("generation.novelai.reference.isolate_strategy_hybrid")}</option>
+                  </select>
+                </div>
+
+                {#if multiCharUsesSheet && multiCharPlan.groups.length > 0}
+                  <NovelAiReferenceSheetPreview
+                    model={novelAiModel}
+                    {references}
+                    resolvedTargets={multiCharPlan.resolvedTargets}
+                    characters={naiCharacters}
+                    useCoords={generation.novelaiSettings.use_coords}
+                    width={generation.width}
+                    height={generation.height}
+                    sheetCutout={multiCharCfg.sheet_cutout}
+                    cuttingOut={cuttingOutRefs}
+                    onUpdateRef={(idx, patch) => generation.updateNovelAiDirectorReference(idx, patch)}
+                    onResetLayout={resetSheetLayout}
+                    onCutoutAll={() => void cutoutTargetedReferences()}
+                    onToggleSheetCutout={(value) =>
+                      generation.updateNovelAiMultiCharPr({ sheet_cutout: value })}
+                  />
+                {/if}
+
+                {#if multiCharUsesPasses}
+                  <div>
+                    <span class="flex items-center gap-1.5 text-[11px] text-neutral-400 mb-1">
+                      {locale.t("generation.novelai.reference.isolate_locator")}
+                      <InfoTip text={locale.t("generation.novelai.reference.isolate_locator_tip")} />
+                    </span>
+                    <select
+                      value={multiCharCfg.locator}
+                      onchange={(e) =>
+                        generation.updateNovelAiMultiCharPr({ locator: e.currentTarget.value })}
+                      class="w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
+                    >
+                      <option value="yolo">{locale.t("generation.novelai.reference.isolate_locator_yolo")}</option>
+                      <option value="coords">{locale.t("generation.novelai.reference.isolate_locator_coords")}</option>
+                    </select>
+                  </div>
+                {/if}
+
+                {#if multiCharNeedsDetector}
+                  <div>
+                    <span class="flex items-center gap-1.5 text-[11px] text-neutral-400 mb-1">
+                      {locale.t("generation.novelai.reference.isolate_detector")}
+                      <InfoTip text={locale.t("generation.novelai.reference.isolate_detector_tip")} />
+                    </span>
+                    <select
+                      value={multiCharCfg.detector_model}
+                      disabled={downloadingDetector !== null}
+                      onchange={(e) => void selectPersonDetector(e.currentTarget.value)}
+                      class="w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600 disabled:opacity-50"
+                    >
+                      {#each personDetectorOptions as opt (opt.value)}
+                        <option value={opt.value}>{opt.label}</option>
+                      {/each}
+                    </select>
+                  </div>
+                {/if}
+              </div>
+
+              {#if multiCharUsesPasses}
+                <div class="grid grid-cols-2 gap-3">
+                  <div use:scrollCapture>
+                    <label class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+                      <span>
+                        {locale.t("generation.novelai.reference.isolate_strength")}
+                        <InfoTip text={locale.t("generation.novelai.reference.isolate_strength_tip")} />
+                      </span>
+                      <EditableValue
+                        value={multiCharCfg.strength}
+                        min={0.25}
+                        max={0.95}
+                        step={0.05}
+                        decimals={2}
+                        onchange={(v) => generation.updateNovelAiMultiCharPr({ strength: v })}
+                      />
+                    </label>
+                    <input
+                      type="range"
+                      min="0.25"
+                      max="0.95"
+                      step="0.05"
+                      value={multiCharCfg.strength}
+                      oninput={(e) =>
+                        generation.updateNovelAiMultiCharPr({ strength: Number(e.currentTarget.value) })}
+                      class="w-full accent-indigo-500"
+                    />
+                  </div>
+
+                  <div use:scrollCapture>
+                    <label class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+                      <span>
+                        {locale.t("generation.novelai.reference.isolate_feather")}
+                        <InfoTip text={locale.t("generation.novelai.reference.isolate_feather_tip")} />
+                      </span>
+                      <EditableValue
+                        value={multiCharCfg.feather}
+                        min={0}
+                        max={64}
+                        step={2}
+                        suffix="px"
+                        onchange={(v) => generation.updateNovelAiMultiCharPr({ feather: v })}
+                      />
+                    </label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="64"
+                      step="2"
+                      value={multiCharCfg.feather}
+                      oninput={(e) =>
+                        generation.updateNovelAiMultiCharPr({ feather: Number(e.currentTarget.value) })}
+                      class="w-full accent-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {#if multiCharCfg.locator !== "coords"}
+                  <div use:scrollCapture>
+                    <label class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+                      <span>
+                        {locale.t("generation.novelai.reference.isolate_padding")}
+                        <InfoTip text={locale.t("generation.novelai.reference.isolate_padding_tip")} />
+                      </span>
+                      <EditableValue
+                        value={multiCharCfg.padding}
+                        min={1}
+                        max={1.6}
+                        step={0.05}
+                        decimals={2}
+                        suffix="x"
+                        onchange={(v) => generation.updateNovelAiMultiCharPr({ padding: v })}
+                      />
+                    </label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="1.6"
+                      step="0.05"
+                      value={multiCharCfg.padding}
+                      oninput={(e) =>
+                        generation.updateNovelAiMultiCharPr({ padding: Number(e.currentTarget.value) })}
+                      class="w-full accent-indigo-500"
+                    />
+                  </div>
+                {/if}
+              {/if}
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
 

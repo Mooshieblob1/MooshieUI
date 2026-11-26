@@ -534,12 +534,13 @@ export interface CharacterUpdate {
   memory?: MemoryChange[];
 }
 
-const UPDATE_SYSTEM = `You refresh one saved character from an image generation prompt. You get the saved character (name, prompt and negative prompt) and the current prompt and negative prompt (undesired content), which may describe several characters.
+const UPDATE_SYSTEM_PREFIX = `You refresh one saved character from an image generation prompt. You get the saved character (name, prompt and negative prompt) and the current prompt and negative prompt (undesired content), which may describe several characters.`;
 
-First decide whether the current prompt contains this character: the same name or character tag, or clearly the same character described by appearance. If it does not, reply {"found":false}.
+const UPDATE_DETECT_CLAUSE = `First decide whether the current prompt contains this character: the same name or character tag, or clearly the same character described by appearance. If it does not, reply {"found":false}.`;
 
-If it does, return the saved character updated with what the current prompt says about them:
-- prompt: the saved prompt plus any identity or appearance details the current prompt adds for this character (hair, eyes, skin, body, outfit, accessories, distinguishing features). Where the two disagree, the current prompt wins and the old detail is removed. Keep the saved details the current prompt does not contradict.
+const UPDATE_ASSUMED_CLAUSE = `The user chose to update this saved character from the supplied description, so always treat it as matching this character and reply with "found":true (do NOT reply {"found":false}).`;
+
+const UPDATE_SYSTEM_BODY = `- prompt: the saved prompt plus any identity or appearance details the current prompt adds for this character (hair, eyes, skin, body, outfit, accessories, distinguishing features). Where the two disagree, the current prompt wins and the old detail is removed. Keep the saved details the current prompt does not contradict.
 - negative: the saved negative prompt plus anything in the current negative prompt that is about this character, the same way.
 - Ignore everything that belongs to other characters, and leave out count tags (1girl, 2boys), pose, action, expression, camera, background, lighting, quality, style and artist tags.
 - Keep the saved text's format and wording: tags stay comma-separated tags, sentences stay sentences. Never invent a detail neither text states.
@@ -563,16 +564,19 @@ export function characterUpdateRequest(
   prompt: string,
   negative: string,
   memory: readonly CharacterMemoryFile[] | null = null,
+  assumeMatch = false,
 ): { system: string; prompt: string; maxTokens: number } {
   const parts = [
     `Saved character "${character.name.trim()}":\nPrompt: ${character.prompt.trim()}\nNegative prompt: ${character.negative.trim() || "(none)"}`,
   ];
   if (memory) parts.push(memoryFilesBlock(memory));
   parts.push(`Current prompt:\n${prompt.trim()}`, `Current negative prompt:\n${negative.trim() || "(empty)"}`);
+  const matchClause = assumeMatch ? UPDATE_ASSUMED_CLAUSE : UPDATE_DETECT_CLAUSE;
+  const intro = `${UPDATE_SYSTEM_PREFIX}\n\n${matchClause}\n\n${assumeMatch ? "Return the saved character updated with what the current prompt says about them:" : "If it does, return the saved character updated with what the current prompt says about them:"}\n${UPDATE_SYSTEM_BODY}`;
   return {
     system: memory
-      ? `${UPDATE_SYSTEM}\n${UPDATE_MEMORY_RULES}\n\nReply with JSON only and no other text:\n${UPDATE_MEMORY_SHAPE}`
-      : `${UPDATE_SYSTEM}\n\nReply with JSON only and no other text:\n${UPDATE_SHAPE}`,
+      ? `${intro}\n${UPDATE_MEMORY_RULES}\n\nReply with JSON only and no other text:\n${UPDATE_MEMORY_SHAPE}`
+      : `${intro}\n\nReply with JSON only and no other text:\n${UPDATE_SHAPE}`,
     prompt: parts.join("\n\n"),
     maxTokens: memory ? MEMORY_WRITE_MAX_TOKENS : CHARACTER_EXTRACT_MAX_TOKENS,
   };

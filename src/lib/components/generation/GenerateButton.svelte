@@ -18,6 +18,9 @@
   import ActivePreciseRefsStrip from "./ActivePreciseRefsStrip.svelte";
   import NovelAiUsage from "./NovelAiUsage.svelte";
   import { novelai } from "../../stores/novelai.svelte.js";
+  import { connection } from "../../stores/connection.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
+  import { summarizeMultiCharPrPlan } from "../../utils/characterPreciseRefLogic.js";
   import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
@@ -111,6 +114,18 @@
     "Anzhc Face seg 640 v4 y11n.pt": {
       url: "https://huggingface.co/Anzhc/Anzhcs_YOLOs/resolve/0319daeae9ae40752c2fb3904069cb35cc61d2ec/Anzhc%20Face%20seg%20640%20v4%20y11n.pt",
       sha256: "1e77ad7bd349babd8a4a90478bfc965348642b63a8d95d3b43ee13db42fd0a64",
+    },
+    "person_yolov8m-seg.pt": {
+      url: "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/person_yolov8m-seg.pt",
+      sha256: "c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e",
+    },
+    "person_yolov8s-seg.pt": {
+      url: "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/person_yolov8s-seg.pt",
+      sha256: "53c54aec2239355faffc6c5b70d0f3d05042f386f956cbec39cec46ad456f050",
+    },
+    "person_yolov8n-seg.pt": {
+      url: "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/person_yolov8n-seg.pt",
+      sha256: "38fc8aaae97cb6e70be4ec44770005b26ed473471362afcda62a0037d7ccf432",
     },
   };
 
@@ -382,6 +397,62 @@
             locale.t("generation.segment.detector_unavailable", { name: detector }),
             "warning",
           );
+        }
+      }
+
+      if (
+        novelai.experimentalMultiCharPr &&
+        generation.isNovelAi &&
+        generation.novelaiSettings.multi_char_pr.enabled
+      ) {
+        const mc = generation.novelaiSettings.multi_char_pr;
+        const mcStrategy = mc.strategy ?? "sheet";
+        const mcUsesPasses = mcStrategy === "passes" || mcStrategy === "hybrid";
+        const mcUsesSheet = mcStrategy === "sheet" || mcStrategy === "hybrid";
+        const mcTransparency =
+          generation.novelaiSettings.transparent_background &&
+          generation.supportsNovelAiTransparency;
+        const mcNeedsPassesDetector =
+          mcUsesPasses &&
+          generation.mode === "txt2img" &&
+          generation.batchSize <= 1 &&
+          !mcTransparency &&
+          mc.locator !== "coords";
+        const mcNeedsSheetCutoutDetector =
+          mcUsesSheet &&
+          (generation.mode === "txt2img" || generation.mode === "img2img") &&
+          !generation.isNovelAiInfill &&
+          mc.sheet_cutout &&
+          connection.connected;
+
+        if (mcNeedsPassesDetector || mcNeedsSheetCutoutDetector) {
+          const isolationPlan = summarizeMultiCharPrPlan(
+            generation.novelAiModel,
+            generation.novelaiSettings.director_references,
+            generation.novelaiSettings.characters,
+            savedCharacters.characters,
+            generation.isNovelAiInfill,
+            true,
+            mcStrategy,
+          );
+          if (isolationPlan.active) {
+            const detector = mc.detector_model || "person_yolov8m-seg.pt";
+            try {
+              await ensureUltralyticsDetector(
+                detector,
+                "generation.novelai.reference.downloading_person_detector",
+              );
+              generation.novelaiSettings.multi_char_pr.detector_model = detector;
+            } catch (e) {
+              console.warn("[novelai] multi-char person detector unavailable:", detector, e);
+              gallery.showToast(
+                locale.t("generation.novelai.reference.isolate_detector_unavailable", {
+                  name: detector,
+                }),
+                "warning",
+              );
+            }
+          }
         }
       }
 

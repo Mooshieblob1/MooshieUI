@@ -34,6 +34,8 @@
     referencePrompts,
     savePortraitExtras,
     type CharacterRefFraming,
+    type PortraitPrompts,
+    type SheetTurnaroundViews,
   } from "../../utils/characterPortrait.js";
   import {
     blobsToNovelAiBase64s,
@@ -49,6 +51,8 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import { estimateNovelAiCost, PRECISE_REFERENCE_COST } from "../../utils/novelaiCost.js";
   import {
+    NAI_REF_CHARACTER,
+    NAI_REF_CHARACTER_STYLE,
     NAI_REF_OUTFIT,
     NOVELAI_MAX_DIRECTOR_REFERENCES,
     NOVELAI_MEDIUM_EFFORT,
@@ -83,8 +87,9 @@
   const remembered = loadPortraitExtras();
 
   let framing = $state<CharacterRefFraming>(isReference ? "full_body" : "portrait");
+  let sheetViews = $state<SheetTurnaroundViews>(3);
   const baseInitial = untrack(() =>
-    isReference ? referencePrompts(character, "full_body", characterBox) : portraitPrompts(character, characterBox),
+    isReference ? referencePrompts(character, "full_body", characterBox, 3) : portraitPrompts(character, characterBox),
   );
   let activeInitial = $state(baseInitial);
 
@@ -115,8 +120,9 @@
   let guideFileInput = $state<HTMLInputElement | null>(null);
   let zoomedSrc = $state<string | null>(null);
   let submitting = $state(false);
+  let lastPrGuided = false;
 
-  const size = $derived(isReference ? currentReferenceSize(framing) : currentPortraitSize());
+  const size = $derived(isReference ? currentReferenceSize(framing, sheetViews) : currentPortraitSize());
   const showNegative = $derived(!generation.disablesNegativePrompt);
   const canGuidePr = $derived(generation.isNovelAi && generation.supportsNovelAiPreciseReference);
   const novelAiModel = $derived(generation.novelAiModel);
@@ -152,16 +158,28 @@
     return out;
   });
 
-  function selectFraming(next: CharacterRefFraming) {
-    if (framing === next) return;
-    framing = next;
-    const prompts = referencePrompts(character, next, characterBox);
+  function applyPrompts(prompts: PortraitPrompts) {
     activeInitial = prompts;
     positive = prompts.positive;
     negative = prompts.negative;
     characterPositive = prompts.character?.positive ?? "";
     characterNegative = prompts.character?.negative ?? "";
     leftOut = prompts.dropped;
+  }
+
+  function selectFraming(next: CharacterRefFraming) {
+    if (framing === next) return;
+    framing = next;
+    const guided = next === "portrait" && hasCharacterGuidePr;
+    lastPrGuided = guided;
+    applyPrompts(referencePrompts(character, next, characterBox, sheetViews, guided));
+  }
+
+  function selectSheetViews(next: SheetTurnaroundViews) {
+    if (sheetViews === next) return;
+    sheetViews = next;
+    if (framing !== "sheet") return;
+    applyPrompts(referencePrompts(character, "sheet", characterBox, next));
   }
 
   /**
@@ -218,6 +236,29 @@
       ? guideRefs.filter((r) => r.enabled !== false && r.image.length > 0)
       : [],
   );
+  const hasCharacterGuidePr = $derived(
+    activeGuideRefs.some((r) => {
+      const base = novelAiReferenceBaseType(r.description);
+      return base === NAI_REF_CHARACTER || base === NAI_REF_CHARACTER_STYLE;
+    }),
+  );
+  const portraitPrGuided = $derived(framing === "portrait" && hasCharacterGuidePr);
+
+  $effect(() => {
+    const guided = portraitPrGuided;
+    if (guided === lastPrGuided) return;
+    lastPrGuided = guided;
+    const wasEdited = edited;
+    const next = referencePrompts(character, framing, characterBox, sheetViews, guided);
+    activeInitial = next;
+    if (!wasEdited) {
+      positive = next.positive;
+      negative = next.negative;
+      characterPositive = next.character?.positive ?? "";
+      characterNegative = next.character?.negative ?? "";
+      leftOut = next.dropped;
+    }
+  });
   const forcedHigh = $derived(
     novelAiEffortForcedByPreciseReference(novelAiModel, activeGuideRefs, false),
   );
@@ -420,11 +461,7 @@
   );
 
   function resetPrompts() {
-    positive = activeInitial.positive;
-    negative = activeInitial.negative;
-    characterPositive = activeInitial.character?.positive ?? "";
-    characterNegative = activeInitial.character?.negative ?? "";
-    leftOut = activeInitial.dropped;
+    applyPrompts(activeInitial);
   }
 
   async function generate() {
@@ -433,15 +470,19 @@
     const extras = { artists: artists.trim(), chunkIds, styleIds };
     try {
       const mainNegative = showNegative ? negativeForExpression(negative, expression, style) : "";
+      const splitTurnaround = characterBox && framing === "sheet";
       await generateCharacterPortrait(
         character,
         characterBox
           ? {
-              // The expression is the character's, so it goes in its box.
+              // The expression is the character's, so it goes in its box
+              // (omitted from the back slot when generating a turnaround sheet).
               positive,
               negative: mainNegative,
               character: {
-                positive: withExpression(characterPositive, expression, style),
+                positive: splitTurnaround
+                  ? characterPositive
+                  : withExpression(characterPositive, expression, style),
                 negative: showNegative ? characterNegative : "",
               },
             }
@@ -450,6 +491,7 @@
         {
           target,
           framing,
+          ...(framing === "sheet" ? { sheetViews, expression } : {}),
           directorReferences: activeGuideRefs,
           ...(isReference
             ? {
@@ -509,7 +551,10 @@
 >
   {#snippet leftOutChips()}
     {#if leftOut.length > 0}
-      <div class="flex flex-wrap items-center gap-1" title={locale.t("characters.portrait.left_out_tip")}>
+      <div
+        class="flex flex-wrap items-center gap-1"
+        title={locale.t(portraitPrGuided ? "characters.portrait.left_out_pr_tip" : "characters.portrait.left_out_tip")}
+      >
         <span class="text-[10px] text-neutral-500">{locale.t("characters.portrait.left_out")}</span>
         {#each leftOut as item, i (`${i}:${item}`)}
           <button
@@ -562,6 +607,26 @@
                 onclick={() => selectFraming(opt.value)}
               >{locale.t(opt.labelKey)}</button>
             {/each}
+            {#if framing === "sheet"}
+              <div
+                class="inline-flex items-center gap-0.5 ml-1 pl-1.5 border-l border-neutral-800"
+                title={locale.t("characters.reference_gen.sheet_views_tip")}
+              >
+                <span class="text-[10px] text-neutral-500 mr-0.5">
+                  {locale.t("characters.reference_gen.sheet_views")}
+                </span>
+                {#each [[3, "characters.reference_gen.sheet_views_3"], [4, "characters.reference_gen.sheet_views_4"]] as const as [count, key] (count)}
+                  <button
+                    type="button"
+                    class="px-1.5 py-0.5 text-[10px] rounded border transition-colors {sheetViews === count
+                      ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200'
+                      : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
+                    aria-pressed={sheetViews === count}
+                    onclick={() => selectSheetViews(count)}
+                  >{locale.t(key)}</button>
+                {/each}
+              </div>
+            {/if}
           </div>
           <label class="flex items-center gap-1.5 text-[11px] text-neutral-300">
             <span class="text-neutral-500">{locale.t("characters.reference_gen.save_as")}</span>

@@ -183,6 +183,42 @@ export interface NovelAiDirectorReference {
   source_ref_id?: string;
   /** Frontend-only: true when auto-attached via Use/Enhance (eligible for Enhance scene prune). */
   auto_attached?: boolean;
+  /**
+   * Target 0-based index into `NovelAiParams.characters` for experimental
+   * multi-character Precise Reference isolation (`-1` forces global in UI,
+   * `undefined`/`null` resolves automatically from `source_character_id`).
+   */
+  target_character_index?: number | null;
+  /** Normalized 0..1 center X on the combined multi-character sheet. */
+  sheet_x?: number | null;
+  /** Normalized 0..1 center Y on the combined multi-character sheet. */
+  sheet_y?: number | null;
+  /** Relative size fraction (`0.20..1.35`) on the combined multi-character sheet. */
+  sheet_scale?: number | null;
+}
+
+/**
+ * Experimental multi-character Precise Reference isolation settings.
+ * Mirrors `NovelAiMultiCharPr` in `src-tauri/src/novelai/params.rs`.
+ */
+export interface NovelAiMultiCharPr {
+  enabled: boolean;
+  /** "sheet" | "passes" | "hybrid". */
+  strategy: "sheet" | "passes" | "hybrid";
+  /** Auto-cut out opaque refs with local YOLO segmentation before stitching sheet. */
+  sheet_cutout: boolean;
+  /** "yolo" | "coords". */
+  locator: string;
+  /** YOLO weight in `models/ultralytics`. */
+  detector_model: string;
+  threshold: number;
+  padding: number;
+  /** img2img denoise strength for each isolated character pass. */
+  strength: number;
+  /** Composite feather radius in pixels. */
+  feather: number;
+  /** "fit_free" | "allow_paid". */
+  anlas_policy: string;
 }
 
 /**
@@ -324,6 +360,8 @@ export interface NovelAiParams {
   local_negative_prompt: string | null;
   /** The NovelAI-mode face detailer panel's settings. */
   face_detail: NovelAiFaceDetail;
+  /** Experimental multi-character Precise Reference isolation settings. */
+  multi_char_pr: NovelAiMultiCharPr;
 }
 
 /** NovelAI's `/user/subscription` response, as the backend re-serialises it. */

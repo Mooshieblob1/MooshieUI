@@ -112,6 +112,7 @@ import type {
   NovelAiCharacter,
   NovelAiDirectorReference,
   NovelAiFaceDetail,
+  NovelAiMultiCharPr,
   NovelAiParams,
   NovelAiVibe,
   NovelAiVibeEncoding,
@@ -227,6 +228,23 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     local_scheduler: null,
     local_cfg: null,
     face_detail: createDefaultNovelAiFaceDetail(),
+    multi_char_pr: createDefaultNovelAiMultiCharPr(),
+  };
+}
+
+/** Defaults for experimental multi-character Precise Reference isolation. Mirrors `NovelAiMultiCharPr::default`. */
+export function createDefaultNovelAiMultiCharPr(): NovelAiMultiCharPr {
+  return {
+    enabled: false,
+    strategy: "sheet",
+    sheet_cutout: true,
+    locator: "yolo",
+    detector_model: "person_yolov8m-seg.pt",
+    threshold: 0.35,
+    padding: 1.2,
+    strength: 0.65,
+    feather: 24,
+    anlas_policy: "fit_free",
   };
 }
 
@@ -2529,6 +2547,13 @@ class GenerationStore {
     });
   }
 
+  /** Patch the nested multi-character Precise Reference block. */
+  updateNovelAiMultiCharPr(patch: Partial<NovelAiMultiCharPr>) {
+    this.updateNovelAiSettings({
+      multi_char_pr: { ...this.novelaiSettings.multi_char_pr, ...patch },
+    });
+  }
+
   /**
    * Steps the face detailer actually runs at.
    *
@@ -3426,6 +3451,10 @@ class GenerationStore {
           ...createDefaultNovelAiFaceDetail(),
           ...(merged.face_detail ?? {}),
         },
+        multi_char_pr: {
+          ...createDefaultNovelAiMultiCharPr(),
+          ...(merged.multi_char_pr ?? {}),
+        },
         director_references: (merged.director_references ?? []).map((reference) => ({
           ...reference,
           strength: reference.strength ?? 1.0,
@@ -4052,18 +4081,37 @@ class GenerationStore {
     return {
       ...this.novelaiSettings,
       director_references: this.novelaiSettings.director_references.map(
-        ({ image, description, strength, fidelity, enabled }) => ({
+        ({
           image,
           description,
           strength,
           fidelity,
           enabled,
+          target_character_index,
+          sheet_x,
+          sheet_y,
+          sheet_scale,
+        }) => ({
+          image,
+          description,
+          strength,
+          fidelity,
+          enabled,
+          target_character_index:
+            typeof target_character_index === "number" && target_character_index >= 0
+              ? target_character_index
+              : null,
+          sheet_x: typeof sheet_x === "number" && Number.isFinite(sheet_x) ? sheet_x : null,
+          sheet_y: typeof sheet_y === "number" && Number.isFinite(sheet_y) ? sheet_y : null,
+          sheet_scale:
+            typeof sheet_scale === "number" && Number.isFinite(sheet_scale) ? sheet_scale : null,
         }),
       ),
       face_detail: {
         ...this.novelaiSettings.face_detail,
         steps: this.novelAiFaceDetailSteps,
       },
+      multi_char_pr: { ...this.novelaiSettings.multi_char_pr },
       characters,
       model: this.checkpoint,
       action,

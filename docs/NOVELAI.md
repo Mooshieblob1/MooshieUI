@@ -202,6 +202,21 @@ Vibe transfer does not go through this. Vibes are encoded server-side by
   live preview, Model Hub, and Characters; V5 Prompt Enhance, Image Enhance, and
   Style Creator keep references attached (including across Curate Undo) and warn
   when active references apply.
+- **Experimental multi-character isolation.** Enabled via Settings -> Appearance
+  (**Experimental: Multi-character Precise Reference**), this lets each
+  character reference bind cleanly to a Character Prompt slot (`Auto`, explicit
+  `Character N`, or `Global`) and offers three strategies: **Combined sheet
+  (1-pass)** stitches targeted refs onto an aspect-matched RGBA/V5-bucket sheet
+  (or V4.5 white canvas) synced with Character Prompts X/Y or interactive
+  drag/scale with optional YOLO person-mask background cutout (works in
+  `txt2img`, `img2img`, `batch > 1`, and transparent background); **Separate
+  passes (img2img)** strips targeted refs from base `txt2img` and repaints
+  each character via local YOLO segmentation (`MooshieFaceDetect` with
+  `include_masks`) or Voronoi coordinates inside the 1 MP Opus window; and
+  **Hybrid** uses the sheet on the base pass followed by isolated `img2img`
+  passes. Pass-based modes run on single-image non-transparent `txt2img` only;
+  `mcp/setups.rs` clears `multi_char_pr.enabled` in both `snapshot()` and
+  `apply()`.
 
 ### 2.6 Model capabilities are data, not branches
 

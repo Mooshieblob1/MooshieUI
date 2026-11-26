@@ -15,8 +15,11 @@ import {
   type PreparedUserPrompts,
 } from "../stores/generation.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
+import { novelai } from "../stores/novelai.svelte.js";
 import { promptAssistant } from "../stores/promptAssistant.svelte.js";
+import { savedCharacters } from "../stores/savedCharacters.svelte.js";
 import type { GenerationParams } from "../types/index.js";
+import { resolveDirectorReferenceCharacterTargets } from "./characterPreciseRefLogic.js";
 import { BLOCKED_MINOR_CONTENT } from "./contentSafety.js";
 import {
   activeRecipeCharacters,
@@ -198,6 +201,45 @@ function stripFinalConflicts(params: GenerationParams, recipes: EnhanceRecipe[])
   }
 }
 
+/**
+ * Resolve Auto multi-character Precise Reference targets against the outgoing
+ * character boxes (using live store `source_character_id` metadata when the
+ * reference list still matches) and enforce the Settings experimental gate.
+ */
+function applyNovelAiMultiCharPrToParams(params: GenerationParams): GenerationParams {
+  const nai = params.novelai;
+  if (!nai) return params;
+
+  if (!novelai.experimentalMultiCharPr || !nai.multi_char_pr?.enabled) {
+    nai.multi_char_pr = { ...nai.multi_char_pr, enabled: false };
+    nai.director_references = nai.director_references.map((r) => ({
+      ...r,
+      target_character_index: null,
+      sheet_x: null,
+      sheet_y: null,
+      sheet_scale: null,
+    }));
+    return params;
+  }
+
+  const liveRefs = generation.novelaiSettings.director_references;
+  const refsMatchStore =
+    liveRefs.length === nai.director_references.length &&
+    liveRefs.every((r, i) => r.image === nai.director_references[i]?.image);
+  const sourceRefs = refsMatchStore ? liveRefs : nai.director_references;
+
+  const targets = resolveDirectorReferenceCharacterTargets(
+    sourceRefs,
+    nai.characters,
+    savedCharacters.characters,
+  );
+  nai.director_references = nai.director_references.map((r, i) => ({
+    ...r,
+    target_character_index: targets[i] ?? null,
+  }));
+  return params;
+}
+
 async function runAiAdapt(
   target: PreparedUserPrompts,
   aiRecipes: EnhanceRecipe[],
@@ -259,7 +301,9 @@ export async function buildParamsWithActiveRecipes(
     new Set(enhanceRecipes.activeIds),
   );
   if (matched.length === 0) {
-    return generation.toParams({ ...options, preparedPrompts: prepared });
+    return applyNovelAiMultiCharPrToParams(
+      generation.toParams({ ...options, preparedPrompts: prepared }),
+    );
   }
 
   // Skip double LLM processing when this exact user prompt came straight out
@@ -275,7 +319,7 @@ export async function buildParamsWithActiveRecipes(
   if (enhanceRecipes.isEnhancedFingerprint(rawBoxFp)) {
     const params = generation.toParams({ ...options, preparedPrompts: prepared });
     stripFinalConflicts(params, matched);
-    return params;
+    return applyNovelAiMultiCharPrToParams(params);
   }
 
   const adapted = clonePreparedPrompts(prepared);
@@ -335,5 +379,5 @@ export async function buildParamsWithActiveRecipes(
 
   const params = generation.toParams({ ...options, preparedPrompts: adapted });
   stripFinalConflicts(params, matched);
-  return params;
+  return applyNovelAiMultiCharPrToParams(params);
 }

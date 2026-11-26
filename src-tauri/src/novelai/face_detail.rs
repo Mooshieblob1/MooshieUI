@@ -281,7 +281,7 @@ pub async fn run_face_pass(
 /// NovelAI's seed is a uint32, so the offset wraps modulo `MAX_SEED + 1`
 /// exactly as `resolve_seed` folds, instead of stepping past `MAX_SEED` on a
 /// seed near the top of the range and being rejected.
-fn face_seed(seed: i64, index: usize) -> i64 {
+pub(super) fn face_seed(seed: i64, index: usize) -> i64 {
     let modulus = crate::novelai::MAX_SEED + 1;
     let offset = (2 + index as i64).rem_euclid(modulus);
     (seed.rem_euclid(modulus) + offset) % modulus
@@ -344,6 +344,7 @@ fn crop_request(
         // Nothing downstream of the face pass runs a second time.
         nai.local_post_process = false;
         nai.face_detail = Default::default();
+        nai.multi_char_pr = Default::default();
     }
     out
 }
@@ -375,7 +376,15 @@ async fn tagger_tags(
     if !detail.prompt_mode.trim().eq_ignore_ascii_case("auto") {
         return Vec::new();
     }
+    run_wd_tagger(state, img, detail.tagger_threshold as f32).await
+}
 
+/// Run the local WD tagger on `img`, returning tag names or an empty vector when unavailable.
+pub(super) async fn run_wd_tagger(
+    state: &Arc<AppState>,
+    img: DynamicImage,
+    general_threshold: f32,
+) -> Vec<String> {
     let (model_id, custom_models, character_threshold) = {
         let config = state.config.read().await;
         (
@@ -397,12 +406,11 @@ async fn tagger_tags(
     if !crate::interrogator::is_model_downloaded_at(&model_dir)
         || !crate::interrogator::is_ort_library_present_at(&root_dir)
     {
-        log::info!("NovelAI face pass: tagger unavailable, using prompt identity only");
+        log::info!("NovelAI pass: tagger unavailable, falling back without tagger");
         return Vec::new();
     }
 
     let interrogator = Arc::clone(&state.interrogator);
-    let general_threshold = detail.tagger_threshold as f32;
     let result = tokio::task::spawn_blocking(move || {
         let mut guard = interrogator.blocking_write();
         guard.set_model(&model_id, model_dir);
@@ -419,17 +427,17 @@ async fn tagger_tags(
             .map(|t| t.name)
             .collect(),
         Ok(Err(err)) => {
-            log::warn!("NovelAI face pass: tagger failed ({err})");
+            log::warn!("NovelAI pass: tagger failed ({err})");
             Vec::new()
         }
         Err(err) => {
-            log::warn!("NovelAI face pass: tagger panicked ({err})");
+            log::warn!("NovelAI pass: tagger panicked ({err})");
             Vec::new()
         }
     }
 }
 
-async fn decode_rgba(bytes: Vec<u8>) -> Result<RgbaImage, AppError> {
+pub(super) async fn decode_rgba(bytes: Vec<u8>) -> Result<RgbaImage, AppError> {
     tokio::task::spawn_blocking(move || {
         image::load_from_memory(&bytes)
             .map(|img| img.to_rgba8())
@@ -439,7 +447,11 @@ async fn decode_rgba(bytes: Vec<u8>) -> Result<RgbaImage, AppError> {
     .map_err(|e| AppError::Other(format!("image decode task failed: {e}")))?
 }
 
-async fn resize_rgba(img: RgbaImage, width: u32, height: u32) -> Result<RgbaImage, AppError> {
+pub(super) async fn resize_rgba(
+    img: RgbaImage,
+    width: u32,
+    height: u32,
+) -> Result<RgbaImage, AppError> {
     tokio::task::spawn_blocking(move || {
         if img.width() == width && img.height() == height {
             return img;
@@ -450,12 +462,16 @@ async fn resize_rgba(img: RgbaImage, width: u32, height: u32) -> Result<RgbaImag
     .map_err(|e| AppError::Other(format!("image resize task failed: {e}")))
 }
 
-async fn decode_and_fit(bytes: Vec<u8>, width: u32, height: u32) -> Result<RgbaImage, AppError> {
+pub(super) async fn decode_and_fit(
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+) -> Result<RgbaImage, AppError> {
     let decoded = decode_rgba(bytes).await?;
     resize_rgba(decoded, width, height).await
 }
 
-async fn encode_png(img: &RgbaImage) -> Result<Vec<u8>, AppError> {
+pub(super) async fn encode_png(img: &RgbaImage) -> Result<Vec<u8>, AppError> {
     let img = img.clone();
     tokio::task::spawn_blocking(move || {
         let mut buf = Vec::new();
@@ -679,6 +695,7 @@ mod tests {
             strength: 1.0,
             fidelity: 1.0,
             enabled: true,
+            ..Default::default()
         }];
 
         let out = crop_request(&base, &plan(), "portrait, close-up", "AAAA".into(), 0);

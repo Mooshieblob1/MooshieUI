@@ -157,6 +157,7 @@ pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
         nai.local_positive_prompt = None;
         nai.local_negative_prompt = None;
         nai.face_detail.custom_prompt.clear();
+        nai.multi_char_pr.enabled = false;
         nai.action = "generate".into();
     }
     p.seed = -1;
@@ -491,6 +492,7 @@ pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams,
     if let Some(block) = p.novelai.as_mut() {
         // Face crops shrunk into the free window, never paid ones.
         block.face_detail.anlas_policy = "fit_free".into();
+        block.multi_char_pr.enabled = false;
     }
     if nai {
         check_novelai_free_window(&p)?;
@@ -620,9 +622,12 @@ mod tests {
         if let Some(mm) = p.moody_moss.as_mut() {
             mm.face_prompt = "x".into();
         }
+        p.novelai.as_mut().unwrap().multi_char_pr.enabled = true;
         let snap = snapshot(&p).unwrap();
         assert_eq!(model_key(&snap), "nai-diffusion-4-5-full");
-        assert!(snap.novelai.as_ref().unwrap().characters.is_empty());
+        let nai = snap.novelai.as_ref().unwrap();
+        assert!(nai.characters.is_empty());
+        assert!(!nai.multi_char_pr.enabled);
         let mut img2img = nai_base();
         img2img.novelai.as_mut().unwrap().action = "img2img".into();
         assert!(snapshot(&img2img).is_none());

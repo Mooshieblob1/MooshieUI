@@ -2,7 +2,7 @@
  * Shared save/update flow after the character extraction review modal closes.
  * Used by both CharactersPanel (from prompt or image) and InterrogateModal.
  */
-import { architectureLabel, savedCharacters, type NewCharacter } from "../stores/savedCharacters.svelte.js";
+import { architectureLabel, savedCharacters, type NewCharacter, type SavedCharacter } from "../stores/savedCharacters.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
 import { promptAssistant } from "../stores/promptAssistant.svelte.js";
@@ -37,7 +37,7 @@ export async function applyCharacterExtractDecisions({
 
   const fresh: NewCharacter[] = [
     ...named
-      .filter((n) => n.keep && n.item.prompt.trim())
+      .filter((n) => n.keep && (n.action ?? "new") === "new" && n.item.prompt.trim())
       .map((n) =>
         withImage(
           {
@@ -62,23 +62,50 @@ export async function applyCharacterExtractDecisions({
       ),
   ];
 
-  const variants: NewCharacter[] = decisions
-    .filter((d) => d.action === "variant" && d.variantName.trim() && d.item.prompt.trim())
-    .map((d) =>
-      withImage(
-        {
-          name: d.variantName.trim(),
-          prompt: d.item.prompt,
-          negative: d.item.negative,
-          parentId: d.saved.parentId ?? d.saved.id,
-        },
-        d.useImage,
+  const variants: NewCharacter[] = [
+    ...decisions
+      .filter((d) => d.action === "variant" && d.variantName.trim() && d.item.prompt.trim())
+      .map((d) =>
+        withImage(
+          {
+            name: d.variantName.trim(),
+            prompt: d.item.prompt,
+            negative: d.item.negative,
+            parentId: d.saved.parentId ?? d.saved.id,
+          },
+          d.useImage,
+        ),
       ),
-    );
+    ...named
+      .filter(
+        (n) =>
+          n.keep &&
+          n.action === "variant" &&
+          n.targetId &&
+          n.name.trim() &&
+          n.item.prompt.trim(),
+      )
+      .flatMap((n) => {
+        const target = savedCharacters.characters.find((c) => c.id === n.targetId);
+        if (!target) return [];
+        return [
+          withImage(
+            {
+              name: n.name.trim(),
+              prompt: n.item.prompt,
+              negative: n.item.negative,
+              parentId: target.parentId ?? target.id,
+            },
+            n.useImage,
+          ),
+        ];
+      }),
+  ];
 
   const added = savedCharacters.saveExtracted(fresh, arch);
   const addedVariants = savedCharacters.saveExtracted(variants, arch);
-  const previous: {
+
+  type PreviousSnapshot = {
     id: string;
     prompt: string;
     negative: string;
@@ -86,46 +113,110 @@ export async function applyCharacterExtractDecisions({
     reference: string | null;
     textChanged: boolean;
     replaceThumbnail: boolean;
-  }[] = [];
+  };
+  const previousMap = new Map<string, PreviousSnapshot>();
+
+  const existingUpdates: {
+    targetId: string;
+    fallbackSaved?: SavedCharacter;
+    mode: "update" | "replace";
+    prompt: string;
+    negative: string;
+    useImage?: boolean;
+  }[] = [
+    ...decisions
+      .filter((x) => (x.action === "update" || x.action === "replace") && x.item.prompt.trim())
+      .map((x) => ({
+        targetId: x.saved.id,
+        fallbackSaved: x.saved,
+        mode: x.action as "update" | "replace",
+        prompt: x.item.prompt,
+        negative: x.item.negative,
+        useImage: x.useImage,
+      })),
+    ...named
+      .filter(
+        (n) =>
+          n.keep &&
+          (n.action === "update" || n.action === "replace") &&
+          Boolean(n.targetId) &&
+          Boolean(n.item.prompt.trim()),
+      )
+      .map((n) => ({
+        targetId: n.targetId!,
+        mode: n.action as "update" | "replace",
+        prompt: n.item.prompt,
+        negative: n.item.negative,
+        useImage: n.useImage,
+      })),
+  ];
 
   setBusy?.(true);
   try {
-    for (const d of decisions.filter((x) => x.action === "update" && x.item.prompt.trim())) {
+    for (const item of existingUpdates) {
+      const live =
+        savedCharacters.characters.find((c) => c.id === item.targetId) ?? item.fallbackSaved;
+      if (!live) continue;
+
       let next: { prompt: string; negative: string };
-      try {
-        const merged = await promptAssistant.updateCharacter(d.saved, d.item.prompt, d.item.negative);
-        next = merged === "missing" ? { prompt: d.item.prompt, negative: d.item.negative } : merged;
-      } catch (e) {
-        console.error("Character update failed:", e);
-        gallery.showToast(mapLlmError(String(e)), "error");
-        continue;
+      if (item.mode === "replace" || !promptAssistant.isAvailable) {
+        next = { prompt: item.prompt.trim(), negative: item.negative.trim() };
+      } else {
+        try {
+          const merged = await promptAssistant.updateCharacter(
+            live,
+            item.prompt,
+            item.negative,
+            null,
+            true,
+          );
+          next =
+            merged === "missing"
+              ? { prompt: item.prompt.trim(), negative: item.negative.trim() }
+              : merged;
+        } catch (e) {
+          console.error("Character update failed:", e);
+          gallery.showToast(mapLlmError(String(e)), "error");
+          continue;
+        }
       }
-      const textChanged = next.prompt !== d.saved.prompt || next.negative !== d.saved.negative;
-      const replaceThumbnail = !!(d.useImage && sourceImages);
+
+      const textChanged = next.prompt !== live.prompt || next.negative !== live.negative;
+      const replaceThumbnail = !!(item.useImage && sourceImages);
       if (!textChanged && !replaceThumbnail) continue;
-      previous.push({
-        id: d.saved.id,
-        prompt: d.saved.prompt,
-        negative: d.saved.negative,
-        thumbnail: d.saved.thumbnail,
-        reference: d.saved.reference,
-        textChanged,
-        replaceThumbnail,
-      });
-      if (textChanged) savedCharacters.update(d.saved.id, next);
+
+      const existingSnap = previousMap.get(live.id);
+      if (existingSnap) {
+        existingSnap.textChanged ||= textChanged;
+        existingSnap.replaceThumbnail ||= replaceThumbnail;
+      } else {
+        previousMap.set(live.id, {
+          id: live.id,
+          prompt: live.prompt,
+          negative: live.negative,
+          thumbnail: live.thumbnail,
+          reference: live.reference,
+          textChanged,
+          replaceThumbnail,
+        });
+      }
+
+      if (textChanged) savedCharacters.update(live.id, next);
       if (replaceThumbnail && sourceImages) {
-        savedCharacters.setThumbnail(d.saved.id, sourceImages.thumbnail, sourceImages.reference);
+        savedCharacters.setThumbnail(live.id, sourceImages.thumbnail, sourceImages.reference);
       }
     }
   } finally {
     setBusy?.(false);
   }
 
+  const previous = [...previousMap.values()].filter((p) => p.textChanged || p.replaceThumbnail);
+
   if (added + addedVariants + previous.length === 0) {
     return { added: 0, addedVariants: 0, updated: 0 };
   }
 
-  if (!hadMatches) {
+  if (!hadMatches && previous.length === 0 && addedVariants === 0) {
     gallery.showToast(
       locale.t("characters.toast.saved", {
         added: String(added),

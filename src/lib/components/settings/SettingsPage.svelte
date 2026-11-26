@@ -1365,7 +1365,7 @@
   const sections = [
     { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in lan network remote access share phone ip address local mooshieui.local firewall" },
     { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
-    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color experimental 3d idol splat image to 3d" },
+    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color experimental 3d idol splat image to 3d multi character precise reference bleed isolate" },
     { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
     { key: "quality", labelKey: "settings.sections.quality", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", labelKey: "settings.sections.gpu", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
@@ -1380,7 +1380,7 @@
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "mcp", labelKey: "settings.sections.mcp", keywords: "mcp model context protocol ai assistant agent claude code desktop cursor codex automation api token tools" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key proxy socks5 metadata model hub image fetch download authentication" },
-    { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
+    { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show multi character precise reference bleed isolate" },
     { key: "cloud", labelKey: "settings.sections.cloud", keywords: "cloud voice video elevenlabs fal segmind seedance api key tts speech anime scene" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "account", labelKey: "settings.account", keywords: "account password username display name login logout users lan accounts admin moderator role security migration" },
@@ -3278,6 +3278,24 @@
             <div>
               <label for="experimental-model3d" class="text-sm text-neutral-200">{locale.t('settings.appearance.experimental_3d')}</label>
               <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.experimental_3d_desc')}</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="experimental-nai-multi-char-pr"
+              checked={novelai.experimentalMultiCharPr}
+              onchange={(e) => {
+                const enabled = e.currentTarget.checked;
+                novelai.setExperimentalMultiCharPr(enabled);
+                if (!enabled) generation.updateNovelAiMultiCharPr({ enabled: false });
+              }}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="experimental-nai-multi-char-pr" class="text-sm text-neutral-200">{locale.t('settings.appearance.experimental_nai_multi_char_pr')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.experimental_nai_multi_char_pr_desc')}</p>
             </div>
           </div>
 
