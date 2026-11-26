@@ -3005,6 +3005,30 @@
           });
         }
       }),
+      ipcListen("comfyui:server_restarted", (event: any) => {
+        console.log("ComfyUI server restart detected:", event.payload);
+        const workerId = event.payload?.worker_id;
+        if (workerId == null) {
+          if (progress.isGenerating) {
+            progress.cancelAll();
+          }
+          progress.clearServerProgress();
+        } else {
+          for (const queued of [...progress.pendingPrompts]) {
+            if (queued.workerId === workerId) {
+              progress.removePrompt(queued.promptId);
+            }
+          }
+        }
+        startup.locked = false;
+        startupStatus = "";
+        startupStatusKind = "idle";
+        connection.connected = true;
+        void models.refresh().then(() => {
+          generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+        });
+        void music.refresh();
+      }),
       ipcListen("comfyui:server_ready", async () => {
         console.log("Server ready event received");
         void getConfig().then((cfg) => {

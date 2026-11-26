@@ -1,8 +1,8 @@
 <script lang="ts">
   import { portal } from "../../utils/portal.js";
   import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, lanRequest, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel, eagleStatus } from "../../utils/api.js";
-  import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, lanRequest, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, getComfyuiSnapshots, rollbackComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel, eagleStatus } from "../../utils/api.js";
+  import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo, ComfyUiSnapshotSummary } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -163,6 +163,8 @@
   let comfyuiUpdating = $state(false);
   let comfyuiUpdateError = $state<string | null>(null);
   let comfyuiUpdateProgress = $state<string | null>(null);
+  let comfyuiSnapshots = $state<ComfyUiSnapshotSummary[]>([]);
+  let confirmRollbackId = $state<string | null>(null);
   let workersDetecting = $state(false);
   let newThemeName = $state("");
   let themeImportError = $state<string | null>(null);
@@ -1614,6 +1616,42 @@
     // the card the same way the old local try/catch did.
     await comfyuiUpdate.refresh();
     comfyuiVersion = comfyuiUpdate.info;
+    if (!isBrowserMode) {
+      try {
+        comfyuiSnapshots = await getComfyuiSnapshots();
+      } catch {
+        comfyuiSnapshots = [];
+      }
+    }
+  }
+
+  function formatSnapshotDate(unixSeconds: number): string {
+    if (!unixSeconds) return "-";
+    return new Date(unixSeconds * 1000).toLocaleString();
+  }
+
+  async function handleComfyuiRollback(snapshotId: string) {
+    if (comfyuiUpdating) return;
+    confirmRollbackId = null;
+    comfyuiUpdating = true;
+    comfyuiUpdateError = null;
+    comfyuiUpdateProgress = locale.t("settings.performance.comfyui_rollback_starting");
+    const unlisten = await ipcListen("setup:progress", (event: any) => {
+      const data = event.payload as { message?: string };
+      if (data?.message) comfyuiUpdateProgress = data.message;
+    });
+    try {
+      await rollbackComfyui(snapshotId);
+      await startComfyui();
+      await refreshComfyuiVersion();
+    } catch (e: any) {
+      comfyuiUpdateError =
+        typeof e === "string" ? e : e.message || locale.t("settings.performance.comfyui_rollback_failed");
+    } finally {
+      comfyuiUpdating = false;
+      comfyuiUpdateProgress = null;
+      unlisten();
+    }
   }
 
   /**
@@ -3404,6 +3442,55 @@
               {/if}
 
               <p class="text-[10px] text-neutral-500">{locale.t('settings.performance.comfyui_update_note')}</p>
+
+              {#if comfyuiSnapshots.length > 0}
+                <div class="pt-2 mt-1 border-t border-neutral-800 space-y-1.5">
+                  <span class="block text-[11px] font-medium text-neutral-300">
+                    {locale.t('settings.performance.comfyui_rollback_heading')}
+                  </span>
+                  <div class="space-y-1.5">
+                    {#each comfyuiSnapshots as snap (snap.id)}
+                      <div class="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-neutral-950/70 border border-neutral-800/80 text-[11px]">
+                        <div class="min-w-0">
+                          <div class="font-mono text-neutral-200 truncate">
+                            {snap.comfyui_version || snap.comfyui_commit.slice(0, 8)}
+                            <span class="text-neutral-500 ml-1">({formatSnapshotDate(snap.created_unix)})</span>
+                          </div>
+                          <div class="text-[10px] text-neutral-500">
+                            {locale.t('settings.performance.comfyui_rollback_meta', { packages: snap.package_count, nodes: snap.custom_node_count })}
+                          </div>
+                        </div>
+                        {#if confirmRollbackId === snap.id}
+                          <div class="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onclick={() => handleComfyuiRollback(snap.id)}
+                              disabled={comfyuiUpdating}
+                              class="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-[11px] transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {locale.t('settings.performance.comfyui_rollback_confirm')}
+                            </button>
+                            <button
+                              onclick={() => { confirmRollbackId = null; }}
+                              disabled={comfyuiUpdating}
+                              class="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded text-[11px] transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {locale.t('settings.performance.comfyui_rollback_cancel')}
+                            </button>
+                          </div>
+                        {:else}
+                          <button
+                            onclick={() => { confirmRollbackId = snap.id; }}
+                            disabled={comfyuiUpdating}
+                            class="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded text-[11px] transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                          >
+                            {locale.t('settings.performance.comfyui_rollback_button')}
+                          </button>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
             </div>
           </div>
           {/if}

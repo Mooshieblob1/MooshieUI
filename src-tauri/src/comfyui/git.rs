@@ -235,7 +235,11 @@ fn publish_mingit(staging: &Path, destination: &Path) -> Result<(), String> {
 }
 
 #[cfg(any(windows, feature = "desktop", test))]
-async fn run_git(git: &Path, args: &[&str], network_proxy: Option<&str>) -> Result<String, String> {
+pub(crate) async fn run_git(
+    git: &Path,
+    args: &[&str],
+    network_proxy: Option<&str>,
+) -> Result<String, String> {
     let mut command = super::process::tokio_command_no_window(git);
     command
         .args(["-c", "core.hooksPath=/dev/null"])
