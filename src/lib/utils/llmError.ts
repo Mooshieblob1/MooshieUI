@@ -1,5 +1,5 @@
 import { locale } from "../stores/locale.svelte.js";
-import { parseBlocked } from "./contentSafety.js";
+import { isProviderRefusal, parseBlocked } from "./contentSafety.js";
 
 /**
  * Turn a thrown prompt-assistant error into a toast the user can act on.
@@ -32,12 +32,4 @@ export function mapLlmError(msg: string): string {
   return detail
     ? `${locale.t("prompt_assistant.error_generic")}: ${detail}`
     : locale.t("prompt_assistant.error_generic");
-}
-
-/**
- * A hosted provider declining a request on content grounds: xAI answers 403
- * with `permission-denied` and "I'm sorry, I can't help with that request."
- */
-function isProviderRefusal(msg: string): boolean {
-  return /\b403\b/.test(msg) && /permission-denied|can'?t help|cannot help|content polic/i.test(msg);
 }

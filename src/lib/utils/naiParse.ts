@@ -12,8 +12,9 @@
  */
 
 import { NAI_PRESET_UC_JUNK, NAI_QUALITY_FILLER } from "./naiPrompt.js";
-import { fieldTags, isProseLine, tagKind } from "./naiOutfits.js";
+import { fieldTags, isProseLine, removeTag, tagKind } from "./naiOutfits.js";
 import { layoutProseProblems, tidyNaiLayout } from "./naiLayout.js";
+import { splitReply } from "./enhanceChat.js";
 
 /** What one full rewrite turn (attempt plus optional retry) produced. */
 export interface NaiRewriteResult {
@@ -105,8 +106,138 @@ type Field = "base" | "uc" | "char" | "charUc" | "note" | "canon" | "memory" | n
  * label anywhere is treated as a bare base prompt, because that is what a model
  * that ignored the output contract almost always produced.
  */
+const THINK_BLOCK = /<think>[\s\S]*?<\/think>/gi;
+
+function stripThinkBlocks(raw: string): string {
+  return (raw ?? "").replace(THINK_BLOCK, "").trim();
+}
+
+export interface NaiParsedEnvelope {
+  parsed: NaiParsedResponse;
+  reply: string;
+}
+
+function unwrapJsonFence(raw: string): string {
+  const trimmed = raw.trim();
+  const fence = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/i);
+  return fence ? fence[1].trim() : trimmed;
+}
+
+function asStringList(val: unknown): string[] {
+  if (Array.isArray(val)) {
+    return val.map((x) => (typeof x === "string" ? x.trim() : "")).filter(Boolean);
+  }
+  if (typeof val === "string") {
+    return canonLines(val.split(/\r?\n/));
+  }
+  return [];
+}
+
+function tryParseNaiJson(body: string): NaiParsedEnvelope | null {
+  const unwrapped = unwrapJsonFence(body);
+  const start = unwrapped.indexOf("{");
+  const end = unwrapped.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(unwrapped.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  const r = obj as Record<string, unknown>;
+  const hasKnownKey =
+    "base" in r ||
+    "base_tags" in r ||
+    "base_prose" in r ||
+    "characters" in r ||
+    "uc" in r ||
+    "reply" in r;
+  if (!hasKnownKey) return null;
+
+  let base = typeof r.base === "string" ? r.base.trim() : "";
+  if (!base) {
+    const tags = typeof r.base_tags === "string" ? r.base_tags.trim() : "";
+    const prose = typeof r.base_prose === "string" ? r.base_prose.trim() : "";
+    base = [tags, prose].filter(Boolean).join("\n\n");
+  }
+  const textBlock = typeof r.text === "string" ? r.text.trim() : "";
+  if (textBlock && !/^\s*Text\s*:/im.test(base)) {
+    base = base ? `${base}\n\nText:\n${textBlock}` : `Text:\n${textBlock}`;
+  }
+
+  const rawChars = Array.isArray(r.characters) ? r.characters : [];
+  const characters: string[] = [];
+  const characterUcs: (string | null)[] = [];
+  for (const entry of rawChars) {
+    if (typeof entry === "string") {
+      if (!isBlankBox(entry)) {
+        characters.push(entry.trim());
+        characterUcs.push(null);
+      }
+      continue;
+    }
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const rec = entry as Record<string, unknown>;
+      const prompt = typeof rec.prompt === "string" ? rec.prompt.trim() : "";
+      if (!prompt || isBlankBox(prompt)) continue;
+      const boxUcRaw =
+        typeof rec.uc === "string"
+          ? rec.uc
+          : typeof rec.negative_prompt === "string"
+            ? rec.negative_prompt
+            : null;
+      characters.push(prompt);
+      characterUcs.push(boxUcRaw !== null ? blankToEmpty(boxUcRaw.trim()) : null);
+    }
+  }
+
+  const reply = typeof r.reply === "string" ? r.reply.trim() : "";
+  return {
+    parsed: {
+      base,
+      uc: typeof r.uc === "string" ? r.uc.trim() : "",
+      characters,
+      characterUcs,
+      note: typeof r.note === "string" ? r.note.trim() : "",
+      canon: asStringList(r.canon),
+      memory: asStringList(r.memory),
+    },
+    reply,
+  };
+}
+
+/**
+ * Parse a completion into NovelAI fields plus any optional chat reply,
+ * supporting JSON objects, `<think>`-stripped outputs, and labelled text.
+ */
+export function parseNaiEnvelope(raw: string, chat = false): NaiParsedEnvelope {
+  const clean = stripThinkBlocks(raw);
+  if (!clean) {
+    return { parsed: parseNaiResponse(""), reply: "" };
+  }
+  if (chat) {
+    const split = splitReply(clean);
+    if (!split.prompt.trim() && split.reply) {
+      return { parsed: parseNaiResponse(""), reply: split.reply };
+    }
+    const json = tryParseNaiJson(split.prompt);
+    if (json) {
+      const reply = [split.reply, json.reply].filter(Boolean).join("\n\n").trim();
+      return { parsed: json.parsed, reply };
+    }
+    return { parsed: parseNaiResponse(split.prompt), reply: split.reply };
+  }
+  const json = tryParseNaiJson(clean);
+  if (json) return json;
+  return { parsed: parseNaiResponse(clean), reply: "" };
+}
+
 export function parseNaiResponse(raw: string): NaiParsedResponse {
-  const lines = (raw ?? "").replace(/\r\n/g, "\n").split("\n");
+  const clean = stripThinkBlocks(raw);
+  const json = tryParseNaiJson(clean);
+  if (json) return json.parsed;
+  const lines = clean.replace(/\r\n/g, "\n").split("\n");
   const base: string[] = [];
   const uc: string[] = [];
   const chars: string[][] = [];
@@ -455,17 +586,84 @@ export function normalizeCharIdentity(box: string): string {
 }
 
 /**
+ * Close unmatched `{...}` / `[...]` emphasis markers and drop orphan closers
+ * on non-prose lines, leaving `Text:` untouched.
+ */
+export function balanceEmphasisBrackets(text: string): string {
+  if (!text) return text;
+  const { head, tail } = splitTextBlock(text);
+  const lines = head.split("\n").map((line) => {
+    if (isProseLine(line)) return line;
+    let curly = 0;
+    let square = 0;
+    let out = "";
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === "{") {
+        curly++;
+        out += ch;
+      } else if (ch === "}") {
+        if (curly > 0) {
+          curly--;
+          out += ch;
+        }
+      } else if (ch === "[") {
+        square++;
+        out += ch;
+      } else if (ch === "]") {
+        if (square > 0) {
+          square--;
+          out += ch;
+        }
+      } else {
+        out += ch;
+      }
+    }
+    if (curly > 0) out += "}".repeat(curly);
+    if (square > 0) out += "]".repeat(square);
+    return out;
+  });
+  const out = lines.join("\n").trim();
+  return out === "" ? tail.trimStart() : `${out}${tail}`;
+}
+
+/**
+ * Strip per-character clothing, hair, and eye tags restated on the BASE tag
+ * line when 2+ character boxes are present (prose and `Text:` stay untouched).
+ */
+export function stripRestatedBoxTagsFromBase(base: string, boxes: readonly string[]): string {
+  if (!base || boxes.length < 2) return base;
+  const boxTraits = new Set<string>();
+  for (const box of boxes) {
+    for (const tag of fieldTags(box)) {
+      const kind = tagKind(tag.norm);
+      if (kind === "clothing" || kind === "hair" || (kind === "body" && /\beyes?\b/.test(tag.norm))) {
+        boxTraits.add(tag.norm);
+      }
+    }
+  }
+  if (boxTraits.size === 0) return base;
+  let out = base;
+  for (const tag of new Set(fieldTags(base).map((t) => t.norm))) {
+    if (boxTraits.has(tag)) out = removeTag(out, tag);
+  }
+  return out;
+}
+
+/**
  * One field through every repair, in dependency order: dashes become commas,
- * a hanging span is closed, filler comes out, and only then are digit-suffix
- * names reordered, so the trailing comma that step may add is never mistaken
- * for a strip artefact and removed again.
+ * a hanging span is closed, filler comes out, unmatched emphasis brackets are
+ * balanced, and only then are digit-suffix names reordered, so the trailing
+ * comma that step may add is never mistaken for a strip artefact and removed again.
  */
 function normalizeField(text: string, extraTags: readonly string[] = []): string {
   return normalizeNumericSpans(
-    stripListedTags(normalizeWeightSpans(replaceLongDashes(text)), [
-      ...NAI_QUALITY_FILLER,
-      ...extraTags,
-    ]),
+    balanceEmphasisBrackets(
+      stripListedTags(normalizeWeightSpans(replaceLongDashes(text)), [
+        ...NAI_QUALITY_FILLER,
+        ...extraTags,
+      ]),
+    ),
   );
 }
 
@@ -726,10 +924,13 @@ function balanced(text: string, open: string, close: string): boolean {
 }
 
 /** The corrective turn appended to the user message for the single retry. */
-export function naiRetryInstruction(problems: string[]): string {
+export function naiRetryInstruction(problems: string[], structuredJson = false): string {
+  const closing = structuredJson
+    ? "Correct that answer: fix every one of these and change nothing else. Return the whole prompt again as one valid JSON object matching the schema, with no markdown fences or extra text."
+    : "Correct that answer: fix every one of these and change nothing else. Return the whole prompt again, every field, with the labelled fields only.";
   return `Your previous answer had these problems:
 
 ${problems.map((p) => `- ${p}`).join("\n")}
 
-Correct that answer: fix every one of these and change nothing else. Return the whole prompt again, every field, with the labelled fields only.`;
+${closing}`;
 }

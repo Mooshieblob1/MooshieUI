@@ -803,6 +803,7 @@ pub fn run() {
             commands::prompt_assistant::detect_llm_hardware,
             commands::prompt_assistant::list_llm_catalog,
             commands::prompt_assistant::llm_status,
+            commands::prompt_assistant::lookup_prompt_rag,
             commands::prompt_assistant::download_llm_model,
             commands::prompt_assistant::delete_llm_model,
             commands::prompt_assistant::unload_llm,

@@ -869,6 +869,48 @@ fn custom_shapes_for(base_url: &str, model: &str, tuning: &Tuning) -> Vec<Custom
     }
 }
 
+const JSON_MODE_CACHE_MAX: usize = 256;
+type JsonModeKey = (String, String);
+static JSON_MODE_UNSUPPORTED: std::sync::Mutex<Option<std::collections::HashSet<JsonModeKey>>> =
+    std::sync::Mutex::new(None);
+
+fn json_mode_key(base_url: &str, model: &str) -> JsonModeKey {
+    (
+        base_url.trim().trim_end_matches('/').to_ascii_lowercase(),
+        model.trim().to_ascii_lowercase(),
+    )
+}
+
+fn is_json_mode_unsupported(base_url: &str, model: &str) -> bool {
+    let Ok(guard) = JSON_MODE_UNSUPPORTED.lock() else {
+        return false;
+    };
+    guard
+        .as_ref()
+        .is_some_and(|set| set.contains(&json_mode_key(base_url, model)))
+}
+
+fn record_json_mode_unsupported(base_url: &str, model: &str) {
+    if let Ok(mut guard) = JSON_MODE_UNSUPPORTED.lock() {
+        let set = guard.get_or_insert_with(std::collections::HashSet::new);
+        if set.len() >= JSON_MODE_CACHE_MAX {
+            set.clear();
+        }
+        set.insert(json_mode_key(base_url, model));
+    }
+}
+
+fn allow_json_response_format(base_url: &str, model: &str) -> bool {
+    sampling().json && !is_json_mode_unsupported(base_url, model)
+}
+
+fn with_json_response_format(mut body: serde_json::Value, include_json: bool) -> serde_json::Value {
+    if include_json {
+        body["response_format"] = json!({ "type": "json_object" });
+    }
+    body
+}
+
 /// Send a chat completion to an external OpenAI-compatible endpoint (LM Studio,
 /// OpenAI, OpenRouter, Ollama, ...) instead of the bundled local llama-server.
 /// `base_url` is the API root (e.g. `http://localhost:1234/v1` or
@@ -910,7 +952,11 @@ pub async fn chat_external(
     let shapes = custom_shapes_for(base_url, model, tuning);
     let urls = external_chat_urls(base_url);
     let timeout = chat_timeout(!images.is_empty(), tuning.reasons);
-    let first_body = openai_body_with_shape(model, &messages, max_tokens, tuning, shapes[0]);
+    let use_json_format = allow_json_response_format(base_url, model);
+    let first_body = with_json_response_format(
+        openai_body_with_shape(model, &messages, max_tokens, tuning, shapes[0]),
+        use_json_format,
+    );
     let mut active_url = &urls[0];
     let mut resp = send_external_chat(client, active_url, api_key, &first_body, timeout).await?;
     if resp.status().as_u16() == 404 && urls.len() > 1 {
@@ -927,13 +973,24 @@ pub async fn chat_external(
     let mut used_shape = shapes[0];
     if shapes.len() > 1 && matches!(resp.status().as_u16(), 400 | 422) {
         for &next_shape in &shapes[1..] {
-            let body = openai_body_with_shape(model, &messages, max_tokens, tuning, next_shape);
+            let body = with_json_response_format(
+                openai_body_with_shape(model, &messages, max_tokens, tuning, next_shape),
+                use_json_format,
+            );
             used_shape = next_shape;
             resp = send_external_chat(client, active_url, api_key, &body, timeout).await?;
             if !matches!(resp.status().as_u16(), 400 | 422) {
                 break;
             }
         }
+    }
+    // Some OpenAI-compatible servers reject `response_format` outright even on
+    // bare bodies; drop it once and remember per `(base_url, model)`.
+    if use_json_format && matches!(resp.status().as_u16(), 400 | 422) {
+        record_json_mode_unsupported(base_url, model);
+        let fallback_body =
+            openai_body_with_shape(model, &messages, max_tokens, tuning, used_shape);
+        resp = send_external_chat(client, active_url, api_key, &fallback_body, timeout).await?;
     }
     if !resp.status().is_success() {
         let status = resp.status();
@@ -989,6 +1046,29 @@ impl Default for Tuning {
             cache_system: false,
         }
     }
+}
+
+fn is_nous_reasoning_model(model: &str) -> bool {
+    let m = model.trim().to_ascii_lowercase();
+    [
+        "deepseek-r1",
+        "qwq",
+        "kimi",
+        "thinking",
+        "reasoner",
+        "o1",
+        "o3",
+        "o4",
+        "gpt-5",
+        "gpt-6",
+        "grok-4",
+        "grok-5",
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "hermes-4",
+    ]
+    .iter()
+    .any(|k| m.contains(k))
 }
 
 /// The tuning for `model` on `provider_id`. See [`super::reasoning`].
@@ -1066,6 +1146,32 @@ pub async fn tuning_for(
                     cache_system,
                     ..Tuning::default()
                 },
+            }
+        }
+        "nous" => {
+            if !is_nous_reasoning_model(model) {
+                return Tuning::default();
+            }
+            match setting {
+                r::Setting::ModelDefault => Tuning {
+                    reasons: true,
+                    headroom: r::headroom(Some("medium")),
+                    ..Tuning::default()
+                },
+                r::Setting::Low | r::Setting::Medium | r::Setting::High => {
+                    let level = match setting {
+                        r::Setting::Medium => "medium",
+                        r::Setting::High => "high",
+                        _ => "low",
+                    };
+                    Tuning {
+                        reasons: true,
+                        effort: Some(level.to_string()),
+                        headroom: r::headroom(Some(level)),
+                        custom_thinking: r::CustomThinking::Effort,
+                        ..Tuning::default()
+                    }
+                }
             }
         }
         _ => Tuning::default(),
@@ -2535,7 +2641,7 @@ mod reasoning_body_tests {
         assert!(bare.get("reasoning_effort").is_none());
 
         assert_eq!(
-            tuning("nous", "hermes-4-405b", Setting::Low),
+            tuning("nous", "hermes-3-llama-3.1-70b", Setting::Low),
             Tuning::default()
         );
     }
@@ -2782,5 +2888,123 @@ mod reasoning_body_tests {
         );
         assert_eq!(body["temperature"], 0.7);
         assert_eq!(body["max_tokens"], 192);
+    }
+
+    #[tokio::test]
+    async fn nous_tuning_handles_reasoning_and_standard_models() {
+        let client = reqwest::Client::new();
+        let reasoning = tuning_for(
+            &client,
+            "nous",
+            "https://inference-api.nousresearch.com/v1",
+            "nousresearch/hermes-4-405b",
+            Setting::Low,
+        )
+        .await;
+        assert!(reasoning.reasons);
+        assert_eq!(reasoning.effort.as_deref(), Some("low"));
+        assert_eq!(reasoning.headroom, 2048);
+
+        let plain = tuning_for(
+            &client,
+            "nous",
+            "https://inference-api.nousresearch.com/v1",
+            "meta-llama/llama-3.3-70b",
+            Setting::Low,
+        )
+        .await;
+        assert!(!plain.reasons);
+        assert!(plain.effort.is_none());
+        assert_eq!(plain.headroom, 0);
+    }
+
+    #[tokio::test]
+    async fn external_json_mode_sends_response_format_and_falls_back_on_400() {
+        use std::sync::{Arc, Mutex};
+        let seen: Arc<Mutex<Vec<Option<serde_json::Value>>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_clone = Arc::clone(&seen);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let seen_clone = Arc::clone(&seen_clone);
+                async move {
+                    use axum::response::IntoResponse;
+                    seen_clone
+                        .lock()
+                        .unwrap()
+                        .push(body.get("response_format").cloned());
+                    if body.get("response_format").is_some() {
+                        return (
+                            axum::http::StatusCode::BAD_REQUEST,
+                            "unsupported response_format",
+                        )
+                            .into_response();
+                    }
+                    axum::Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "{\"base\":\"ok\"}" } }]
+                    }))
+                    .into_response()
+                }
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}/v1");
+        let sampling = super::Sampling {
+            temperature: Some(0.2),
+            json: true,
+        };
+        let first = super::with_sampling(
+            sampling,
+            super::chat_external(
+                &client,
+                &base,
+                "",
+                "test-no-json",
+                "sys",
+                &[],
+                "hi",
+                64,
+                &[],
+                &Tuning::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first, "{\"base\":\"ok\"}");
+
+        let second = super::with_sampling(
+            sampling,
+            super::chat_external(
+                &client,
+                &base,
+                "",
+                "test-no-json",
+                "sys",
+                &[],
+                "hi",
+                64,
+                &[],
+                &Tuning::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second, "{\"base\":\"ok\"}");
+
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded.len(), 3);
+        assert_eq!(
+            recorded[0],
+            Some(serde_json::json!({ "type": "json_object" }))
+        );
+        assert_eq!(recorded[1], None);
+        assert_eq!(recorded[2], None);
     }
 }

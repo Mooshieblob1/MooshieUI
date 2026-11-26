@@ -103,6 +103,41 @@ fn xai_vision_support(model: &str) -> Option<bool> {
     None
 }
 
+fn nous_vision_support(base: &str, model: &str) -> Option<bool> {
+    if let Some(cached) = cached_probe(base, model) {
+        return match cached {
+            VisionSupport::Supported => Some(true),
+            VisionSupport::Unsupported => Some(false),
+            VisionSupport::Unknown => None,
+        };
+    }
+    let m = model.trim().to_ascii_lowercase();
+    if m.is_empty() {
+        return None;
+    }
+    if [
+        "-vl",
+        "vl-",
+        "vision",
+        "claude",
+        "gpt-4o",
+        "gpt-5",
+        "gemini",
+        "grok-4",
+        "grok-5",
+        "kimi-k2.5",
+        "pixtral",
+        "llava",
+        "internvl",
+    ]
+    .iter()
+    .any(|k| m.contains(k))
+    {
+        return Some(true);
+    }
+    None
+}
+
 /// Non-blocking check of whether the configured external `(provider_id, base_url, model)`
 /// supports image inputs: `Some(true)` = yes, `Some(false)` = text-only, `None` = unknown.
 pub fn cached_external_vision_support(
@@ -115,6 +150,7 @@ pub fn cached_external_vision_support(
         "anthropic" | "chatgpt" | "gemini-cli" => Some(true),
         "openai" => openai_vision_support(model),
         "xai" | "xai-oauth" => xai_vision_support(model),
+        "nous" => nous_vision_support(&base, model),
         "openrouter" => super::reasoning::cached_openrouter_vision(model),
         _ => match cached_probe(&base, model) {
             Some(VisionSupport::Supported) => Some(true),
@@ -762,6 +798,14 @@ mod tests {
         assert_eq!(
             cached_external_vision_support("xai", "", "grok-3"),
             Some(false)
+        );
+        assert_eq!(
+            cached_external_vision_support("nous", "", "qwen/qwen3-vl-32b"),
+            Some(true)
+        );
+        assert_eq!(
+            cached_external_vision_support("nous", "", "nousresearch/hermes-4-405b"),
+            None
         );
     }
 

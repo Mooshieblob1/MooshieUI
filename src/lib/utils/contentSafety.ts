@@ -481,3 +481,39 @@ MINORS
   return `${head}
 - This is a safe-for-work image. Do not add nudity or sexual or suggestive tags the user did not ask for.`;
 }
+
+/**
+ * Whether an HTTP error message indicates an external provider declined the
+ * request on policy or safety grounds (HTTP 400 or 403, or explicit tag).
+ */
+export function isProviderRefusal(msg: string): boolean {
+  const m = (msg ?? "").trim();
+  if (!m) return false;
+  if (m.includes("provider_refused")) return true;
+  if (/\b(?:400|403)\b/.test(m)) {
+    return /permission-denied|content[_\s-]*(?:filter|moderation|polic)|policy[_\s-]*violation|safety|unsafe|inappropriate|can'?t help|cannot help|unable to assist|decline/i.test(
+      m,
+    );
+  }
+  return false;
+}
+
+/**
+ * Whether an HTTP 200 completion body looks like a short policy/safety refusal
+ * rather than a prompt, chat reply, or JSON envelope.
+ */
+export function isTextRefusal(text: string): boolean {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed || trimmed.length > 600) return false;
+  if (
+    /^\s*(?:BASE|UC|CHAR(?:\s*\d+)?(?:\s+UC)?|PROMPT|NAME|NEGATIVE|integrated_multimodal_description|subject_definitions)\s*:/im.test(
+      trimmed,
+    )
+  ) {
+    return false;
+  }
+  if (/^\s*[{[]/.test(trimmed)) return false;
+  return /^(?:I(?:'m| am)?\s+(?:sorry|unable|afraid|not able)|Sorry,?\s+I\s+(?:can'?t|cannot|won'?t|am unable)|I\s+(?:cannot|can'?t|won'?t|will not|must decline|refuse)\s+(?:to\s+)?(?:help|assist|fulfill|generate|create|write|comply|process)|As an AI\b|This request (?:violates|conflicts with|cannot be)|That violates)/i.test(
+    trimmed,
+  );
+}

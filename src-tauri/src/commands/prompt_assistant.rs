@@ -24,6 +24,10 @@ pub struct LlmStatus {
     /// Installed bundled vision model that `Describe image` will use when needed
     /// (preferring JoyCaption Beta One).
     pub describe_model: Option<String>,
+    /// Configured model tier (`auto` | `compact` | `standard` | `full`).
+    pub model_tier: String,
+    /// Whether opt-in online Danbooru lookup is enabled.
+    pub online_rag_enabled: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,7 +79,7 @@ pub async fn list_llm_catalog() -> Result<Vec<LlmCatalogEntry>, AppError> {
 #[tauri::command]
 pub async fn llm_status(state: State<'_, Arc<AppState>>) -> Result<LlmStatus, AppError> {
     let pa = &state.prompt_assistant;
-    let (external_enabled, external_vision, local_model_id) = {
+    let (external_enabled, external_vision, local_model_id, model_tier, online_rag_enabled) = {
         let cfg = state.config.read().await;
         let ext_vision = if cfg.llm_external_enabled {
             crate::prompt_assistant::vision::cached_external_vision_support(
@@ -90,6 +94,8 @@ pub async fn llm_status(state: State<'_, Arc<AppState>>) -> Result<LlmStatus, Ap
             cfg.llm_external_enabled,
             ext_vision,
             cfg.prompt_assistant_model_id.clone(),
+            cfg.llm_model_tier.clone(),
+            cfg.llm_online_rag_enabled,
         )
     };
     Ok(LlmStatus {
@@ -99,7 +105,20 @@ pub async fn llm_status(state: State<'_, Arc<AppState>>) -> Result<LlmStatus, Ap
         external_enabled,
         external_vision,
         describe_model: pa.vision_model(local_model_id.as_deref()),
+        model_tier,
+        online_rag_enabled,
     })
+}
+
+/// Retrieve grounded Danbooru tags, character/series names, and optional cached
+/// Danbooru canon traits for prompt enhancement or character editing.
+#[tauri::command]
+pub async fn lookup_prompt_rag(
+    state: State<'_, Arc<AppState>>,
+    query: crate::prompt_assistant::rag::RagQuery,
+) -> Result<crate::prompt_assistant::rag::RagResult, AppError> {
+    let online_enabled = state.config.read().await.llm_online_rag_enabled;
+    Ok(crate::prompt_assistant::rag::lookup(&state.http_client, &query, online_enabled).await)
 }
 
 #[tauri::command]

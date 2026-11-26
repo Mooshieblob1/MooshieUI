@@ -6175,7 +6175,7 @@ async fn dispatch_command(
             // `external_enabled` decides whether the frontend offers the
             // assistant at all: with an external provider configured it is
             // usable with no local model installed.
-            let (external_enabled, external_vision, local_model_id) = {
+            let (external_enabled, external_vision, local_model_id, model_tier, online_rag_enabled) = {
                 let cfg = state.config.read().await;
                 let ext_vision = if cfg.llm_external_enabled {
                     crate::prompt_assistant::vision::cached_external_vision_support(
@@ -6190,6 +6190,8 @@ async fn dispatch_command(
                     cfg.llm_external_enabled,
                     ext_vision,
                     cfg.prompt_assistant_model_id.clone(),
+                    cfg.llm_model_tier.clone(),
+                    cfg.llm_online_rag_enabled,
                 )
             };
             Ok(serde_json::json!({
@@ -6199,7 +6201,19 @@ async fn dispatch_command(
                 "external_enabled": external_enabled,
                 "external_vision": external_vision,
                 "describe_model": pa.vision_model(local_model_id.as_deref()),
+                "model_tier": model_tier,
+                "online_rag_enabled": online_rag_enabled,
             }))
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "lookup_prompt_rag" => {
+            let query: crate::prompt_assistant::rag::RagQuery =
+                serde_json::from_value(args["query"].clone()).map_err(|e| e.to_string())?;
+            let online_enabled = state.config.read().await.llm_online_rag_enabled;
+            let res =
+                crate::prompt_assistant::rag::lookup(&state.http_client, &query, online_enabled)
+                    .await;
+            serde_json::to_value(res).map_err(|e| e.to_string())
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
         "unload_llm" => {
@@ -10141,6 +10155,7 @@ mod lan_access_scope_tests {
         // Using the assistant stays open to every account.
         assert_eq!(min_role_for_command("enhance_prompt"), UserRole::User);
         assert_eq!(min_role_for_command("llm_status"), UserRole::User);
+        assert_eq!(min_role_for_command("lookup_prompt_rag"), UserRole::User);
     }
 
     #[test]

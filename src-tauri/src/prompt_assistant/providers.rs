@@ -230,6 +230,10 @@ pub struct LlmProviderState {
     /// The client id sign-in falls back to while the override above is empty,
     /// so the settings UI can show which one is actually in play.
     pub xai_client_id_default: String,
+    /// Configured model tier (`auto` | `compact` | `standard` | `full`).
+    pub model_tier: String,
+    /// Whether opt-in Danbooru online RAG lookup is enabled.
+    pub online_rag_enabled: bool,
 }
 
 /// Project the provider-relevant slice of config, minus the secret.
@@ -248,6 +252,8 @@ pub fn state_of(cfg: &AppConfig) -> LlmProviderState {
         xai_client_id: cfg.llm_xai_client_id.clone(),
         xai_scope: cfg.llm_xai_scope.clone(),
         xai_client_id_default: super::oauth::XAI_DEFAULT_CLIENT_ID.to_string(),
+        model_tier: cfg.llm_model_tier.clone(),
+        online_rag_enabled: cfg.llm_online_rag_enabled,
     }
 }
 

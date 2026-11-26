@@ -128,6 +128,11 @@ jobs:
           npx esbuild scripts/tests/enhanceChat.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/enhanceChat.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/enhanceChat.test.mjs"
 
+      - name: LLM RAG, tiering, and structured parser tests
+        run: |
+          npx esbuild scripts/tests/llmRagAndTier.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/llmRagAndTier.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/llmRagAndTier.test.mjs"
+
       - name: NovelAI layout cleanup tests
         run: |
           npx esbuild scripts/tests/naiLayout.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/naiLayout.test.mjs" --log-level=warning

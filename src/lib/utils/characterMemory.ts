@@ -9,6 +9,7 @@
  */
 
 import { namesCharacter } from "./contentSafety.js";
+import type { EffectiveLlmTier } from "./llmTier.js";
 
 export interface CharacterMemoryFile {
   id: string;
@@ -74,8 +75,15 @@ const LARGE_LOCAL_MODEL_IDS = new Set([
   "qwen38-27b",
 ]);
 
-/** Pick the character memory budget for the active backend and model. */
-export function memoryBudgetFor(usesExternal: boolean, localModelId?: string | null): MemoryBudget {
+/** Pick the character memory budget for the active backend and model tier. */
+export function memoryBudgetFor(
+  usesExternal: boolean,
+  localModelId?: string | null,
+  tier?: EffectiveLlmTier,
+): MemoryBudget {
+  if (tier === "compact") return LOCAL_SMALL_MEMORY_BUDGET;
+  if (tier === "standard") return LOCAL_LARGE_MEMORY_BUDGET;
+  if (tier === "full") return DEFAULT_MEMORY_BUDGET;
   if (usesExternal) return DEFAULT_MEMORY_BUDGET;
   if (localModelId && LARGE_LOCAL_MODEL_IDS.has(localModelId)) return LOCAL_LARGE_MEMORY_BUDGET;
   return LOCAL_SMALL_MEMORY_BUDGET;
@@ -193,21 +201,91 @@ export function memorySize(files: readonly CharacterMemoryFile[]): number {
   return files.reduce((n, f) => n + f.content.trim().length, 0);
 }
 
+const STOPWORDS = new Set([
+  "the", "and", "with", "for", "that", "this", "from", "into", "her", "his",
+  "she", "him", "they", "them", "their", "one", "two", "are", "was", "were",
+  "have", "has", "not", "but", "you", "your", "out", "about",
+]);
+
+function queryTerms(hint: string): string[] {
+  const words = hint
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/)
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+  return [...new Set(words)];
+}
+
+function scoreLinesForTerms(text: string, terms: readonly string[]): number {
+  if (terms.length === 0) return 0;
+  const lower = text.toLowerCase();
+  let hits = 0;
+  for (const t of terms) {
+    if (lower.includes(t)) hits++;
+  }
+  return hits;
+}
+
+function selectRelevantBody(body: string, room: number, terms: readonly string[]): string {
+  if (terms.length === 0 || body.length <= room) {
+    return `${body.slice(0, room).trimEnd()} …`;
+  }
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length <= 1) return `${body.slice(0, room).trimEnd()} …`;
+  const ranked = lines
+    .map((line, idx) => ({ line, idx, score: scoreLinesForTerms(line, terms) }))
+    .sort((a, b) => b.score - a.score || a.idx - b.idx);
+  const picked: { line: string; idx: number }[] = [];
+  let used = 0;
+  for (const item of ranked) {
+    if (item.score === 0 && picked.length > 0) break;
+    const cost = item.line.length + (picked.length > 0 ? 1 : 0);
+    if (used + cost > room) continue;
+    picked.push({ line: item.line, idx: item.idx });
+    used += cost;
+  }
+  if (picked.length === 0) return `${body.slice(0, room).trimEnd()} …`;
+  picked.sort((a, b) => a.idx - b.idx);
+  const joined = picked.map((p) => p.line).join("\n");
+  return picked.length < lines.length ? `${joined} …` : joined;
+}
+
 /**
  * The files as one block of Markdown, each under its name, for a request.
  * `limit` cuts the end off when the notes run long; 0 sends them whole, which
  * the requests that write files back need so a cut file is not saved short.
+ * When `queryHint` is provided and total length exceeds `limit`, files and lines
+ * with keyword overlap are surfaced first so tight budgets keep relevant facts.
  */
-export function memoryContext(files: readonly CharacterMemoryFile[], limit = MEMORY_CONTEXT_LIMIT): string {
+export function memoryContext(
+  files: readonly CharacterMemoryFile[],
+  limit = MEMORY_CONTEXT_LIMIT,
+  queryHint = "",
+): string {
+  const nonEmpty = files
+    .map((f, idx) => ({ name: f.name, body: f.content.trim(), idx }))
+    .filter((f) => f.body.length > 0);
+  if (nonEmpty.length === 0) return "";
+
+  const plainParts = nonEmpty.map((f) => `### ${f.name}\n${f.body}`);
+  const plainJoined = plainParts.join("\n\n");
+  const terms = limit > 0 && plainJoined.length > limit && queryHint.trim() ? queryTerms(queryHint) : [];
+
+  const ordered =
+    terms.length > 0
+      ? [...nonEmpty]
+          .map((f) => ({ ...f, score: scoreLinesForTerms(`${f.name}\n${f.body}`, terms) }))
+          .sort((a, b) => b.score - a.score || a.idx - b.idx)
+      : nonEmpty;
+
   const parts: string[] = [];
   let used = 0;
-  for (const f of files) {
-    const body = f.content.trim();
-    if (!body) continue;
-    const block = `### ${f.name}\n${body}`;
+  for (const f of ordered) {
+    const block = `### ${f.name}\n${f.body}`;
     if (limit > 0 && used + block.length > limit) {
       const room = limit - used - f.name.length - 6;
-      if (room > 80) parts.push(`### ${f.name}\n${body.slice(0, room).trimEnd()} …`);
+      if (room > 80) {
+        parts.push(`### ${f.name}\n${selectRelevantBody(f.body, room, terms)}`);
+      }
       break;
     }
     parts.push(block);
@@ -490,6 +568,7 @@ export function memoryForRequest<T extends MemoryCandidate>(
   texts: readonly string[],
   existing = "",
   budget: MemoryBudget = DEFAULT_MEMORY_BUDGET,
+  queryHint = "",
 ): (T & { notes: string })[] {
   const said = texts.filter(Boolean).join("\n");
   const lowerSaid = said.toLowerCase();
@@ -509,7 +588,7 @@ export function memoryForRequest<T extends MemoryCandidate>(
     owners.add(card.ownerId);
     // A character with no notes yet still goes out, so the assistant can
     // save what it works out about them the first time.
-    const notes = memoryContext(card.memory, Math.min(budget.perCharacter, left)) || MEMORY_NONE;
+    const notes = memoryContext(card.memory, Math.min(budget.perCharacter, left), queryHint) || MEMORY_NONE;
     left -= notes.length;
     out.push({ ...card, notes });
   }

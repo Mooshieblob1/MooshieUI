@@ -860,6 +860,10 @@ export interface AppConfig {
   llm_fallback_local?: boolean;
   /** "low" (default), "medium", "high", or "default" for each model's own. */
   llm_reasoning_effort?: string;
+  /** Prompt detail / model tier: "auto" (default), "compact", "standard", or "full". */
+  llm_model_tier?: string;
+  /** Opt-in Danbooru tag + character wiki RAG lookup (cached in local SQLite). */
+  llm_online_rag_enabled?: boolean;
   /** OAuth client id presented to xAI; empty until an operator supplies one. */
   llm_xai_client_id: string;
   /** Scope override for the xAI sign-in; empty means the backend default. */
@@ -1072,6 +1076,26 @@ export interface LlmStatus {
   external_enabled: boolean;
   external_vision?: boolean | null;
   describe_model?: string | null;
+  model_tier?: string;
+  online_rag_enabled?: boolean;
+}
+
+export interface RagCanonEntry {
+  tag: string;
+  series?: string | null;
+  summary: string;
+  traits: string[];
+  source: string;
+}
+
+export interface PromptRagResult {
+  promptBlock: string;
+  characters: string[];
+  copyrights: string[];
+  artists: string[];
+  tags: string[];
+  canon: RagCanonEntry[];
+  onlineUsed: boolean;
 }
 
 export interface PromptAssistantOpts {
@@ -1134,6 +1158,8 @@ export interface LlmProviderState {
   xai_scope: string;
   /** The client id sign-in uses while the override is empty, shown as its hint. */
   xai_client_id_default: string;
+  model_tier?: string;
+  online_rag_enabled?: boolean;
 }
 
 /** The one-time code the xAI device sign-in wants typed on xAI's page. */

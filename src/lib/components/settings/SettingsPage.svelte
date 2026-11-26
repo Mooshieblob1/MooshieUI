@@ -23,6 +23,7 @@
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import LlmProviderPanel from "./LlmProviderPanel.svelte";
+  import { resolveLlmModelTier } from "../../utils/llmTier.js";
   import McpServerPanel from "./McpServerPanel.svelte";
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
@@ -1875,6 +1876,17 @@
     config.llm_xai_client_id = next.xai_client_id;
     config.llm_xai_scope = next.xai_scope;
   }
+
+  const resolvedModelTier = $derived(
+    resolveLlmModelTier({
+      setting: config?.llm_model_tier ?? "auto",
+      usesExternal: promptAssistant.usesExternal,
+      provider: promptAssistant.provider?.provider,
+      baseUrl: promptAssistant.provider?.base_url,
+      model: promptAssistant.provider?.model,
+      localModelId: promptAssistant.activeLocalModelId,
+    }),
+  );
 
   /** Install a different attention backend and update config. */
   async function handleAttentionChange(backend: string) {
@@ -4933,6 +4945,52 @@
                 step="30"
                 class="w-full accent-indigo-500"
               />
+            </div>
+
+            <div class="space-y-3 pt-1 border-t border-neutral-800/80">
+              <div>
+                <label for="llm-model-tier" class="text-xs text-neutral-400 flex items-center gap-1 mb-1">
+                  {locale.t('settings.prompt_assistant.model_tier')}
+                  <InfoTip text={locale.t('settings.prompt_assistant.model_tier_tip')} />
+                </label>
+                <select
+                  id="llm-model-tier"
+                  value={config.llm_model_tier || 'auto'}
+                  onchange={(e) => {
+                    if (!config) return;
+                    config.llm_model_tier = e.currentTarget.value;
+                    void autoSave().then(() => promptAssistant.refreshStatus());
+                  }}
+                  class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                >
+                  <option value="auto">
+                    {locale.t('settings.prompt_assistant.model_tier_auto', {
+                      resolved: locale.t(`settings.prompt_assistant.model_tier_${resolvedModelTier}_short`),
+                    })}
+                  </option>
+                  <option value="compact">{locale.t('settings.prompt_assistant.model_tier_compact')}</option>
+                  <option value="standard">{locale.t('settings.prompt_assistant.model_tier_standard')}</option>
+                  <option value="full">{locale.t('settings.prompt_assistant.model_tier_full')}</option>
+                </select>
+              </div>
+
+              <label for="llm-online-rag" class="flex items-center justify-between gap-3 cursor-pointer">
+                <span class="text-xs text-neutral-300 flex items-center gap-1">
+                  {locale.t('settings.prompt_assistant.online_rag')}
+                  <InfoTip text={locale.t('settings.prompt_assistant.online_rag_tip')} />
+                </span>
+                <input
+                  id="llm-online-rag"
+                  type="checkbox"
+                  checked={!!config.llm_online_rag_enabled}
+                  onchange={(e) => {
+                    if (!config) return;
+                    config.llm_online_rag_enabled = e.currentTarget.checked;
+                    void autoSave().then(() => promptAssistant.refreshStatus());
+                  }}
+                  class="accent-indigo-500 w-4 h-4 shrink-0"
+                />
+              </label>
             </div>
 
             <!-- External LLM provider (#389). Its own component: every field
