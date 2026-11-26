@@ -219,6 +219,7 @@ function memoryNotes(texts: string[], existing: string): Map<string, string> {
     texts,
     existing,
     promptAssistant.memoryBudget,
+    texts.filter(Boolean).join(" "),
   );
   return new Map(picks.map((p) => [p.id, p.notes]));
 }

@@ -23,6 +23,7 @@ import type { ContentRating } from "./contentSafety.js";
 import { naiKeptArtistsDirective } from "./naiArtists.js";
 import { naiLanguageDirective } from "./naiLanguage.js";
 import type { NaiLanguage } from "./naiLanguage.js";
+import type { EffectiveLlmTier } from "./llmTier.js";
 
 export type NaiVariant = "curated" | "full";
 
@@ -113,6 +114,14 @@ export interface NaiPromptContext {
    * The user's NAI Enhance toggle; absent is on.
    */
   minorRule?: boolean;
+  /** Model tier controlling system prompt verbosity (`"full"` preserves the complete spec). */
+  tier?: EffectiveLlmTier;
+  /** Raw user request text used to slice only relevant rule modules on smaller tiers. */
+  requestText?: string;
+  /** Grounded Danbooru / character RAG notes retrieved for this turn. */
+  ragContext?: string;
+  /** Request structured JSON output instead of labelled plain-text sections. */
+  structuredJson?: boolean;
 }
 
 /**
@@ -548,32 +557,186 @@ ${current}
 - Every answer is still a complete prompt in the output format, never a diff against an earlier answer.`;
 }
 
+/** Optional V5 rule modules triggered by the request context for smaller model tiers. */
+export interface NaiRuleSelection {
+  multiChar: boolean;
+  comicsAndText: boolean;
+  occlusion: boolean;
+  transparency: boolean;
+  furryOrScenery: boolean;
+  outfitSwap: boolean;
+}
+
+/** Decide which optional V5 rule blocks a request actually needs. */
+export function selectNaiRuleModules(ctx: NaiPromptContext): NaiRuleSelection {
+  const corpus = [
+    ctx.requestText ?? "",
+    ctx.existing?.base ?? "",
+    ...(ctx.existing?.characters ?? []),
+    ctx.savedCharacters ?? "",
+  ].join("\n");
+  return {
+    multiChar:
+      ctx.characterCount >= 2 ||
+      (ctx.existing?.characters.length ?? 0) >= 2 ||
+      /\b(?:2|3|4|5|two|three|four|five|couple|pair|both|girls|boys|hug|kiss|holding hands|headpat|carrying|vs|versus|beside|next to)\b/i.test(
+        corpus,
+      ),
+    comicsAndText:
+      /\b(?:comic|panel|manga|4koma|speech bubble|thought bubble|dialogue|lettering|sign|neon sign|poster|banner|subtitle|caption|logo|word|words|text|says?|shouts?|whispers?)\b|"[^"]+"/i.test(
+        corpus,
+      ),
+    occlusion:
+      /\b(?:table|desk|counter|railing|bar|booth|window|wall|fence|behind|hidden|obscured|occluded|peeking|sitting at|leaning)\b/i.test(
+        corpus,
+      ),
+    transparency:
+      /\b(?:transparent background|alpha|cut-?out|sticker|isolated on|png transparent|no background)\b/i.test(
+        corpus,
+      ),
+    furryOrScenery:
+      ctx.ucPreset === 4 ||
+      /\b(?:furry|anthro|kemono|scenery|landscape|still life|no humans|no people|0girls|empty room|architecture|cityscape)\b/i.test(
+        corpus,
+      ),
+    outfitSwap:
+      /\b(?:outfit|costume|uniform|cosplay|wearing|clothes from|dressed as|swap|dress|bikini|swimsuit)\b/i.test(
+        corpus,
+      ) &&
+      (!!ctx.savedCharacters?.trim() || ctx.references.length > 0 || /\bwearing\b/i.test(corpus)),
+  };
+}
+
+const COMPACT_CORE_RULES = `You are rewriting a user's idea into a NovelAI Diffusion V5 prompt.
+
+FORMAT & RULES
+- V5 is hybrid: Danbooru identity/setting tags first (comma separated), then a blank line, then natural language prose describing layout, action, camera, lighting, and mood.
+- Base tag order: {count}, {series/character ids}, {complexity}, {shot/framing}, {location/time}, {artists if named}, {misc tags}.
+- Character boxes start with girl, boy or other (never 1girl or Character 1). Counts belong in BASE only. A single subject needs at most one box.
+- Use V5 tokens where helpful: high complexity (default; ultra complexity on Full only), depthness. V5 names: peace sign (not v), double peace, bar eyes, neutral face, character image.
+- Emphasis: {tag} (x1.05), [tag] (/1.05), 1.5::tag:: (close every :: span; put digit-ending names like as109 first inside spans).
+- Never use em dashes or en dashes; use commas, colons, or ASCII hyphens. Never output quality filler (masterpiece, best quality, very aesthetic, absurdres, high quality, beautiful detailed eyes, no text).
+- Keep named characters using Danbooru tags + series tags. Only restate canon traits when obscure or needed to stop bleed. Unrecognized names go in NOTE:.
+- Omit unasked details and negative boilerplate already covered by the UC preset.`;
+
+const COMPACT_MULTI_CHAR = `MULTI-CHARACTER & BLEED
+- Interaction tags required when characters interact: source#action in actor box, target#action in recipient box (or mutual#action), plus matching prose.
+- Put outfit, hair, and eye tags inside each character's own CHAR box, never restated on the BASE tag line (BASE prose may name one garment only to place left/right).
+- Put matching placement tags (on the left, on the right, in the center) in both BASE prose and each CHAR box.
+- Write each CHAR n UC with the other characters' distinctive clothing tags (omit when dressed alike).`;
+
+const COMPACT_OCCLUSION = `LAYOUT & OCCLUSION
+- Put scene objects and relative tags (table, table in foreground, behind table, sitting in chair) in BASE only, backed by one short present-tense sentence.
+- Never name scene objects or write opaque/not-transparent assertions inside CHAR or UC, and omit lower-body clothing hidden behind objects.`;
+
+const COMPACT_COMICS_TEXT = `TEXT & COMICS
+- Add text + language tag (e.g. english text) plus speech bubble/border if applicable.
+- Quote spoken lines in BASE prose by speaker; put only the literal rendered words (one block per bubble, blank line between) in Text: at the very end of BASE.`;
+
+const COMPACT_TRANSPARENCY = `TRANSPARENCY
+- For cut-outs only: transparent background (or 2.1::transparent background::), has alpha, alpha transparency. Never use in ordinary scenes.`;
+
+const COMPACT_DATASET = `DATASET PREFIXES
+- Start furry/kemono prompts with fur dataset; start no-people scenery/still-life with background dataset, no humans.`;
+
+const COMPACT_OUTFIT_SWAP = `OUTFIT SWAP
+- Keep wearer A's name, hair, eyes, and face; take only B's outfit for A's box, and put B's name/hair/eyes in UC.`;
+
+const COMPACT_VARIANT: Record<NaiVariant, string> = {
+  curated: `VARIANT: V5 CURATED (budget <= 703 tokens; text <= 374 chars; 1-3 prose sentences; high complexity max; suggest Full in NOTE: only if genuinely over budget).`,
+  full: `VARIANT: V5 FULL (budget <= 1471 tokens; text <= 750 chars; rich prose allowed; use ultra complexity for ornate scenes/comics).`,
+};
+
+function compactUcDirective(ucPreset: number): string {
+  if (ucPreset === 3) {
+    return `UNDESIRED CONTENT\nPreset is None: write concise scene-specific failure negatives (skip quality filler like worst quality or lowres).`;
+  }
+  return `UNDESIRED CONTENT\nPreset is ${ucPresetName(ucPreset)} (already covers ${ucPresetTags(ucPreset)}). Write custom motif/bleed/displaced-canon negatives only; leave empty when none apply.`;
+}
+
+const JSON_OUTPUT_CONTRACT = `OUTPUT FORMAT (JSON ONLY)
+Return one valid JSON object and nothing else (no markdown fences, no preamble):
+{
+  "base_tags": "count, series, character, high complexity, framing, setting",
+  "base_prose": "Natural language description of layout, action, lighting, and mood.",
+  "text": "",
+  "uc": "",
+  "characters": [{ "prompt": "girl, name, traits, outfit, pose, side", "uc": "" }],
+  "note": "",
+  "reply": ""
+}
+Rules:
+- Omit entries in "characters" (use []) when there are no distinct characters to separate into boxes. Leave "text", "uc", "note", and "reply" as "" when unused.
+- Put only literal in-image lettering inside "text" (separate bubbles/signs with a blank line).
+- If this is a chat question with no prompt edit requested, put your answer in "reply" and leave "base_tags" and "base_prose" as "".`;
+
 /**
  * The V5 system prompt split into its static ~4.7k-token specification prefix
  * (eligible for prompt caching on Anthropic and OpenRouter Anthropic models)
  * and the per-request/per-session dynamic suffix.
  */
 export function naiRewriteSystemPromptParts(ctx: NaiPromptContext): { cached: string; dynamic: string } {
+  const tier = ctx.tier ?? "full";
+  const outputBlock = ctx.structuredJson ? JSON_OUTPUT_CONTRACT : OUTPUT_CONTRACT;
+
+  if (tier === "full") {
+    const cached = [
+      SHARED_RULES,
+      naiVocabularyBlock(ctx.rating ?? "sfw", ctx.minorRule ?? true),
+      SHARED_RULES_TAIL,
+      VARIANT_BLOCKS[ctx.variant],
+      QUALITY_TAGS,
+      ucPresetDirective(ctx.ucPreset),
+      TECHNIQUE,
+    ]
+      .filter((block) => block !== "")
+      .join("\n\n");
+    const dynamic = [
+      ctx.savedCharacters ?? "",
+      ctx.ragContext ?? "",
+      sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
+      sessionDirective(ctx.inSession, ctx.existing !== null),
+      ctx.recipes ?? "",
+      naiKeptArtistsDirective(ctx.keptArtists),
+      referenceDirective(ctx.references),
+      naiLanguageDirective(ctx.language),
+      outputBlock,
+    ]
+      .filter((block) => block !== "")
+      .join("\n\n");
+    return { cached, dynamic };
+  }
+
+  const mods = selectNaiRuleModules(ctx);
+  const exampleBlock =
+    tier === "standard" && mods.multiChar
+      ? TECHNIQUE.slice(TECHNIQUE.indexOf("MULTI-CHARACTER EXAMPLE"), TECHNIQUE.indexOf("LAYOUT AND OCCLUSION")).trim()
+      : "";
   const cached = [
-    SHARED_RULES,
+    COMPACT_CORE_RULES,
     naiVocabularyBlock(ctx.rating ?? "sfw", ctx.minorRule ?? true),
-    SHARED_RULES_TAIL,
-    VARIANT_BLOCKS[ctx.variant],
-    QUALITY_TAGS,
-    ucPresetDirective(ctx.ucPreset),
-    TECHNIQUE,
+    COMPACT_VARIANT[ctx.variant],
+    compactUcDirective(ctx.ucPreset),
+    mods.multiChar ? COMPACT_MULTI_CHAR : "",
+    exampleBlock,
+    mods.occlusion ? COMPACT_OCCLUSION : "",
+    mods.comicsAndText ? COMPACT_COMICS_TEXT : "",
+    mods.transparency ? COMPACT_TRANSPARENCY : "",
+    mods.furryOrScenery ? COMPACT_DATASET : "",
+    mods.outfitSwap ? COMPACT_OUTFIT_SWAP : "",
   ]
     .filter((block) => block !== "")
     .join("\n\n");
   const dynamic = [
     ctx.savedCharacters ?? "",
+    ctx.ragContext ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
     sessionDirective(ctx.inSession, ctx.existing !== null),
     ctx.recipes ?? "",
     naiKeptArtistsDirective(ctx.keptArtists),
     referenceDirective(ctx.references),
     naiLanguageDirective(ctx.language),
-    OUTPUT_CONTRACT,
+    outputBlock,
   ]
     .filter((block) => block !== "")
     .join("\n\n");
@@ -634,14 +797,19 @@ function variantLabel(variant: NaiVariant): string {
 
 /** The user turn: the raw prompt plus what the model needs to know about the scene. */
 export function naiUserPrompt(prompt: string, ctx: NaiPromptContext): string {
-  if (ctx.existing) return naiEditUserPrompt(prompt, ctx.existing, ctx.references);
-  if (ctx.inSession) return naiSessionUserPrompt(prompt, ctx.references);
+  const json = !!ctx.structuredJson;
+  if (ctx.existing) return naiEditUserPrompt(prompt, ctx.existing, ctx.references, json);
+  if (ctx.inSession) return naiSessionUserPrompt(prompt, ctx.references, json);
 
   const boxes =
     ctx.characterCount > 0
-      ? `\n\nThe user has ${ctx.characterCount} character box${
-          ctx.characterCount === 1 ? "" : "es"
-        } open, whose contents you have not been given, and their boxes will be resized to match your answer. Write one CHAR block per character the idea above actually calls for, and no more. Returning fewer blocks than they have boxes is correct whenever the idea is smaller than what they had; never pad the count with a character the idea does not name.`
+      ? json
+        ? `\n\nThe user has ${ctx.characterCount} character box${
+            ctx.characterCount === 1 ? "" : "es"
+          } open, whose contents you have not been given, and their boxes will be resized to match your answer. Return one entry in "characters" per character the idea above actually calls for, and no more. Returning fewer entries than they have boxes is correct whenever the idea is smaller than what they had; never pad the array with a character the idea does not name.`
+        : `\n\nThe user has ${ctx.characterCount} character box${
+            ctx.characterCount === 1 ? "" : "es"
+          } open, whose contents you have not been given, and their boxes will be resized to match your answer. Write one CHAR block per character the idea above actually calls for, and no more. Returning fewer blocks than they have boxes is correct whenever the idea is smaller than what they had; never pad the count with a character the idea does not name.`
       : "";
   const refs = referenceManifest(ctx.references);
   const inputs = ctx.references.length
@@ -657,8 +825,11 @@ ${instruction(prompt, ctx.references)}${refs}${boxes}`;
  * newest answer, not a fresh rewrite. The blind turn's "this text is your only
  * input" is what made a follow-up drop everything earlier turns had added.
  */
-function naiSessionUserPrompt(prompt: string, references: string[]): string {
-  return `Revise your newest answer in this session with the instruction below, and return the whole prompt again in the output format: BASE and UC always, then one CHAR block for each character still in the scene. Keep every detail from earlier turns that this instruction does not change or contradict, including expression, pose and outfit, even where it does not mention them. If it clearly asks for a different image altogether, write that instead. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
+function naiSessionUserPrompt(prompt: string, references: string[], structuredJson = false): string {
+  const shape = structuredJson
+    ? `Revise your newest answer in this session with the instruction below, and return the whole prompt again in the JSON output format: "base_tags", "base_prose", "uc", and one object in "characters" for each character still in the scene.`
+    : `Revise your newest answer in this session with the instruction below, and return the whole prompt again in the output format: BASE and UC always, then one CHAR block for each character still in the scene.`;
+  return `${shape} Keep every detail from earlier turns that this instruction does not change or contradict, including expression, pose and outfit, even where it does not mention them. If it clearly asks for a different image altogether, write that instead. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
 
 ${instruction(prompt, references)}${referenceManifest(references)}`;
 }
@@ -676,6 +847,7 @@ function naiEditUserPrompt(
   prompt: string,
   existing: NaiExistingPrompt,
   references: string[],
+  structuredJson = false,
 ): string {
   const mark = (text: string) => text.trim() || "(empty)";
   const boxes = existing.characters
@@ -684,6 +856,9 @@ function naiEditUserPrompt(
       return `CHAR ${i + 1}:\n${mark(box)}${uc ? `\n\nCHAR ${i + 1} UC:\n${uc}` : ""}`;
     })
     .join("\n\n");
+  const applyLine = structuredJson
+    ? `Apply this instruction to it, and return the whole prompt again in the JSON output format: "base_tags", "base_prose", and "uc" always, changed or not, plus one entry in "characters" for each character still in the scene (with its "uc" when it has one). A character the instruction takes out is removed by omitting its entry from "characters", not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.`
+    : `Apply this instruction to it, and return the whole prompt again in the output format: BASE and UC always, changed or not, then one CHAR block for each character still in the scene, each followed by its CHAR n UC line when it has one. A character the instruction takes out is removed by leaving its block out, not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.`;
 
   return `This is the user's prompt as it stands now.
 
@@ -693,7 +868,7 @@ ${mark(existing.base)}
 UC:
 ${mark(existing.uc)}${boxes ? `\n\n${boxes}` : ""}
 
-Apply this instruction to it, and return the whole prompt again in the output format: BASE and UC always, changed or not, then one CHAR block for each character still in the scene, each followed by its CHAR n UC line when it has one. A character the instruction takes out is removed by leaving its block out, not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
+${applyLine}
 
 ${instruction(prompt, references)}${referenceManifest(references)}`;
 }

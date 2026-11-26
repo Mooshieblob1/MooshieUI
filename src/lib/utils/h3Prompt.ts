@@ -1,4 +1,5 @@
 import { H3_FPS } from "./videoParams.js";
+import type { EffectiveLlmTier } from "./llmTier.js";
 
 /**
  * MiniMax H3 prompt formatting.
@@ -46,6 +47,10 @@ export interface H3PromptContext {
   durationSeconds: string;
   /** ref2va only: how many `<Picture N>` labels are available to number. */
   referenceImageCount: number;
+  /** Model tier controlling optional example slicing (`"full"` preserves full rules). */
+  tier?: EffectiveLlmTier;
+  /** Raw request text to check whether dialogue or on-screen-text rules are needed. */
+  requestText?: string;
 }
 
 /** Inputs the generation store already has; everything else is derived. */
@@ -142,6 +147,30 @@ const AUDIO_FIELD_RULES = `overall_soundscape: one continuous paragraph of 1 to 
 
 non_diegetic_music: 1 to 3 English sentences describing background music only the audience hears. Describe instrumentation, speed, rhythm and dynamic changes. Do not use abstract mood words and do not explain the music's emotional function. Singing, on-set instruments, and music from a radio, TV or phone are diegetic and belong in the description above, not here. Write N/A when there is none.`;
 
+const SHORT_SPEAKER_RULE = `Speakers and dialogue: do not invent spoken lines, lyrics, or speaker ids such as (S1) when the user supplied none.`;
+
+function syntaxRulesFor(ctx: H3PromptContext): string {
+  const tier = ctx.tier ?? "full";
+  if (tier === "full") return SHARED_SYNTAX_RULES;
+  const text = ctx.requestText ?? "";
+  const needsDialogue = /["'\u201c\u201d]|\b(?:say|says|said|speak|speaks|shout|whisper|sing|singing|lyrics|voice|voiceover|talk|dialogue|line)\b/i.test(
+    text,
+  );
+  const needsOnScreenText = /\b(?:sign|neon|banner|subtitle|label|poster|logo|screen|text|reading)\b|"[^"]+"/i.test(
+    text,
+  );
+  if (needsDialogue && needsOnScreenText) return SHARED_SYNTAX_RULES;
+
+  const shotEnd = SHARED_SYNTAX_RULES.indexOf("\n\nSpeakers, dialogue and singing:");
+  const textStart = SHARED_SYNTAX_RULES.indexOf("\n\nOn-screen text:");
+  const shotAndCamera = SHARED_SYNTAX_RULES.slice(0, shotEnd);
+  const speakers = needsDialogue
+    ? SHARED_SYNTAX_RULES.slice(shotEnd + 2, textStart)
+    : SHORT_SPEAKER_RULE;
+  const onScreen = needsOnScreenText ? SHARED_SYNTAX_RULES.slice(textStart + 2) : "";
+  return [shotAndCamera, speakers, onScreen].filter(Boolean).join("\n\n");
+}
+
 function baseSystemPrompt(ctx: H3PromptContext, frameNote: string): string {
   const instruction = h3InstructionLine(ctx);
   const keyframeRules = h3KeyframeRules(ctx.taskType);
@@ -170,7 +199,7 @@ non_diegetic_music: ...
 
 integrated_multimodal_description carries the whole audiovisual timeline in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, and the sound occurring at that moment. State the visual style immediately AFTER "[Shot 1]" and before anything else, for example "[Shot 1] Live-action, cinematic, a medium-wide shot frames ...". Restate that same style at the head of every later shot: a cut does not carry it forward, so the shot rules below require it again each time. Common styles: Cinematic, live-action, 2D-animated, 3D CG, claymation, watercolor, vintage film.
 
-${keyframeRules}${frameNote}${SHARED_SYNTAX_RULES}
+${keyframeRules}${frameNote}${syntaxRulesFor(ctx)}
 
 ${AUDIO_FIELD_RULES}
 
@@ -237,7 +266,7 @@ The target video is in a cinematic, literary style with soft lighting and a slig
 [Shot 1] The scene opens in a crowded urban street ...
 Then describe every shot explicitly and in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, the sound at that moment, and where referenced content takes effect. Never reduce this to a plot summary or a list of reference relationships. Anchor frames with phrasings such as "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". Every shot after the first must also name where it starts from, so the cut does not drop the referenced look: "the shot begins from <Picture 2>", or where no picture fits, "the shot continues the appearance of <Subject 1>". When a referenced subject speaks, keep BOTH labels: <Subject 2> (S1) turns toward the woman and says, <d>[English] Last summer, I went to my grandfather's house.</d>. Assign each (Sx) once, in the order vocal events actually occur. Write [unclear] for spans you cannot make out; never guess. Standardize dialogue punctuation to , . ? ! and end every line with . ? or ! before </d>.
 
-${SHARED_SYNTAX_RULES}
+${syntaxRulesFor(ctx)}
 
 ${AUDIO_FIELD_RULES}
 Complete dialogue and lyrics appear only inside <d> in detailed_description and are never repeated in these two sections.

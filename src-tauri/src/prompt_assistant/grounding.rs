@@ -24,6 +24,8 @@ pub struct Corpus {
     /// Canonical character names (underscored form, category 4) — tracked
     /// separately so the face-detailer auto-prompt can preserve named faces.
     pub characters: HashSet<String>,
+    /// Canonical copyright / series names (underscored form, category 3).
+    pub copyrights: HashSet<String>,
     /// alias (underscored) → canonical name, for snapping near-misses.
     pub alias_to_canonical: HashMap<String, String>,
 }
@@ -39,6 +41,7 @@ pub fn corpus() -> &'static Corpus {
         let mut tags = HashMap::new();
         let mut artists = HashSet::new();
         let mut characters = HashSet::new();
+        let mut copyrights = HashSet::new();
         let mut alias_to_canonical = HashMap::new();
         for t in raw {
             let canon = normalize(&t.n);
@@ -48,7 +51,9 @@ pub fn corpus() -> &'static Corpus {
                 }
                 // general, copyright, character — all valid danbooru tags
                 0 | 3 | 4 => {
-                    if t.c == 4 {
+                    if t.c == 3 {
+                        copyrights.insert(canon.clone());
+                    } else if t.c == 4 {
                         characters.insert(canon.clone());
                     }
                     tags.insert(canon.clone(), t.p);
@@ -63,6 +68,7 @@ pub fn corpus() -> &'static Corpus {
             tags,
             artists,
             characters,
+            copyrights,
             alias_to_canonical,
         }
     })

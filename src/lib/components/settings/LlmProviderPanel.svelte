@@ -43,7 +43,7 @@
   }: Props = $props();
 
   /** Providers whose models take a reasoning effort or thinking-off toggle. */
-  const EFFORT_PROVIDERS = ["chatgpt", "gemini-cli", "anthropic", "openai", "xai", "xai-oauth", "openrouter", "custom"];
+  const EFFORT_PROVIDERS = ["chatgpt", "gemini-cli", "anthropic", "openai", "xai", "xai-oauth", "openrouter", "nous", "custom"];
   const EFFORT_LEVELS = ["low", "medium", "high", "default"] as const;
 
   /** The key field holds an environment variable name, not a key. */

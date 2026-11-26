@@ -261,6 +261,14 @@ pub struct AppConfig {
     /// models and providers that take no effort ignore it.
     #[serde(default = "default_llm_reasoning_effort")]
     pub llm_reasoning_effort: String,
+    /// Prompt assistant detail / tier override: `"auto"` (default), `"compact"`,
+    /// `"standard"`, or `"full"`. Controls rule slicing, RAG budget, and memory caps.
+    #[serde(default = "default_llm_model_tier")]
+    pub llm_model_tier: String,
+    /// Opt-in online Danbooru tag + character wiki lookup for unknown characters,
+    /// cached locally in SQLite. Off by default.
+    #[serde(default)]
+    pub llm_online_rag_enabled: bool,
     /// Refresh token for providers whose sign-in issues a *short-lived* access
     /// token (Nous Portal). Empty for every other provider: an API key does not
     /// expire, and OpenRouter's PKCE flow issues a long-lived key rather than
@@ -325,6 +333,11 @@ fn default_report_endpoint() -> Option<String> {
 /// rewrite needs.
 fn default_llm_reasoning_effort() -> String {
     "low".to_string()
+}
+
+/// Default for `llm_model_tier`: infer Compact / Standard / Full from the active model.
+fn default_llm_model_tier() -> String {
+    "auto".to_string()
 }
 
 /// Default external LLM provider id. Kept as a literal because `config` is
@@ -436,6 +449,8 @@ impl Default for AppConfig {
             llm_fallback_models: Vec::new(),
             llm_fallback_local: false,
             llm_reasoning_effort: default_llm_reasoning_effort(),
+            llm_model_tier: default_llm_model_tier(),
+            llm_online_rag_enabled: false,
             llm_oauth_refresh_token: String::new(),
             llm_oauth_client_id: String::new(),
             llm_oauth_expires_at: 0,

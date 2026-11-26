@@ -73,7 +73,7 @@ function normalizeMemoryLines(lines: readonly string[], currentName: string): Le
  */
 export function characterChatSystemPrompt(
   target: CharacterChatTarget,
-  opts: { useMemory: boolean; inSession: boolean; naiSkill?: string | null },
+  opts: { useMemory: boolean; inSession: boolean; naiSkill?: string | null; ragContext?: string },
 ): string {
   const isNai = target.architecture === "novelai";
   const formatRules = isNai
@@ -114,6 +114,9 @@ NEGATIVE: <complete updated character undesired/negative prompt; leave blank if 
   ];
   if (isNai && opts.naiSkill?.trim()) {
     parts.push(`NOVELAI V5 NOTES\n${opts.naiSkill.trim()}`);
+  }
+  if (opts.ragContext?.trim()) {
+    parts.push(opts.ragContext.trim());
   }
   const base = parts.join("\n\n");
   return opts.inSession ? withSessionClause(base, 1) : base;

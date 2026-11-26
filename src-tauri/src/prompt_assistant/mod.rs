@@ -8,6 +8,7 @@ pub mod history;
 pub mod local_llm;
 pub mod oauth;
 pub mod providers;
+pub mod rag;
 pub mod reasoning;
 pub mod server;
 pub mod vision;

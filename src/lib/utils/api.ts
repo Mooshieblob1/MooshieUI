@@ -168,6 +168,7 @@ import type {
   LlmHardware,
   LlmProviderState,
   LlmStatus,
+  PromptRagResult,
   McpStatus,
   NovelAiSubscription,
   OutputImage,
@@ -1766,6 +1767,17 @@ export async function listLlmCatalog(): Promise<LlmCatalogEntry[]> {
 
 export async function llmStatus(): Promise<LlmStatus> {
   return ipcInvoke("llm_status");
+}
+
+export async function lookupPromptRag(query: {
+  query: string;
+  existing?: string;
+  savedCharacterNames?: string[];
+  includeArtists?: boolean;
+  maxTags?: number;
+  tier?: string;
+}): Promise<PromptRagResult> {
+  return ipcInvoke("lookup_prompt_rag", { query });
 }
 
 /** `select: false` installs without making it the prompt assistant model. */

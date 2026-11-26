@@ -19,6 +19,7 @@ import {
   callExternalLlm,
   isLlmCancelled,
   describeImage,
+  lookupPromptRag,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
@@ -84,14 +85,21 @@ import {
   type EnhanceRecipe,
   type EnhanceRecipeDraft,
 } from "../utils/enhanceRecipes.js";
-import { assertAllowedRequest, naiRequestTexts, promptRequestTexts } from "../utils/contentSafety.js";
+import { assertAllowedRequest, isTextRefusal, naiRequestTexts, promptRequestTexts } from "../utils/contentSafety.js";
 import {
   naiRetryInstruction,
   normalizeNaiResponse,
+  parseNaiEnvelope,
   parseNaiResponse,
+  stripRestatedBoxTagsFromBase,
   validateNaiResponse,
 } from "../utils/naiParse.js";
 import type { NaiRewriteResult } from "../utils/naiParse.js";
+import {
+  resolveLlmModelTier,
+  supportsExternalJsonMode,
+  type EffectiveLlmTier,
+} from "../utils/llmTier.js";
 import {
   NAI_SKILL_MAX_TOKENS,
   loadNaiSkill,
@@ -307,9 +315,48 @@ class PromptAssistantStore {
     return this.usesExternal || this.hasNaturalLanguageModel;
   }
 
-  /** Character memory context budget for the active backend and model. */
+  /** Character memory context budget for the active backend, model, and tier. */
   get memoryBudget(): MemoryBudget {
-    return memoryBudgetFor(this.usesExternal, this.activeLocalModelId);
+    return memoryBudgetFor(this.usesExternal, this.activeLocalModelId, this.effectiveModelTier);
+  }
+
+  /** Effective prompt detail tier resolved from config setting + active model. */
+  get effectiveModelTier(): EffectiveLlmTier {
+    return resolveLlmModelTier({
+      setting: this.status?.model_tier ?? "auto",
+      usesExternal: this.usesExternal,
+      provider: this.provider?.provider,
+      baseUrl: this.provider?.base_url,
+      model: this.provider?.model,
+      localModelId: this.activeLocalModelId,
+    });
+  }
+
+  /** Whether opt-in online Danbooru lookup fallback is enabled. */
+  get onlineRagEnabled(): boolean {
+    return !!this.status?.online_rag_enabled;
+  }
+
+  private async fetchRagContext(req: {
+    query: string;
+    existing?: string;
+    savedCharacterNames?: string[];
+    tier?: EffectiveLlmTier;
+  }): Promise<string> {
+    const trimmed = req.query.trim();
+    if (!trimmed) return "";
+    try {
+      const res = await lookupPromptRag({
+        query: trimmed,
+        existing: req.existing?.trim() || undefined,
+        savedCharacterNames: req.savedCharacterNames,
+        tier: req.tier ?? this.effectiveModelTier,
+      });
+      return res.promptBlock?.trim() ?? "";
+    } catch (e) {
+      console.warn("[promptAssistant] RAG lookup skipped", e);
+      return "";
+    }
   }
 
   /** Launch-time bootstrap: detect hardware, load catalog + status, pre-select. */
@@ -964,6 +1011,7 @@ class PromptAssistantStore {
             )
           : composePrompt(text, req.family, opts, history.messages, images, req.signal),
       );
+      if (isTextRefusal(answer)) throw new Error("provider_refused");
       // The backend puts the chat reply first and has already split it off
       // before repairing the prompt; this only separates the two again.
       const { reply, prompt: answerPrompt } = req.chat
@@ -984,6 +1032,7 @@ class PromptAssistantStore {
   /** Context the history has to share: the local model's `-c`, or the API allowance. */
   private get historyContextTokens(): number {
     if (!this.usesExternal) return LOCAL_CONTEXT_TOKENS;
+    if (this.effectiveModelTier === "compact") return LOCAL_CONTEXT_TOKENS;
     // With "fall back to a local model" on, the same request can land on the
     // bundled server when the provider is down, so it has to fit there too.
     return this.provider?.fallback_local && this.hasInstalledModel
@@ -1123,6 +1172,11 @@ class PromptAssistantStore {
     const idea = text || existing;
     const idle = detectH3IdleIntent(idea);
     const validate = idle ? validateH3IdleResponse : validateH3Response;
+    const h3Ctx: H3PromptContext = {
+      ...ctx,
+      tier: ctx.tier ?? this.effectiveModelTier,
+      requestText: ctx.requestText ?? idea,
+    };
     // Before the skill authoring call too, as in the V5 rewrite.
     assertAllowedRequest(
       promptRequestTexts(text, existing, enhancerSessions.turns("h3", extra.tabId).map((turn) => turn.user)),
@@ -1131,18 +1185,18 @@ class PromptAssistantStore {
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
-        const skill = await this.ensureH3Skill(ctx, !!image, extra.signal);
+        const skill = await this.ensureH3Skill(h3Ctx, !!image, extra.signal);
         const baseSystem =
           h3SystemWithSkill(
             idle
-              ? h3IdleRewriteSystemPrompt(ctx, !!image)
-              : h3RewriteSystemPrompt(ctx, !!image),
+              ? h3IdleRewriteSystemPrompt(h3Ctx, !!image)
+              : h3RewriteSystemPrompt(h3Ctx, !!image),
             skill,
           ) +
           (refs.length ? `\n\n${h3ReferenceNote(refs.length, !!image)}` : "") +
           (extra.chat ? `\n\n${CHAT_CLAUSE}` : "");
         const maxTokens = H3_MAX_TOKENS + (extra.chat ? 256 : 0);
-        const request = idle ? h3IdleUserPrompt(idea, ctx) : idea;
+        const request = idle ? h3IdleUserPrompt(idea, h3Ctx) : idea;
         const user =
           (existing && text ? h3EditUserPrompt(existing, request) : request) +
           h3ReferenceManifest(refs.map((r) => r.label));
@@ -1162,8 +1216,10 @@ class PromptAssistantStore {
           "reference",
         );
         const imageData = refs.map((r) => r.base64);
-        const split = (raw: string) =>
-          extra.chat ? splitReply(raw) : { reply: "", prompt: raw.trim() };
+        const split = (raw: string) => {
+          if (isTextRefusal(raw)) throw new Error("provider_refused");
+          return extra.chat ? splitReply(raw) : { reply: "", prompt: raw.trim() };
+        };
         const firstAnswer = split(
           await callExternalLlm(
             system,
@@ -1181,7 +1237,7 @@ class PromptAssistantStore {
         if (!first && reply) {
           return { text: "", ok: true, rule: null, idle, sessionUser, reply };
         }
-        const check = validate(first, ctx);
+        const check = validate(first, h3Ctx);
         if (check.ok || !check.rule) {
           return { text: first, ok: check.ok, rule: check.rule, idle, sessionUser, reply };
         }
@@ -1196,7 +1252,7 @@ class PromptAssistantStore {
             extra.signal,
           ),
         ).prompt;
-        const recheck = validate(second, ctx);
+        const recheck = validate(second, h3Ctx);
         if (recheck.ok) return { text: second, ok: true, rule: null, idle, sessionUser, reply };
         // Prefer whichever attempt produced something; the second can come back
         // empty when the model gives up on the correction.
@@ -1257,7 +1313,7 @@ class PromptAssistantStore {
     const effectiveTarget: CharacterChatTarget = { ...target, memoryBudgetChars: budgetChars };
     const useMem = opts.useMemory && this.canUseMemory && !!target.memoryFiles;
     const memBackground =
-      useMem && target.memoryFiles ? memoryContext(target.memoryFiles, budgetChars) : "";
+      useMem && target.memoryFiles ? memoryContext(target.memoryFiles, budgetChars, message) : "";
 
     assertAllowedRequest(
       [message, ...historyTurns.map((t) => t.user)],
@@ -1271,15 +1327,23 @@ class PromptAssistantStore {
           target.architecture === "novelai" && opts.naiVariant
             ? await this.ensureNaiSkill({ variant: opts.naiVariant }, opts.signal)
             : null;
+        const ragContext = await this.fetchRagContext({
+          query: [target.name, message].filter(Boolean).join("\n"),
+          existing: target.prompt,
+          savedCharacterNames: [target.name],
+          tier: this.effectiveModelTier,
+        });
         const singleSystem = characterChatSystemPrompt(effectiveTarget, {
           useMemory: useMem,
           inSession: false,
           naiSkill,
+          ragContext,
         });
         const sessionSystem = characterChatSystemPrompt(effectiveTarget, {
           useMemory: useMem,
           inSession: true,
           naiSkill,
+          ragContext,
         });
         const user = characterChatUserPrompt(message, effectiveTarget, {
           useMemory: useMem,
@@ -1302,6 +1366,7 @@ class PromptAssistantStore {
           history.messages,
           opts.signal,
         );
+        if (isTextRefusal(raw)) throw new Error("provider_refused");
         const { reply, proposal } = parseCharacterChatResponse(raw, target.name, target.negative);
         return {
           reply,
@@ -1381,6 +1446,24 @@ class PromptAssistantStore {
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
+        const tier = this.effectiveModelTier;
+        const useJson =
+          tier !== "full" &&
+          (!this.usesExternal || supportsExternalJsonMode(this.provider?.provider));
+        const ragContext =
+          ctx.ragContext ??
+          (await this.fetchRagContext({
+            query: prompt,
+            existing: ctx.existing?.base,
+            tier,
+          }));
+        ctx = {
+          ...ctx,
+          tier: ctx.tier ?? tier,
+          requestText: ctx.requestText ?? prompt,
+          ragContext,
+          structuredJson: ctx.structuredJson ?? useJson,
+        };
         const skill = await this.ensureNaiSkill(ctx, signal);
         const combineRecipes = (texts: string[]) =>
           [naiRecipeDirective(texts), ctx.recipes].filter(Boolean).join("\n\n");
@@ -1394,7 +1477,11 @@ class PromptAssistantStore {
           ]),
         };
         // The chat rules go last, after the output contract they make an exception to.
-        const chatClause = chat ? `\n\n${CHAT_CLAUSE}` : "";
+        const chatClause = !chat
+          ? ""
+          : useJson
+            ? `\n\nCHAT: When conversing in chat, put a brief 1-2 sentence reply in the JSON "reply" field (in the user's language). For a pure question with no prompt edit requested, leave "base_tags" and "base_prose" as "".`
+            : `\n\n${CHAT_CLAUSE}`;
         const maxTokens = NAI_MAX_TOKENS + (chat ? 256 : 0);
         const sessionParts = naiRewriteSystemPromptParts(sessionCtx);
         const sessionSystem =
@@ -1436,33 +1523,35 @@ class PromptAssistantStore {
         const systemCachePrefix = singleParts.cached;
         // Saved without the pasted current prompt: the next turn sends that fresh.
         const sessionUser = withImageMarker(prompt, referenceData.length, "reference");
+        const sampling = useJson ? { json: true } : undefined;
 
         // Skill authoring above deliberately runs without the images: it asks
         // the model how it writes V5 prompts in general, and the answer is
         // cached per backend and variant, so feeding one user's references into
         // it would bias every later rewrite.
-        const split = (raw: string) => (chat ? splitReply(raw) : { reply: "", prompt: raw });
-        const firstAnswer = split(
-          await callExternalLlm(
-            system,
-            user,
-            maxTokens,
-            null,
-            referenceData,
-            history.messages,
-            signal,
-            undefined,
-            systemCachePrefix,
-          ),
+        const parseRaw = (rawText: string) => {
+          if (isTextRefusal(rawText)) throw new Error("provider_refused");
+          return parseNaiEnvelope(rawText, chat);
+        };
+        const firstRaw = await callExternalLlm(
+          system,
+          user,
+          maxTokens,
+          null,
+          referenceData,
+          history.messages,
+          signal,
+          sampling,
+          systemCachePrefix,
         );
-        const firstRaw = firstAnswer.prompt;
-        const reply = firstAnswer.reply;
+        const firstEnv = parseRaw(firstRaw);
+        const reply = firstEnv.reply;
         // A reply with no prompt answers a question: there are no fields to
         // parse, and parsing nothing would only produce a validator problem.
-        if (!firstRaw.trim() && reply) {
+        if (!firstEnv.parsed.base.trim() && reply) {
           return { parsed: parseNaiResponse(""), problems: [], raw: "", sessionUser, reply };
         }
-        const first = normalizeNaiResponse(parseNaiResponse(firstRaw));
+        const first = normalizeNaiResponse(firstEnv.parsed);
         const problems = validateNaiResponse(first);
         if (problems.length === 0) {
           return { parsed: first, problems: [], raw: firstRaw, sessionUser, reply };
@@ -1471,9 +1560,9 @@ class PromptAssistantStore {
         // The first answer goes back as a turn of its own, so the correction
         // is an edit of that text and not a second attempt from nothing, which
         // tends to fix the named problem and break something that was fine.
-        const secondRaw = split(await callExternalLlm(
+        const secondRaw = await callExternalLlm(
           system,
-          naiRetryInstruction(problems),
+          naiRetryInstruction(problems, useJson),
           maxTokens,
           null,
           referenceData,
@@ -1485,19 +1574,33 @@ class PromptAssistantStore {
             { role: "assistant", content: firstRaw },
           ],
           signal,
-          undefined,
+          sampling,
           systemCachePrefix,
-        )).prompt;
-        const second = normalizeNaiResponse(parseNaiResponse(secondRaw));
+        );
+        const secondEnv = parseRaw(secondRaw);
+        const second = normalizeNaiResponse(secondEnv.parsed);
         const recheck = validateNaiResponse(second);
+        const finalReply = secondEnv.reply || reply;
         if (recheck.length === 0) {
-          return { parsed: second, problems: [], raw: secondRaw, sessionUser, reply };
+          return { parsed: second, problems: [], raw: secondRaw, sessionUser, reply: finalReply };
         }
-        // Neither passed: keep the one with fewer problems, the correction on a
-        // tie. The second can also come back empty when the model gives up.
-        return second.base.trim() && recheck.length <= problems.length
-          ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser, reply }
-          : { parsed: first, problems, raw: firstRaw, sessionUser, reply };
+        // Deterministic post-retry salvage for weak models: strip restated
+        // per-character clothing/hair tags left in BASE and recompute problems.
+        const chosen =
+          second.base.trim() && recheck.length <= problems.length
+            ? { parsed: second, raw: secondRaw, reply: finalReply }
+            : { parsed: first, raw: firstRaw, reply };
+        const salvaged = {
+          ...chosen.parsed,
+          base: stripRestatedBoxTagsFromBase(chosen.parsed.base, chosen.parsed.characters),
+        };
+        return {
+          parsed: salvaged,
+          problems: validateNaiResponse(salvaged),
+          raw: chosen.raw,
+          sessionUser,
+          reply: chosen.reply,
+        };
       });
     } finally {
       this.isGenerating = false;
