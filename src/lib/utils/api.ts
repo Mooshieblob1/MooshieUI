@@ -1782,11 +1782,13 @@ export async function lookupPromptRag(query: {
 
 /** `select: false` installs without making it the prompt assistant model. */
 export async function downloadLlmModel(id: string, variant: string, select = true): Promise<void> {
-  return ipcInvoke("download_llm_model", { id, variant, select });
+  await ipcInvoke("download_llm_model", { id, variant, select });
+  configCache = null;
 }
 
 export async function deleteLlmModel(id: string): Promise<void> {
-  return ipcInvoke("delete_llm_model", { id });
+  await ipcInvoke("delete_llm_model", { id });
+  configCache = null;
 }
 
 export async function unloadLlm(): Promise<void> {

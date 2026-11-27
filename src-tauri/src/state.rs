@@ -875,8 +875,26 @@ fn is_private_or_local_host(host: &str) -> bool {
     false
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn reconcile_prompt_assistant_config_fields(
+    config: &mut AppConfig,
+    resolved: Option<String>,
+) -> bool {
+    let Some(id) = resolved else {
+        return false;
+    };
+    if config.prompt_assistant_model_id.as_deref() == Some(id.as_str())
+        && config.prompt_assistant_setup_done
+    {
+        return false;
+    }
+    config.prompt_assistant_model_id = Some(id);
+    config.prompt_assistant_setup_done = true;
+    true
+}
+
 impl AppState {
-    pub fn new(config: AppConfig) -> Self {
+    pub fn new(mut config: AppConfig) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
         let http_client = reqwest::Client::new();
         let http_client_no_redirect = reqwest::Client::builder()
@@ -885,6 +903,23 @@ impl AppState {
             .unwrap_or_else(|_| reqwest::Client::new());
         let gpu_manager = GpuManager::new(&config, http_client.clone());
         let trust_localhost = crate::config::local_trust_enabled(config.trust_localhost);
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        let prompt_assistant = {
+            let pa = Arc::new(PromptAssistant::new());
+            let resolved = pa.resolve_assistant_model(config.prompt_assistant_model_id.as_deref());
+            if reconcile_prompt_assistant_config_fields(&mut config, resolved) {
+                #[cfg(not(test))]
+                if config.setup_complete {
+                    if let Err(e) = crate::config::save_config(&config) {
+                        log::warn!(
+                            "Failed to persist reconciled prompt assistant config: {}",
+                            e
+                        );
+                    }
+                }
+            }
+            pa
+        };
         Self {
             config: RwLock::new(config),
             comfyui_process: Mutex::new(None),
@@ -895,7 +930,7 @@ impl AppState {
             #[cfg(any(feature = "desktop", feature = "server"))]
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
             #[cfg(any(feature = "desktop", feature = "server"))]
-            prompt_assistant: Arc::new(PromptAssistant::new()),
+            prompt_assistant,
             #[cfg(any(feature = "desktop", feature = "server"))]
             interrogate_frames: Default::default(),
             event_tx,
@@ -1666,5 +1701,56 @@ mod deferred_finish_tests {
         assert_eq!(parked(&pq), DEFERRED_FINISH_CAP);
         let last = format!("unbound-{}", DEFERRED_FINISH_CAP + 49);
         assert!(pq.deferred_finishes.read().unwrap().contains_key(&last));
+    }
+}
+
+#[cfg(all(test, any(feature = "desktop", feature = "server")))]
+mod prompt_assistant_reconcile_tests {
+    use super::reconcile_prompt_assistant_config_fields;
+    use crate::config::AppConfig;
+
+    #[test]
+    fn heals_wiped_setup_fields_when_an_assistant_is_installed() {
+        let mut cfg = AppConfig::default();
+        assert!(reconcile_prompt_assistant_config_fields(
+            &mut cfg,
+            Some("qwen3-4b-instruct".into())
+        ));
+        assert_eq!(
+            cfg.prompt_assistant_model_id.as_deref(),
+            Some("qwen3-4b-instruct")
+        );
+        assert!(cfg.prompt_assistant_setup_done);
+    }
+
+    #[test]
+    fn heals_stale_model_id_and_is_noop_when_in_sync() {
+        let mut cfg = AppConfig {
+            prompt_assistant_model_id: Some("old-model".into()),
+            prompt_assistant_setup_done: true,
+            ..AppConfig::default()
+        };
+        assert!(reconcile_prompt_assistant_config_fields(
+            &mut cfg,
+            Some("qwen25-7b-instruct".into())
+        ));
+        assert_eq!(
+            cfg.prompt_assistant_model_id.as_deref(),
+            Some("qwen25-7b-instruct")
+        );
+        assert!(cfg.prompt_assistant_setup_done);
+
+        assert!(!reconcile_prompt_assistant_config_fields(
+            &mut cfg,
+            Some("qwen25-7b-instruct".into())
+        ));
+    }
+
+    #[test]
+    fn noop_when_no_installed_assistant_is_resolved() {
+        let mut cfg = AppConfig::default();
+        assert!(!reconcile_prompt_assistant_config_fields(&mut cfg, None));
+        assert_eq!(cfg.prompt_assistant_model_id, None);
+        assert!(!cfg.prompt_assistant_setup_done);
     }
 }
