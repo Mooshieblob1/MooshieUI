@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v2.4.12
+
+### Prompt Assistant & Model Grounding
+- **Local & opt-in online Danbooru RAG**: Enhance and character chat now pull canonical Danbooru character tags, copyrights/series, artists, and general tags offline from the bundled corpus so smaller and mid-sized models hallucinate fewer character details. Enable **Online Danbooru character & tag lookup** under **Settings > Prompt Assistant** to fetch unknown character tags, series, and wiki summaries on demand (never sending your prompts) with a 30-day local SQLite cache.
+- **Prompt detail tiering & sliced rules**: added **Prompt detail tier** under **Settings > Prompt Assistant** (**Auto**, **Compact (4B-14B / local)**, **Standard (27B-35B / mini)**, and **Full (frontier models)**). Compact and Standard tiers slice NovelAI V5 and MiniMax H3 system instructions down to only the rules each request triggers and rank character memory notes by relevance to the current request, while Full preserves the complete prompt-cached specification.
+- **Structured JSON mode, Nous parity, and cleanup**: local and OpenAI-compatible external endpoints now use structured JSON output on Compact and Standard tiers (with automatic fallback if a server rejects `response_format`), **Nous Research** adds **Reasoning effort** and vision detection parity, reasoning `<think>` tags are stripped cleanly, unmatched emphasis brackets and post-retry restated character tags in `BASE` are repaired automatically, and provider HTTP 400/403/200 safety refusals report clearly.
+
+---
+
 ## What's New in v2.4.11
 
 ### NovelAI Precise Reference & Characters
