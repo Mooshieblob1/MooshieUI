@@ -705,7 +705,6 @@ fn apply_image_action(
             1.0
         };
         parameters.insert("mask".into(), json!(strip_data_url(mask)));
-        parameters.insert("strength".into(), json!(strength));
         parameters.insert("inpaintImg2ImgStrength".into(), json!(strength));
         parameters.insert("noise".into(), json!(0.0));
         parameters.insert("add_original_image".into(), json!(nai.add_original_image));
@@ -1133,7 +1132,7 @@ mod tests {
         assert_eq!(body["parameters"]["mask"], "BBBB");
         assert_eq!(body["parameters"]["add_original_image"], true);
         assert_eq!(body["parameters"]["inpaintImg2ImgStrength"], 1.0);
-        assert_eq!(body["parameters"]["strength"], 1.0);
+        assert!(body["parameters"].get("strength").is_none());
         assert_eq!(body["parameters"]["noise"], 0.0);
         assert!(body["parameters"].get("img2img").is_none());
     }
@@ -1148,7 +1147,7 @@ mod tests {
         i.mask_image = Some("BBBB".into());
         let body = build(&i, &n, v5()).unwrap();
         assert_eq!(body["parameters"]["inpaintImg2ImgStrength"], 0.65);
-        assert_eq!(body["parameters"]["strength"], 0.65);
+        assert!(body["parameters"].get("strength").is_none());
         assert_eq!(body["parameters"]["noise"], 0.0);
         assert_eq!(
             body["parameters"]["img2img"],
@@ -1166,7 +1165,7 @@ mod tests {
         i.mask_image = Some("BBBB".into());
         let body = build(&i, &n, v5()).unwrap();
         assert_eq!(body["parameters"]["inpaintImg2ImgStrength"], 1.0);
-        assert_eq!(body["parameters"]["strength"], 1.0);
+        assert!(body["parameters"].get("strength").is_none());
         assert!(body["parameters"].get("img2img").is_none());
     }
 

@@ -741,7 +741,7 @@ fn build_outpaint_for_novelai(
     right: u32,
     feather: u32,
 ) -> Result<(image::RgbaImage, String, image::GrayImage, String, u32, u32), AppError> {
-    use image::{ImageFormat, Luma, RgbaImage};
+    use image::{Luma, RgbaImage};
     let mut src = image::load_from_memory(bytes)
         .map_err(|e| AppError::Other(format!("could not decode the image: {e}")))?
         .to_rgba8();
@@ -801,10 +801,7 @@ fn build_outpaint_for_novelai(
     };
     let (low_mask, full_mask) = infill::quantize_mask_to_latent_grid(&mask, snapped_w, snapped_h);
 
-    let mut img_buf = Vec::new();
-    padded_rgba
-        .write_to(&mut std::io::Cursor::new(&mut img_buf), ImageFormat::Png)
-        .map_err(|e| AppError::Other(format!("could not encode outpaint image: {e}")))?;
+    let img_buf = infill::encode_infill_image_png(&padded_rgba).map_err(AppError::Other)?;
 
     let mask_buf = infill::encode_binary_mask_png(&full_mask).map_err(AppError::Other)?;
 
@@ -972,15 +969,8 @@ async fn resolve_upload_images(
                     } else {
                         cropped_img
                     };
-                    let mut img_buf = Vec::new();
-                    resized_img
-                        .write_to(
-                            &mut std::io::Cursor::new(&mut img_buf),
-                            image::ImageFormat::Png,
-                        )
-                        .map_err(|e| {
-                            AppError::Other(format!("could not encode focused crop image: {e}"))
-                        })?;
+                    let img_buf =
+                        infill::encode_infill_image_png(&resized_img).map_err(AppError::Other)?;
 
                     let cropped_mask =
                         image::imageops::crop_imm(&mask_luma, crop.x, crop.y, crop.w, crop.h)
@@ -1019,15 +1009,8 @@ async fn resolve_upload_images(
                             image::imageops::FilterType::Lanczos3,
                         );
                     }
-                    let mut img_buf = Vec::new();
-                    base_rgba
-                        .write_to(
-                            &mut std::io::Cursor::new(&mut img_buf),
-                            image::ImageFormat::Png,
-                        )
-                        .map_err(|e| {
-                            AppError::Other(format!("could not encode input image: {e}"))
-                        })?;
+                    let img_buf =
+                        infill::encode_infill_image_png(&base_rgba).map_err(AppError::Other)?;
 
                     let (low_mask, full_mask) =
                         infill::quantize_mask_to_latent_grid(&mask_luma, canvas_w, canvas_h);
@@ -1071,7 +1054,14 @@ async fn resolve_upload_images(
             if let Some(nai) = target.novelai.as_mut() {
                 nai.action = "infill".into();
                 if let Some((base_w, base_h, crop)) = focused_info {
-                    infill::remap_characters_to_crop(&mut nai.characters, &crop, base_w, base_h);
+                    if nai.use_coords {
+                        infill::remap_characters_to_crop(
+                            &mut nai.characters,
+                            &crop,
+                            base_w,
+                            base_h,
+                        );
+                    }
                     nai.add_original_image = false;
                     log::info!(
                         "NovelAI focused infill: crop ({},{},{}x{}) -> {}x{} on {}x{} base",
