@@ -92,3 +92,23 @@ test("SwarmUI parameters zip string-array loras with loraweights and loratencwei
     { name: "only_name", strength_model: 1.0, strength_clip: 1.0 },
   ]);
 });
+
+test("NativeInfillingRequest reads inpaint strength without touching add_original_image", async () => {
+  const comment = JSON.stringify({
+    request_type: "NativeInfillingRequest",
+    add_original_image: false,
+    inpaintImg2ImgStrength: 0.65,
+    img2img: { strength: 0.65, color_correct: true },
+  });
+  const meta = await readPngMetadataClientSide(
+    png([
+      ["Software", "NovelAI"],
+      ["Source", "NovelAI Diffusion V5 657484A5"],
+      ["Comment", comment],
+    ]),
+  );
+  assert.ok(meta);
+  assert.equal(meta.mooshie_novelai_request_type, "NativeInfillingRequest");
+  assert.equal(meta.mooshie_novelai_inpaint_strength, "0.65");
+  assert.equal(meta.mooshie_novelai_add_original_image, undefined);
+});

@@ -24,6 +24,7 @@ import {
   novelAiActiveDirectorReferenceCount,
   novelAiEffortForcedByPreciseReference,
   novelAiUsesMediumEffort,
+  snapNovelAiDimension,
 } from "./novelaiModels.js";
 
 export function estimateCurrentNovelAiCost(
@@ -33,9 +34,14 @@ export function estimateCurrentNovelAiCost(
   if (!generation.isNovelAi) return null;
   const nai = generation.novelaiSettings;
   const model = generation.novelAiModel;
+  const effectiveModel = forceTxt2ImgStrength ? model : generation.effectiveNovelAiModel;
   const isInfill = !forceTxt2ImgStrength && generation.isNovelAiInfill;
-  const opusExhausted = naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty;
+  const resolvedCheckpoint = isInfill ? (model?.inpaintingId ?? generation.checkpoint) : generation.checkpoint;
+  const opusExhausted = naiV5Variant(resolvedCheckpoint) !== null && novelai.opusAllowanceEmpty;
   const transparency = nai.transparent_background && generation.supportsNovelAiTransparency;
+  const pendingVibeEncodes = effectiveModel?.vibeTransfer
+    ? nai.vibes.filter((v) => !v.encoding).length
+    : 0;
 
   const strategy = nai.multi_char_pr.strategy ?? "sheet";
   const usesPasses = strategy === "passes" || strategy === "hybrid";
@@ -74,7 +80,7 @@ export function estimateCurrentNovelAiCost(
         strength: generation.mode === "txt2img" ? 1 : nai.strength,
         isOpus: novelai.isOpus,
         opusExhausted,
-        vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
+        vibeEncodes: pendingVibeEncodes,
         preciseReferences: plan.baseRefCount + (usesSheet ? 1 : 0),
       });
       if (usesPasses) {
@@ -115,8 +121,20 @@ export function estimateCurrentNovelAiCost(
   const mediumEffort = novelAiUsesMediumEffort(model, nai.effort, forcedHigh);
   const steps = mediumEffort ? NOVELAI_MEDIUM_EFFORT.steps : generation.steps;
   const isFocusedInpaint = generation.mode === "inpainting" && nai.focused_inpainting && !forceTxt2ImgStrength;
-  const estWidth = isFocusedInpaint ? 1024 : generation.width;
-  const estHeight = isFocusedInpaint ? 1024 : generation.height;
+  let estWidth = generation.width;
+  let estHeight = generation.height;
+  if (isFocusedInpaint) {
+    estWidth = 1024;
+    estHeight = 1024;
+  } else if (!forceTxt2ImgStrength && generation.mode === "outpainting") {
+    const outW = generation.width + generation.outpaintLeft + generation.outpaintRight;
+    const outH = generation.height + generation.outpaintTop + generation.outpaintBottom;
+    estWidth = Math.min(4096, snapNovelAiDimension(outW));
+    estHeight = Math.min(4096, snapNovelAiDimension(outH));
+  } else if (!forceTxt2ImgStrength && generation.mode === "inpainting") {
+    estWidth = Math.min(4096, snapNovelAiDimension(generation.width));
+    estHeight = Math.min(4096, snapNovelAiDimension(generation.height));
+  }
   const estStrength = forceTxt2ImgStrength || generation.mode === "txt2img"
     ? 1
     : isInfill
@@ -132,7 +150,7 @@ export function estimateCurrentNovelAiCost(
     isOpus: novelai.isOpus,
     // V5 has no Opus unlimited: with the allowance drained it bills in full.
     opusExhausted,
-    vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
+    vibeEncodes: pendingVibeEncodes,
     preciseReferences: activeRefs,
   });
 }

@@ -698,7 +698,7 @@
 
   async function upscaleImage(image: OutputImage) {
     try {
-      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png", generation.isNovelAi);
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       // Skip the base img2img pass — the user wants to upscale this image
@@ -753,7 +753,7 @@
   ) {
     try {
       const prepared = await prepareOutputImageForEditMode(image, mode);
-      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename, generation.isNovelAi);
       generation.inputImage = response.name;
       canvas.clearMask();
       generation.mode = mode;
@@ -2121,9 +2121,12 @@
       metadata.mooshie_novelai_quality_preset = String(nai.quality_preset);
       metadata.mooshie_novelai_uc_preset = String(nai.uc_preset);
       metadata.mooshie_novelai_legacy_uc = String(nai.legacy_uc);
-      if (params.mode !== "txt2img") {
+      if (params.mode === "img2img") {
         metadata.mooshie_novelai_strength = String(nai.strength);
         metadata.mooshie_novelai_noise = String(nai.noise);
+      } else if (params.mode === "inpainting" || params.mode === "outpainting") {
+        metadata.mooshie_novelai_inpaint_strength = String(nai.inpaint_strength);
+        metadata.mooshie_novelai_focused_inpainting = String(nai.focused_inpainting);
       }
       const enabledCharacters = nai.characters.filter((c) => c.enabled && c.prompt.trim());
       if (enabledCharacters.length > 0) {
@@ -2312,7 +2315,7 @@
       const normalized = prepared.normalized;
       if (!normalized) return;
 
-      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename, generation.isNovelAi);
       if (
         generation.mode !== "inpainting" ||
         !canvas.isCanvasMode ||

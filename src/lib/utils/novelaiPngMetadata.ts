@@ -205,6 +205,20 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
       params.mooshie_novelai_variety_plus = "true";
     }
 
+    // Preserve inpainting strength for round-trip parity without touching
+    // `add_original_image`: both novelai.net and MooshieUI send `false`
+    // on the wire even when untouched pixels are preserved client-side.
+    const isInfill =
+      (typeof comment.request_type === "string" &&
+        comment.request_type.toLowerCase().includes("infill")) ||
+      "inpaintImg2ImgStrength" in comment;
+    if (isInfill) {
+      const rawStrength = comment.img2img?.strength ?? comment.inpaintImg2ImgStrength;
+      if (typeof rawStrength === "number" && Number.isFinite(rawStrength) && rawStrength > 0) {
+        params.mooshie_novelai_inpaint_strength = String(Math.min(1, Math.max(0.01, rawStrength)));
+      }
+    }
+
     if (typeof comment.v4_prompt?.use_coords === "boolean") {
       params.mooshie_novelai_use_coords = String(comment.v4_prompt.use_coords);
     }

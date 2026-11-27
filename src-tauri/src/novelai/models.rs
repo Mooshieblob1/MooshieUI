@@ -180,6 +180,42 @@ pub const MODELS: &[NovelAiModel] = &[
     },
 ];
 
+/// V4.5 Curated inpainting specification used when V5 Curated routes `infill`
+/// to `nai-diffusion-4-5-curated-inpainting` while V5 Curated's own inpainting
+/// checkpoint trains upstream.
+pub const V45_CURATED_INPAINTING: NovelAiModel = NovelAiModel {
+    id: "nai-diffusion-4-5-curated-inpainting",
+    label: "NovelAI V4.5 Curated Inpainting",
+    inpainting_id: Some("nai-diffusion-4-5-curated-inpainting"),
+    v4_prompt: true,
+    precise_reference: false,
+    precise_reference_inpainting: false,
+    precise_reference_canvas: ReferenceCanvasMode::Letterbox,
+    precise_reference_fidelity: true,
+    precise_reference_strength_max: 1.0,
+    outfit_references: false,
+    vibe_transfer: false,
+    character_negatives: true,
+    alpha: false,
+    auto_text: false,
+    max_characters: 6,
+    medium_effort: None,
+    params_version: 3,
+};
+
+/// Return the effective model specification for `action`.
+///
+/// While `nai-diffusion-5-curated` routes `action: "infill"` to V4.5 Curated
+/// (`nai-diffusion-4-5-curated-inpainting`), payload formatting, character caps,
+/// alpha/text features, and presets must match V4.5 Curated rather than V5.
+pub fn effective_for_action<'a>(model: &'a NovelAiModel, action: &str) -> &'a NovelAiModel {
+    if action == "infill" && model.inpainting_id == Some(V45_CURATED_INPAINTING.id) {
+        &V45_CURATED_INPAINTING
+    } else {
+        model
+    }
+}
+
 /// Look up a model by API id.
 pub fn find(id: &str) -> Option<&'static NovelAiModel> {
     MODELS.iter().find(|m| m.id == id)
@@ -364,5 +400,33 @@ mod tests {
         let v4 = find("nai-diffusion-4-full").unwrap();
         assert!(v4.vibe_transfer);
         assert!(!v4.precise_reference);
+    }
+
+    #[test]
+    fn effective_for_action_downgrades_v5_curated_during_infill_only() {
+        let v5_curated = find("nai-diffusion-5-curated").unwrap();
+        assert_eq!(
+            effective_for_action(v5_curated, "generate").id,
+            "nai-diffusion-5-curated"
+        );
+        assert_eq!(
+            effective_for_action(v5_curated, "generate").params_version,
+            4
+        );
+        let infill_spec = effective_for_action(v5_curated, "infill");
+        assert_eq!(infill_spec.id, "nai-diffusion-4-5-curated-inpainting");
+        assert_eq!(infill_spec.params_version, 3);
+        assert_eq!(infill_spec.max_characters, 6);
+        assert!(!infill_spec.alpha);
+        assert!(!infill_spec.auto_text);
+        assert!(!infill_spec.precise_reference_inpainting);
+        assert!(!infill_spec.vibe_transfer);
+
+        let v5_full = find("nai-diffusion-5-full").unwrap();
+        assert_eq!(
+            effective_for_action(v5_full, "infill").id,
+            "nai-diffusion-5-full"
+        );
+        assert_eq!(effective_for_action(v5_full, "infill").params_version, 4);
     }
 }

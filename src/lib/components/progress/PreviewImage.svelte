@@ -204,7 +204,7 @@
     }
     if (savedImage) {
       const source = await loadOutputImageForGenerationInput(savedImage, `${prefix}_${Date.now()}.png`);
-      const upload = await uploadImageBytes(source.bytes, source.filename);
+      const upload = await uploadImageBytes(source.bytes, source.filename, generation.isNovelAi);
       return upload.name;
     }
     const sourceUrl = previewSrc ?? progress.lastOutputImage;
@@ -212,7 +212,7 @@
       gallery.showToast(locale.t("preview.not_available"), "info");
       return null;
     }
-    return uploadImageUrlForGenerationInput(sourceUrl, `${prefix}_${Date.now()}.png`);
+    return uploadImageUrlForGenerationInput(sourceUrl, `${prefix}_${Date.now()}.png`, generation.isNovelAi);
   }
 
   /** Load the current preview into img2img mode without starting a generation (#391). */
@@ -258,7 +258,7 @@
       const normalized = await normalizeGenerationInputBytes(rawBytes, fallbackFilename, MAX_INPUT_PIXELS_INPAINT);
 
       // Upload normalised bytes and wire everything up.
-      const upload = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const upload = await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi);
       generation.inputImage = upload.name;
       generation.width = normalized.width;
       generation.height = normalized.height;
@@ -302,8 +302,8 @@
         rawBytes = await imageUrlToPngBytes(sourceUrl);
       }
 
-      const normalized = await normalizeGenerationInputBytes(rawBytes, fallbackFilename);
-      const upload = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const normalized = await normalizeGenerationInputBytes(rawBytes, fallbackFilename, MAX_INPUT_PIXELS_INPAINT);
+      const upload = await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi);
       generation.inputImage = upload.name;
       generation.width = normalized.width;
       generation.height = normalized.height;

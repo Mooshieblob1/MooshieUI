@@ -188,18 +188,20 @@ export async function loadOutputImageForGenerationInput(
 export async function uploadOutputImageForGenerationInput(
   image: OutputImage,
   fallbackFilename = "input.png",
+  allowLocalFallback = false,
 ): Promise<string> {
   const { bytes, filename } = await loadOutputImageForGenerationInput(image, fallbackFilename);
-  const response = await uploadImageBytes(bytes, filename);
+  const response = await uploadImageBytes(bytes, filename, allowLocalFallback);
   return response.name;
 }
 
 export async function uploadImageUrlForGenerationInput(
   url: string,
   fallbackFilename = "input.png",
+  allowLocalFallback = false,
 ): Promise<string> {
   const bytes = await imageUrlToPngBytes(url);
-  const response = await uploadImageBytes(bytes, pngFilename(fallbackFilename, "input.png"));
+  const response = await uploadImageBytes(bytes, pngFilename(fallbackFilename, "input.png"), allowLocalFallback);
   return response.name;
 }
 

@@ -4315,8 +4315,9 @@ async fn dispatch_command(
                 .as_str()
                 .unwrap_or("upload.png")
                 .to_string();
+            let allow_local_fallback = args["allowLocalFallback"].as_bool().unwrap_or(false);
             let result = state
-                .upload_image_from_bytes(image_bytes, filename)
+                .upload_image_from_bytes_with_fallback(image_bytes, filename, allow_local_fallback)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
@@ -7078,15 +7079,9 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing imagePath")?
                 .to_string();
-            let bytes =
-                std::fs::read(&image_path).map_err(|e| format!("Failed to read image: {}", e))?;
-            let fname = std::path::Path::new(&image_path)
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            let allow_local_fallback = args["allowLocalFallback"].as_bool().unwrap_or(false);
             let result = state
-                .upload_image_from_bytes(bytes, fname)
+                .upload_image_file_with_fallback(&image_path, allow_local_fallback)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
