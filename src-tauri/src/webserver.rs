@@ -6379,6 +6379,18 @@ async fn dispatch_command(
                 .prompt_assistant
                 .delete_model(&id)
                 .map_err(|e| e.to_string())?;
+            let mut cfg = state.config.write().await;
+            if cfg.prompt_assistant_model_id.as_deref() == Some(id.as_str())
+                || cfg
+                    .prompt_assistant_model_id
+                    .as_deref()
+                    .is_some_and(|m| !state.prompt_assistant.is_model_installed(m))
+            {
+                let next = state.prompt_assistant.resolve_assistant_model(None);
+                cfg.prompt_assistant_setup_done = next.is_some();
+                cfg.prompt_assistant_model_id = next;
+                let _ = crate::config::save_config(&cfg);
+            }
             Ok(serde_json::Value::Null)
         }
         // --- External LLM provider settings ---
@@ -7314,7 +7326,7 @@ pub async fn chat_any_headless(
     crate::prompt_assistant::providers::ensure_fresh_token(&state.http_client, &state.config).await;
 
     let (
-        mut model_id,
+        model_id,
         idle_secs,
         ext_enabled,
         provider,
@@ -7341,7 +7353,7 @@ pub async fn chat_any_headless(
         )
     };
 
-    if ext_enabled {
+    let resolved_model_id = if ext_enabled {
         crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         state.broadcast("llm:stage", serde_json::json!("generating"));
         let answer = crate::prompt_assistant::server::chat_provider_chain(
@@ -7366,33 +7378,35 @@ pub async fn chat_any_headless(
                     return Err(e.to_string());
                 };
                 log::warn!("[prompt-assistant] external LLM unavailable ({e}); answering with local model {local}");
-                model_id = Some(local);
+                local
             }
             other => return other.map_err(|e| e.to_string()),
         }
     } else if pick == crate::prompt_assistant::LocalPick::Vision {
-        model_id = Some(
-            state
-                .prompt_assistant
-                .vision_model(model_id.as_deref())
-                .ok_or_else(|| "prompt_assistant.no_vision_model".to_string())?,
-        );
-    }
-
-    // Fall back to whatever model is already on disk when config.json carries no
-    // explicit selection. This is the only path that works on read-only-config
-    // deployments (e.g. a Kubernetes ConfigMap mounted at config.json), where the
-    // UI's model pick can never be persisted back, leaving `prompt_assistant_model_id`
-    // perpetually None despite a model sitting in the data dir.
-    let model_id = match model_id {
-        Some(id) => id,
-        None => state
+        state
             .prompt_assistant
-            .default_assistant_model()
-            .ok_or_else(|| "prompt_assistant.no_model".to_string())?,
+            .vision_model(model_id.as_deref())
+            .ok_or_else(|| "prompt_assistant.no_vision_model".to_string())?
+    } else {
+        // Fall back to whatever model is already on disk when config.json carries no
+        // explicit selection or names a deleted model. This is also the only path that
+        // works on read-only-config deployments (e.g. a Kubernetes ConfigMap mounted
+        // at config.json), where the UI's model pick can never be persisted back.
+        state
+            .prompt_assistant
+            .resolve_assistant_model(model_id.as_deref())
+            .ok_or_else(|| "prompt_assistant.no_model".to_string())?
     };
+
     run_local_chat_headless(
-        state, &model_id, idle_secs, system, &history, user, max_tokens, images,
+        state,
+        &resolved_model_id,
+        idle_secs,
+        system,
+        &history,
+        user,
+        max_tokens,
+        images,
     )
     .await
 }
@@ -7666,10 +7680,9 @@ pub async fn run_prompt_assistant_headless(
     let resolved_model_id = if ext_enabled {
         model_id
     } else {
-        match model_id {
-            Some(id) => Some(id),
-            None => state.prompt_assistant.default_assistant_model(),
-        }
+        state
+            .prompt_assistant
+            .resolve_assistant_model(model_id.as_deref())
     };
     let sees_images = ext_enabled
         || resolved_model_id

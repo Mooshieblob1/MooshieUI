@@ -105,12 +105,17 @@ impl PromptAssistant {
         fallback_model_among(&self.installed_models(), preferred)
     }
 
+    /// Resolve the local model that serves as the prompt assistant: the
+    /// configured model when it is installed and not a captioner, otherwise the
+    /// first installed non-captioner model on disk.
+    pub fn resolve_assistant_model(&self, configured: Option<&str>) -> Option<String> {
+        resolve_assistant_model_among(&self.installed_models(), configured)
+    }
+
     /// The first installed model that can serve as the prompt assistant, for
     /// installs whose config names none. A captioner only describes images.
     pub fn default_assistant_model(&self) -> Option<String> {
-        self.installed_models()
-            .into_iter()
-            .find(|id| catalog::entry(id).is_some_and(|e| e.purpose != "captioner"))
+        self.resolve_assistant_model(None)
     }
 
     /// The bundled model that stands in for an unavailable external provider
@@ -387,6 +392,17 @@ async fn download_to(
 pub use catalog::{LlmCatalogEntry, LlmVariant};
 pub use hardware::{LlmGpu, LlmHardware};
 
+/// Resolve the local prompt-assistant model among `installed` IDs: prefer
+/// `configured` if installed and not a captioner, otherwise fall back to the
+/// first installed non-captioner model.
+fn resolve_assistant_model_among(installed: &[String], configured: Option<&str>) -> Option<String> {
+    let is_assistant = |id: &str| catalog::entry(id).is_some_and(|e| e.purpose != "captioner");
+    configured
+        .filter(|c| installed.iter().any(|i| i == c) && is_assistant(c))
+        .map(str::to_string)
+        .or_else(|| installed.iter().find(|i| is_assistant(i)).cloned())
+}
+
 /// The configured local model when it writes natural language, else the first
 /// installed one that does. Tag upsamplers are never picked: the request was
 /// written for an external chat model and asks for prose they cannot write.
@@ -519,5 +535,74 @@ mod fallback_model_tests {
             Some("qwen3-4b-instruct")
         );
         assert_eq!(fallback_model_among(&[], Some("qwen3-4b-instruct")), None);
+    }
+}
+
+#[cfg(test)]
+mod resolve_assistant_model_tests {
+    use super::resolve_assistant_model_among;
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn configured_installed_assistant_is_kept() {
+        let installed = ids(&["qwen3-4b-instruct", "qwen25-7b-instruct"]);
+        assert_eq!(
+            resolve_assistant_model_among(&installed, Some("qwen25-7b-instruct")).as_deref(),
+            Some("qwen25-7b-instruct")
+        );
+    }
+
+    #[test]
+    fn none_config_falls_back_to_first_installed_non_captioner() {
+        let installed = ids(&["joycaption-beta-one", "qwen3-4b-instruct"]);
+        assert_eq!(
+            resolve_assistant_model_among(&installed, None).as_deref(),
+            Some("qwen3-4b-instruct")
+        );
+    }
+
+    #[test]
+    fn missing_configured_model_falls_back_to_installed_assistant() {
+        let installed = ids(&["qwen3-4b-instruct"]);
+        assert_eq!(
+            resolve_assistant_model_among(&installed, Some("qwen25-7b-instruct")).as_deref(),
+            Some("qwen3-4b-instruct")
+        );
+    }
+
+    #[test]
+    fn captioner_is_never_selected_as_assistant() {
+        let only_captioner = ids(&["joycaption-beta-one"]);
+        assert_eq!(
+            resolve_assistant_model_among(&only_captioner, Some("joycaption-beta-one")),
+            None
+        );
+        assert_eq!(resolve_assistant_model_among(&only_captioner, None), None);
+
+        let mixed = ids(&["joycaption-beta-one", "qwen3-4b-instruct"]);
+        assert_eq!(
+            resolve_assistant_model_among(&mixed, Some("joycaption-beta-one")).as_deref(),
+            Some("qwen3-4b-instruct")
+        );
+    }
+
+    #[test]
+    fn tag_upsampler_is_accepted_when_installed() {
+        let installed = ids(&["dantaggen-l"]);
+        assert_eq!(
+            resolve_assistant_model_among(&installed, None).as_deref(),
+            Some("dantaggen-l")
+        );
+    }
+
+    #[test]
+    fn empty_installed_list_returns_none_even_with_configured_id() {
+        assert_eq!(
+            resolve_assistant_model_among(&[], Some("qwen3-4b-instruct")),
+            None
+        );
     }
 }

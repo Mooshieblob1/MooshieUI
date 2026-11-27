@@ -165,6 +165,23 @@ pub async fn download_llm_model(
 #[tauri::command]
 pub async fn delete_llm_model(state: State<'_, Arc<AppState>>, id: String) -> Result<(), AppError> {
     state.prompt_assistant.delete_model(&id)?;
+    let mut cfg = state.config.write().await;
+    if cfg.prompt_assistant_model_id.as_deref() == Some(id.as_str())
+        || cfg
+            .prompt_assistant_model_id
+            .as_deref()
+            .is_some_and(|m| !state.prompt_assistant.is_model_installed(m))
+    {
+        let next = state.prompt_assistant.resolve_assistant_model(None);
+        cfg.prompt_assistant_setup_done = next.is_some();
+        cfg.prompt_assistant_model_id = next;
+        if let Err(e) = crate::config::save_config(&cfg) {
+            log::warn!(
+                "Failed to persist prompt assistant config after model delete: {}",
+                e
+            );
+        }
+    }
     Ok(())
 }
 
@@ -228,7 +245,7 @@ async fn chat_any_inline(
     providers::ensure_fresh_token(&state.http_client, &state.config).await;
 
     let (
-        mut model_id,
+        model_id,
         idle_secs,
         ext_enabled,
         provider,
@@ -255,7 +272,7 @@ async fn chat_any_inline(
         )
     };
 
-    if ext_enabled {
+    let resolved_model_id = if ext_enabled {
         crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         app.emit("llm:stage", "generating").ok();
         let answer = crate::prompt_assistant::server::chat_provider_chain(
@@ -281,23 +298,32 @@ async fn chat_any_inline(
                     return Err(e);
                 };
                 log::warn!("[prompt-assistant] external LLM unavailable ({e}); answering with local model {local}");
-                model_id = Some(local);
+                local
             }
             other => return other,
         }
     } else if pick == LocalPick::Vision {
-        model_id = Some(
-            state
-                .prompt_assistant
-                .vision_model(model_id.as_deref())
-                .ok_or_else(|| AppError::LlmError("prompt_assistant.no_vision_model".into()))?,
-        );
-    }
+        state
+            .prompt_assistant
+            .vision_model(model_id.as_deref())
+            .ok_or_else(|| AppError::LlmError("prompt_assistant.no_vision_model".into()))?
+    } else {
+        state
+            .prompt_assistant
+            .resolve_assistant_model(model_id.as_deref())
+            .ok_or_else(|| AppError::LlmError("prompt_assistant.no_model".into()))?
+    };
 
-    let model_id =
-        model_id.ok_or_else(|| AppError::LlmError("prompt_assistant.no_model".into()))?;
     run_local_chat(
-        app, state, &model_id, idle_secs, system, &history, user, max_tokens, images,
+        app,
+        state,
+        &resolved_model_id,
+        idle_secs,
+        system,
+        &history,
+        user,
+        max_tokens,
+        images,
     )
     .await
 }
@@ -387,13 +413,22 @@ async fn run_generation(
 
     // Resolve the model purpose (drives tag-only grounding). External endpoints are
     // general-purpose chat models, so no local catalog entry / model id is required.
+    let resolved_model_id = if ext_enabled {
+        model_id
+    } else {
+        Some(
+            state
+                .prompt_assistant
+                .resolve_assistant_model(model_id.as_deref())
+                .ok_or_else(|| AppError::LlmError("prompt_assistant.no_model".into()))?,
+        )
+    };
     let purpose = if ext_enabled {
         "natural_language".to_string()
     } else {
-        let mid = model_id
+        resolved_model_id
             .as_deref()
-            .ok_or_else(|| AppError::LlmError("prompt_assistant.no_model".into()))?;
-        catalog::entry(mid)
+            .and_then(catalog::entry)
             .map(|e| e.purpose)
             .unwrap_or_else(|| "natural_language".to_string())
     };
@@ -406,7 +441,7 @@ async fn run_generation(
     // Only an external provider or a bundled vision model can see images; a
     // text-only model would be told about pictures it never receives.
     let sees_images = ext_enabled
-        || model_id
+        || resolved_model_id
             .as_deref()
             .and_then(catalog::entry)
             .is_some_and(|e| e.has_vision());
@@ -420,7 +455,7 @@ async fn run_generation(
     let style = grounding::prompt_style(&purpose, family);
     let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
     let notes = if purpose == "natural_language" {
-        let budget = grounding::character_notes_budget(ext_enabled, model_id.as_deref());
+        let budget = grounding::character_notes_budget(ext_enabled, resolved_model_id.as_deref());
         grounding::character_notes_with_limit(opts.character_notes.as_deref().unwrap_or(""), budget)
     } else {
         String::new()

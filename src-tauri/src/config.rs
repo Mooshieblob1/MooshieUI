@@ -897,15 +897,24 @@ fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
     incoming.llm_xai_scope.clone_from(&current.llm_xai_scope);
 }
 
-/// Carry forward secrets a full-config save cannot legitimately have sent.
+/// Carry forward secrets and server-owned assistant fields a full-config save
+/// cannot legitimately have sent.
 ///
 /// `update_config` replaces the whole config, and its callers hold a snapshot
-/// taken at page load, which the provider commands and the token refresh make
-/// stale behind the frontend's back. The LLM provider row is therefore always
-/// kept as the server has it (see [`keep_llm_provider_row`]); changing it goes
-/// through its own commands, and signing out through `set_llm_api_key("")`.
+/// taken at page load, which the provider commands, model setup, and token
+/// refresh make stale behind the frontend's back. The LLM provider row
+/// (`keep_llm_provider_row`) and the local prompt assistant selection/setup
+/// fields are therefore kept as the server has them; changing them goes
+/// through their own commands, and signing out through `set_llm_api_key("")`.
 pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
     keep_llm_provider_row(incoming, current);
+    // Written only by the prompt-assistant download/delete commands, never
+    // edited by the Settings form. Preserving them prevents a stale
+    // full-config autosave from clearing the installed model or setup flag.
+    incoming
+        .prompt_assistant_model_id
+        .clone_from(&current.prompt_assistant_model_id);
+    incoming.prompt_assistant_setup_done = current.prompt_assistant_setup_done;
     // Never sent to a client, so whatever a full-config save carries here is
     // either the blank redaction or something it had no business sending.
     incoming
@@ -1517,5 +1526,28 @@ mod secret_handling_tests {
         preserve_secrets(&mut incoming, &current);
         preserve_redacted_secrets(&mut incoming, &current);
         assert_eq!(incoming.civitai_proxy, current.civitai_proxy);
+    }
+
+    #[test]
+    fn a_stale_autosave_cannot_wipe_prompt_assistant_setup() {
+        // Setup ran after the Settings page took its initial snapshot, so an
+        // unrelated autosave still carries None / false for local model setup.
+        let mut current = owner_config();
+        current.prompt_assistant_model_id = Some("qwen3-4b-instruct".into());
+        current.prompt_assistant_setup_done = true;
+
+        let mut incoming = owner_config();
+        incoming.prompt_assistant_model_id = None;
+        incoming.prompt_assistant_setup_done = false;
+        incoming.prompt_assistant_idle_timeout_secs = 120;
+
+        preserve_secrets(&mut incoming, &current);
+
+        assert_eq!(
+            incoming.prompt_assistant_model_id.as_deref(),
+            Some("qwen3-4b-instruct")
+        );
+        assert!(incoming.prompt_assistant_setup_done);
+        assert_eq!(incoming.prompt_assistant_idle_timeout_secs, 120);
     }
 }

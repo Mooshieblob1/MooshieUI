@@ -139,6 +139,17 @@
     }
   }
   let showPromptAssistantSetup = $state(false);
+  async function syncPromptAssistantConfig() {
+    try {
+      const fresh = await getConfig({ force: true });
+      if (config) {
+        config.prompt_assistant_model_id = fresh.prompt_assistant_model_id;
+        config.prompt_assistant_setup_done = fresh.prompt_assistant_setup_done;
+      }
+    } catch {
+      // Non-fatal; Rust already preserves these fields across autosaves.
+    }
+  }
   let loading = $state(true);
   let saving = $state(false);
   let saved = $state(false);
@@ -4918,7 +4929,10 @@
               {#each promptAssistant.status?.installed_models ?? [] as id}
                 <button
                   class="rounded-lg border border-red-700 px-3 py-1 text-sm text-red-300 hover:bg-red-900/30 cursor-pointer"
-                  onclick={() => promptAssistant.deleteModel(id)}
+                  onclick={async () => {
+                    await promptAssistant.deleteModel(id);
+                    void syncPromptAssistantConfig();
+                  }}
                 >
                   {locale.t('settings.prompt_assistant.delete')} {id}
                 </button>
@@ -6321,5 +6335,8 @@
 {/if}
 
 {#if showPromptAssistantSetup}
-  <PromptAssistantSetupModal onClose={() => (showPromptAssistantSetup = false)} />
+  <PromptAssistantSetupModal
+    onClose={() => (showPromptAssistantSetup = false)}
+    onInstalled={() => { void syncPromptAssistantConfig(); }}
+  />
 {/if}

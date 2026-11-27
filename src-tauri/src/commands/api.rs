@@ -9793,6 +9793,16 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
                 .active_model()
                 .unwrap_or_else(|| "(none)".into())
         );
+        let installed_pa = state.prompt_assistant.installed_models();
+        let _ = writeln!(
+            output,
+            "Prompt assistant installed models: {}",
+            if installed_pa.is_empty() {
+                "(none)".to_string()
+            } else {
+                installed_pa.join(", ")
+            }
+        );
         let _ = writeln!(output);
     }
 
