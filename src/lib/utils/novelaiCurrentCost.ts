@@ -114,13 +114,21 @@ export function estimateCurrentNovelAiCost(
   );
   const mediumEffort = novelAiUsesMediumEffort(model, nai.effort, forcedHigh);
   const steps = mediumEffort ? NOVELAI_MEDIUM_EFFORT.steps : generation.steps;
+  const isFocusedInpaint = generation.mode === "inpainting" && nai.focused_inpainting && !forceTxt2ImgStrength;
+  const estWidth = isFocusedInpaint ? 1024 : generation.width;
+  const estHeight = isFocusedInpaint ? 1024 : generation.height;
+  const estStrength = forceTxt2ImgStrength || generation.mode === "txt2img"
+    ? 1
+    : isInfill
+      ? nai.inpaint_strength
+      : nai.strength;
   return estimateNovelAiCost({
-    width: generation.width,
-    height: generation.height,
+    width: estWidth,
+    height: estHeight,
     steps,
     mediumEffort,
     nSamples,
-    strength: forceTxt2ImgStrength || generation.mode === "txt2img" ? 1 : nai.strength,
+    strength: estStrength,
     isOpus: novelai.isOpus,
     // V5 has no Opus unlimited: with the allowance drained it bills in full.
     opusExhausted,

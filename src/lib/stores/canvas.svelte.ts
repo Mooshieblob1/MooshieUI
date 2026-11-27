@@ -961,19 +961,16 @@ class CanvasStore {
       return false;
     }
 
-    // Convert mask to white-on-black for ComfyUI.
+    // Convert mask to white-on-black using mask stroke alpha directly so
+    // low-opacity or dark-tinted mask strokes are never lost.
     const exportCanvas = document.createElement("canvas");
     exportCanvas.width = maskCanvas.width;
     exportCanvas.height = maskCanvas.height;
     const exportCtx = exportCanvas.getContext("2d")!;
-    exportCtx.fillStyle = "black";
-    exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    exportCtx.drawImage(maskCanvas, 0, 0);
-
-    const imgData = exportCtx.getImageData(0, 0, exportCanvas.width, exportCanvas.height);
+    const imgData = exportCtx.createImageData(exportCanvas.width, exportCanvas.height);
     const pixels = imgData.data;
     for (let i = 0; i < pixels.length; i += 4) {
-      if (pixels[i + 3] > 0 && (pixels[i] > 64 || pixels[i + 1] > 64 || pixels[i + 2] > 64)) {
+      if (data[i + 3] >= 16) {
         pixels[i] = pixels[i + 1] = pixels[i + 2] = 255;
         pixels[i + 3] = 255;
       } else {
