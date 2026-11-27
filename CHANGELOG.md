@@ -1,5 +1,17 @@
 # Changelog
 
+## What's New in v2.4.13
+
+### NovelAI Inpainting & Outpainting
+- **Focused inpainting**: added **Focused inpainting** under **Image settings** (enabled by default in **Inpainting** mode). Small masked edits are cropped with surrounding context, upscaled to ~1 MP (capped to 4 MP on upload), generated at crisp resolution, and blended back into the full canvas with feathered edges; masks covering 75% or more of the canvas automatically run full-canvas.
+- **1:1 NovelAI web inpainting parity**: dedicated inpainting **Strength** (default `1.00`) now uses NovelAI's full infill model at `1.00` and color-corrected `img2img` below `1.00`, sends 8x8 latent-grid snapped binary masks with `noise: 0.0` and opaque RGB infill uploads, preserves original non-64-multiple canvas dimensions, clamps outpainting seam feathering, and keeps **Keep the area outside the mask** (`overlay`) accurate without alpha haloing on opaque images.
+- **Canvas, V5 Curated & offline polish**: **Inpaint Mask** is now the default brush target in the Canvas Editor, **Regular Inpaint** brush strokes composite onto the uploaded image before sending to NovelAI, NovelAI inpainting and outpainting now work even when ComfyUI is offline, V5 Curated infill automatically resolves V4.5 Curated model capabilities/presets/Anlas cost, and saved PNG metadata round-trips full `NativeInfillingRequest` parameters.
+
+### Prompt Assistant
+- **Persistent model setup & desktop fallback**: fixed Settings autosave wiping your configured **Prompt Assistant** model and setup state, added automatic fallback to an already-installed local assistant model on desktop when the saved model ID is unset or missing (skipping caption-only models), synced config on startup and model deletion, refreshed the Settings view immediately after installs/deletes, and added installed assistant models to diagnostic log exports.
+
+---
+
 ## What's New in v2.4.12
 
 ### Prompt Assistant & Model Grounding
