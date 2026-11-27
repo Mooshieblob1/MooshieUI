@@ -319,6 +319,10 @@ export interface NovelAiParams {
   /** img2img strength. */
   strength: number;
   noise: number;
+  /** Inpainting / outpainting strength (0.01-1.0, default 1.0). */
+  inpaint_strength: number;
+  /** Crop and upscale around the mask to ~1 MP for small edits, then blend back. */
+  focused_inpainting: boolean;
   /** Infill: keep the unmasked region pixel-identical to the input. */
   add_original_image: boolean;
   vibes: NovelAiVibe[];

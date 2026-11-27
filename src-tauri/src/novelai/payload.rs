@@ -192,18 +192,23 @@ pub fn build(
         );
     }
 
-    apply_vibes(&mut parameters, nai, model);
-    apply_director_references(&mut parameters, nai, model, &action);
-    apply_image_action(&mut parameters, input, nai, &action)?;
-
     let effective_effort = if medium_effort {
         models::EFFORT_MEDIUM
     } else {
         models::EFFORT_HIGH
     };
+    let resolved_model = models::resolve_id(model, &action, effective_effort);
+    if resolved_model.starts_with("nai-diffusion-5-") {
+        parameters.insert("straight_alpha".into(), json!(true));
+    }
+
+    apply_vibes(&mut parameters, nai, model);
+    apply_director_references(&mut parameters, nai, model, &action);
+    apply_image_action(&mut parameters, input, nai, &action)?;
+
     Ok(json!({
         "input": positive_prompt,
-        "model": models::resolve_id(model, &action, effective_effort),
+        "model": resolved_model,
         "action": action,
         "parameters": Value::Object(parameters),
     }))
@@ -687,8 +692,6 @@ fn apply_image_action(
         .as_ref()
         .ok_or("NovelAI img2img requires an input image")?;
     parameters.insert("image".into(), json!(strip_data_url(image)));
-    parameters.insert("strength".into(), json!(nai.strength));
-    parameters.insert("noise".into(), json!(nai.noise));
     parameters.insert("extra_noise_seed".into(), json!(input.seed));
 
     if action == "infill" {
@@ -696,8 +699,30 @@ fn apply_image_action(
             .mask_image
             .as_ref()
             .ok_or("NovelAI infill requires a mask")?;
+        let strength = if nai.inpaint_strength.is_finite() && nai.inpaint_strength > 0.0 {
+            nai.inpaint_strength.clamp(0.01, 1.0)
+        } else {
+            1.0
+        };
         parameters.insert("mask".into(), json!(strip_data_url(mask)));
+        parameters.insert("strength".into(), json!(strength));
+        parameters.insert("inpaintImg2ImgStrength".into(), json!(strength));
+        parameters.insert("noise".into(), json!(0.0));
         parameters.insert("add_original_image".into(), json!(nai.add_original_image));
+        // NovelAI V4/V5 reads partial infill strength from `img2img` and omits
+        // the object at full `1.0` strength.
+        if (strength - 1.0).abs() > 1e-6 {
+            parameters.insert(
+                "img2img".into(),
+                json!({
+                    "strength": strength,
+                    "color_correct": true,
+                }),
+            );
+        }
+    } else {
+        parameters.insert("strength".into(), json!(nai.strength));
+        parameters.insert("noise".into(), json!(nai.noise));
     }
     Ok(())
 }
@@ -743,6 +768,7 @@ mod tests {
             uc_preset: 3,
             add_original_image: true,
             strength: 0.7,
+            inpaint_strength: 1.0,
             ..Default::default()
         }
     }
@@ -1097,6 +1123,7 @@ mod tests {
     fn infill_swaps_the_model_and_sends_the_mask() {
         let mut n = nai();
         n.action = "infill".into();
+        n.noise = 0.25;
         let mut i = input();
         i.input_image = Some("AAAA".into());
         i.mask_image = Some("BBBB".into());
@@ -1105,6 +1132,70 @@ mod tests {
         assert_eq!(body["model"], "nai-diffusion-4-5-full-inpainting");
         assert_eq!(body["parameters"]["mask"], "BBBB");
         assert_eq!(body["parameters"]["add_original_image"], true);
+        assert_eq!(body["parameters"]["inpaintImg2ImgStrength"], 1.0);
+        assert_eq!(body["parameters"]["strength"], 1.0);
+        assert_eq!(body["parameters"]["noise"], 0.0);
+        assert!(body["parameters"].get("img2img").is_none());
+    }
+
+    #[test]
+    fn partial_infill_sends_img2img_with_color_correct() {
+        let mut n = nai();
+        n.action = "infill".into();
+        n.inpaint_strength = 0.65;
+        let mut i = input();
+        i.input_image = Some("AAAA".into());
+        i.mask_image = Some("BBBB".into());
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["parameters"]["inpaintImg2ImgStrength"], 0.65);
+        assert_eq!(body["parameters"]["strength"], 0.65);
+        assert_eq!(body["parameters"]["noise"], 0.0);
+        assert_eq!(
+            body["parameters"]["img2img"],
+            json!({ "strength": 0.65, "color_correct": true })
+        );
+    }
+
+    #[test]
+    fn zero_default_inpaint_strength_falls_back_to_full_strength() {
+        let mut n = nai();
+        n.action = "infill".into();
+        n.inpaint_strength = 0.0;
+        let mut i = input();
+        i.input_image = Some("AAAA".into());
+        i.mask_image = Some("BBBB".into());
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["parameters"]["inpaintImg2ImgStrength"], 1.0);
+        assert_eq!(body["parameters"]["strength"], 1.0);
+        assert!(body["parameters"].get("img2img").is_none());
+    }
+
+    #[test]
+    fn v5_sets_straight_alpha_except_when_infill_routes_to_v45() {
+        let body = build(&input(), &nai(), v5()).unwrap();
+        assert_eq!(body["parameters"]["straight_alpha"], true);
+
+        let mut n = nai();
+        n.action = "infill".into();
+        let mut i = input();
+        i.input_image = Some("AAAA".into());
+        i.mask_image = Some("BBBB".into());
+
+        let v5_infill = build(&i, &n, v5()).unwrap();
+        assert_eq!(v5_infill["parameters"]["straight_alpha"], true);
+
+        let v45_infill = build(&i, &n, v45()).unwrap();
+        assert!(v45_infill["parameters"].get("straight_alpha").is_none());
+
+        let v5_curated = models::find("nai-diffusion-5-curated").unwrap();
+        let v5_curated_infill = build(&i, &n, v5_curated).unwrap();
+        assert_eq!(
+            v5_curated_infill["model"],
+            "nai-diffusion-4-5-curated-inpainting"
+        );
+        assert!(v5_curated_infill["parameters"]
+            .get("straight_alpha")
+            .is_none());
     }
 
     #[test]

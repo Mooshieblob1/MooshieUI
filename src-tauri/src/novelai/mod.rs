@@ -14,6 +14,7 @@ pub mod detect;
 pub mod face_detail;
 pub mod face_pass;
 pub mod gate;
+pub mod infill;
 mod local_refine;
 pub mod metadata;
 pub mod models;
@@ -697,8 +698,9 @@ fn looks_like_upload_name(value: &str) -> bool {
 /// NovelAI's img2img and infill take the image at the canvas size, and the
 /// app's resolution is the user's choice rather than the image's, so the
 /// source is fitted to the request and never the other way round (NovelAI's
-/// own site does the same). A mask is scaled with nearest neighbour so it
-/// stays a hard white-on-black selection instead of gaining grey edges.
+/// own site does the same). A mask is snapped onto NovelAI's 8x8 latent grid
+/// (`infill::quantize_mask_to_latent_grid`) so curved edges never turn into
+/// fractional grey halos at latent resolution.
 ///
 /// CPU-bound: call it from `spawn_blocking`.
 fn encode_upload_for_novelai(
@@ -709,29 +711,27 @@ fn encode_upload_for_novelai(
 ) -> Result<String, AppError> {
     let img = image::load_from_memory(bytes)
         .map_err(|e| AppError::Other(format!("could not decode the image: {e}")))?;
-    let filter = if mask {
-        image::imageops::FilterType::Nearest
+    if mask {
+        let luma = infill::extract_mask_luma(&img);
+        let (_, full_mask) = infill::quantize_mask_to_latent_grid(&luma, width, height);
+        let buf = infill::encode_binary_mask_png(&full_mask).map_err(AppError::Other)?;
+        return Ok(base64::engine::general_purpose::STANDARD.encode(&buf));
+    }
+    let mut rgba = img.to_rgba8();
+    infill::scrub_stealth_alpha_if_opaque(&mut rgba);
+    let fitted = if rgba.width() != width || rgba.height() != height {
+        image::imageops::resize(&rgba, width, height, image::imageops::FilterType::Lanczos3)
     } else {
-        image::imageops::FilterType::Lanczos3
-    };
-    let img = if img.width() != width || img.height() != height {
-        img.resize_exact(width, height, filter)
-    } else {
-        img
+        rgba
     };
     let mut buf = Vec::new();
-    let written = if mask {
-        img.to_rgb8()
-            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
-    } else {
-        img.to_rgba8()
-            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
-    };
-    written.map_err(|e| AppError::Other(format!("could not encode the image as PNG: {e}")))?;
+    fitted
+        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .map_err(|e| AppError::Other(format!("could not encode the image as PNG: {e}")))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
-/// Build a padded RGBA image and feathered grayscale mask matching ComfyUI's
+/// Build a padded RGBA image and 8x8-quantized binary mask matching ComfyUI's
 /// `ImagePadForOutpaint`, fitted to NovelAI's snapped 64-px output canvas.
 fn build_outpaint_for_novelai(
     bytes: &[u8],
@@ -740,11 +740,12 @@ fn build_outpaint_for_novelai(
     left: u32,
     right: u32,
     feather: u32,
-) -> Result<(String, String, u32, u32), AppError> {
-    use image::{DynamicImage, ImageFormat, Luma, RgbaImage};
-    let src = image::load_from_memory(bytes)
+) -> Result<(image::RgbaImage, String, image::GrayImage, String, u32, u32), AppError> {
+    use image::{ImageFormat, Luma, RgbaImage};
+    let mut src = image::load_from_memory(bytes)
         .map_err(|e| AppError::Other(format!("could not decode the image: {e}")))?
         .to_rgba8();
+    infill::scrub_stealth_alpha_if_opaque(&mut src);
     let (src_w, src_h) = src.dimensions();
     let out_w = src_w.saturating_add(left).saturating_add(right);
     let out_h = src_h.saturating_add(top).saturating_add(bottom);
@@ -759,96 +760,99 @@ fn build_outpaint_for_novelai(
         }
     }
 
+    // Extend the binary mask slightly inward along padded edges when feather > 0
+    // so NovelAI blends across the transition band inside the original border
+    // without leaving smeared edge-clamp pixels in the outpainted area.
+    let overlap_x = if feather > 0 {
+        (feather / 2).min(src_w / 4)
+    } else {
+        0
+    };
+    let overlap_y = if feather > 0 {
+        (feather / 2).min(src_h / 4)
+    } else {
+        0
+    };
     let mut mask = image::GrayImage::new(out_w, out_h);
     for y in 0..out_h {
         for x in 0..out_w {
-            let in_pad = x < left || x >= left + src_w || y < top || y >= top + src_h;
-            let val: u8 = if in_pad {
+            let in_left = left > 0 && x < left + overlap_x;
+            let in_right = right > 0 && x >= left + src_w - overlap_x;
+            let in_top = top > 0 && y < top + overlap_y;
+            let in_bottom = bottom > 0 && y >= top + src_h - overlap_y;
+            let val = if in_left || in_right || in_top || in_bottom {
                 255
-            } else if feather == 0 {
-                0
             } else {
-                let mut keep = 1.0_f32;
-                if left > 0 {
-                    let d = (x - left) as f32;
-                    if d < feather as f32 {
-                        keep = keep.min(d / feather as f32);
-                    }
-                }
-                if right > 0 {
-                    let d = (left + src_w - 1 - x) as f32;
-                    if d < feather as f32 {
-                        keep = keep.min(d / feather as f32);
-                    }
-                }
-                if top > 0 {
-                    let d = (y - top) as f32;
-                    if d < feather as f32 {
-                        keep = keep.min(d / feather as f32);
-                    }
-                }
-                if bottom > 0 {
-                    let d = (top + src_h - 1 - y) as f32;
-                    if d < feather as f32 {
-                        keep = keep.min(d / feather as f32);
-                    }
-                }
-                ((1.0 - keep) * 255.0).round().clamp(0.0, 255.0) as u8
+                0
             };
             mask.put_pixel(x, y, Luma([val]));
         }
     }
 
-    let padded_dyn = if out_w != snapped_w || out_h != snapped_h {
-        DynamicImage::ImageRgba8(padded).resize_exact(
+    let padded_rgba = if out_w != snapped_w || out_h != snapped_h {
+        image::imageops::resize(
+            &padded,
             snapped_w,
             snapped_h,
             image::imageops::FilterType::Lanczos3,
         )
     } else {
-        DynamicImage::ImageRgba8(padded)
+        padded
     };
-    let mask_dyn = if out_w != snapped_w || out_h != snapped_h {
-        DynamicImage::ImageLuma8(mask).resize_exact(
-            snapped_w,
-            snapped_h,
-            image::imageops::FilterType::Triangle,
-        )
-    } else {
-        DynamicImage::ImageLuma8(mask)
-    };
+    let (low_mask, full_mask) = infill::quantize_mask_to_latent_grid(&mask, snapped_w, snapped_h);
 
     let mut img_buf = Vec::new();
-    padded_dyn
-        .to_rgba8()
+    padded_rgba
         .write_to(&mut std::io::Cursor::new(&mut img_buf), ImageFormat::Png)
         .map_err(|e| AppError::Other(format!("could not encode outpaint image: {e}")))?;
 
-    let mut mask_buf = Vec::new();
-    mask_dyn
-        .to_rgb8()
-        .write_to(&mut std::io::Cursor::new(&mut mask_buf), ImageFormat::Png)
-        .map_err(|e| AppError::Other(format!("could not encode outpaint mask: {e}")))?;
+    let mask_buf = infill::encode_binary_mask_png(&full_mask).map_err(AppError::Other)?;
 
     let engine = base64::engine::general_purpose::STANDARD;
     Ok((
+        padded_rgba,
         engine.encode(&img_buf),
+        low_mask,
         engine.encode(&mask_buf),
         snapped_w,
         snapped_h,
     ))
 }
 
-/// Replace upload names in `input_image` / `mask_image` with the base64 PNGs
-/// NovelAI expects.
+async fn load_image_field_bytes(
+    state: &Arc<AppState>,
+    raw: &str,
+    kind: &str,
+) -> Result<Vec<u8>, AppError> {
+    let trimmed = raw.trim();
+    if looks_like_upload_name(trimmed) {
+        state.get_input_image_bytes(trimmed, "").await.map_err(|e| {
+            AppError::Other(format!(
+                "NovelAI could not load the {kind} '{trimmed}' from ComfyUI: {e}"
+            ))
+        })
+    } else {
+        base64::engine::general_purpose::STANDARD
+            .decode(payload::strip_data_url(trimmed))
+            .map_err(|e| AppError::Other(format!("invalid {kind} image data: {e}")))
+    }
+}
+
+/// Replace upload names and prepare base/mask PNGs for NovelAI image actions.
 ///
-/// Returns `None` when neither field needed resolving, so the caller keeps
-/// borrowing the original params instead of cloning a payload that may carry
-/// several megabytes of vibe images.
+/// For inpainting and outpainting this also snaps masks onto NovelAI's 8x8
+/// latent grid, optionally crops/upscales Focused Inpainting regions to ~1 MP,
+/// and returns a client-side composite plan when keeping pixels outside the mask.
 async fn resolve_upload_images(
     state: &Arc<AppState>,
     params: &GenerationParams,
-) -> Result<Option<GenerationParams>, AppError> {
+) -> Result<
+    (
+        Option<GenerationParams>,
+        Option<Arc<infill::InfillCompositePlan>>,
+    ),
+    AppError,
+> {
     if params.mode == "outpainting" {
         let Some(raw_input) = params
             .input_image
@@ -860,43 +864,232 @@ async fn resolve_upload_images(
                 "Outpainting mode requires an input image.".into(),
             ));
         };
-        let bytes = if looks_like_upload_name(raw_input) {
-            state
-                .get_input_image_bytes(raw_input, "")
-                .await
-                .map_err(|e| {
-                    AppError::Other(format!(
-                        "NovelAI could not load the image '{raw_input}' from ComfyUI: {e}"
-                    ))
-                })?
-        } else {
-            let b64 = raw_input
-                .split_once(',')
-                .map(|(_, rest)| rest)
-                .unwrap_or(raw_input);
-            base64::engine::general_purpose::STANDARD
-                .decode(b64)
-                .map_err(|e| AppError::Other(format!("invalid outpaint input image: {e}")))?
-        };
+        let bytes = load_image_field_bytes(state, raw_input, "outpaint input").await?;
         let top = params.outpaint_top;
         let bottom = params.outpaint_bottom;
         let left = params.outpaint_left;
         let right = params.outpaint_right;
         let feather = params.outpaint_feather;
-        let (padded_b64, mask_b64, snapped_w, snapped_h) = tokio::task::spawn_blocking(move || {
-            build_outpaint_for_novelai(&bytes, top, bottom, left, right, feather)
-        })
-        .await
-        .map_err(|e| AppError::Other(format!("outpaint encoding task failed: {e}")))??;
+        let (padded_rgba, padded_b64, low_mask, mask_b64, snapped_w, snapped_h) =
+            tokio::task::spawn_blocking(move || {
+                build_outpaint_for_novelai(&bytes, top, bottom, left, right, feather)
+            })
+            .await
+            .map_err(|e| AppError::Other(format!("outpaint encoding task failed: {e}")))??;
         let mut target = params.clone();
         target.width = snapped_w;
         target.height = snapped_h;
         target.input_image = Some(padded_b64);
         target.mask_image = Some(mask_b64);
+        let keep_outside = target
+            .novelai
+            .as_ref()
+            .is_some_and(|n| n.add_original_image);
         if let Some(nai) = target.novelai.as_mut() {
             nai.action = "infill".into();
+            if keep_outside {
+                nai.add_original_image = false;
+            }
         }
-        return Ok(Some(target));
+        let composite_plan = keep_outside.then(|| {
+            Arc::new(infill::InfillCompositePlan {
+                base_rgba: padded_rgba,
+                crop: infill::FocusedCropPlan::full(snapped_w, snapped_h),
+                quantized_low_mask: low_mask,
+                dilate_blocks: if feather == 0 { 0 } else { 1 },
+                feather_px: if feather == 0 {
+                    0
+                } else {
+                    feather.clamp(4, 32)
+                },
+            })
+        });
+        return Ok((Some(target), composite_plan));
+    }
+
+    if params.mode == "inpainting" {
+        if let (Some(raw_input), Some(raw_mask)) = (
+            params
+                .input_image
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
+            params
+                .mask_image
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
+        ) {
+            let (image_bytes, mask_bytes) = tokio::try_join!(
+                load_image_field_bytes(state, raw_input, "image"),
+                load_image_field_bytes(state, raw_mask, "mask"),
+            )?;
+            let focused = params
+                .novelai
+                .as_ref()
+                .is_some_and(|n| n.focused_inpainting);
+            let keep_outside = params
+                .novelai
+                .as_ref()
+                .is_some_and(|n| n.add_original_image);
+            let req_dims = request_dimensions(params.width, params.height)?;
+
+            let prepared = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+                let mut base_rgba = image::load_from_memory(&image_bytes)
+                    .map_err(|e| AppError::Other(format!("could not decode input image: {e}")))?
+                    .to_rgba8();
+                infill::scrub_stealth_alpha_if_opaque(&mut base_rgba);
+
+                let mask_img = image::load_from_memory(&mask_bytes)
+                    .map_err(|e| AppError::Other(format!("could not decode mask image: {e}")))?;
+                let mut mask_luma = infill::extract_mask_luma(&mask_img);
+
+                let engine = base64::engine::general_purpose::STANDARD;
+                if focused {
+                    let (base_w, base_h) = base_rgba.dimensions();
+                    if mask_luma.dimensions() != (base_w, base_h) {
+                        mask_luma = image::imageops::resize(
+                            &mask_luma,
+                            base_w,
+                            base_h,
+                            image::imageops::FilterType::Nearest,
+                        );
+                    }
+                    let crop =
+                        infill::plan_focused_crop(&mask_luma, base_w, base_h).ok_or_else(|| {
+                            AppError::InvalidWorkflow("Inpainting mask is empty.".into())
+                        })?;
+                    let cropped_img =
+                        image::imageops::crop_imm(&base_rgba, crop.x, crop.y, crop.w, crop.h)
+                            .to_image();
+                    let resized_img = if crop.w != crop.req_w || crop.h != crop.req_h {
+                        image::imageops::resize(
+                            &cropped_img,
+                            crop.req_w,
+                            crop.req_h,
+                            image::imageops::FilterType::Lanczos3,
+                        )
+                    } else {
+                        cropped_img
+                    };
+                    let mut img_buf = Vec::new();
+                    resized_img
+                        .write_to(
+                            &mut std::io::Cursor::new(&mut img_buf),
+                            image::ImageFormat::Png,
+                        )
+                        .map_err(|e| {
+                            AppError::Other(format!("could not encode focused crop image: {e}"))
+                        })?;
+
+                    let cropped_mask =
+                        image::imageops::crop_imm(&mask_luma, crop.x, crop.y, crop.w, crop.h)
+                            .to_image();
+                    let (low_mask, full_mask) =
+                        infill::quantize_mask_to_latent_grid(&cropped_mask, crop.req_w, crop.req_h);
+                    if !infill::mask_has_selection(&low_mask) {
+                        return Err(AppError::InvalidWorkflow(
+                            "Inpainting mask is empty.".into(),
+                        ));
+                    }
+                    let mask_buf =
+                        infill::encode_binary_mask_png(&full_mask).map_err(AppError::Other)?;
+
+                    Ok((
+                        engine.encode(&img_buf),
+                        engine.encode(&mask_buf),
+                        crop.req_w,
+                        crop.req_h,
+                        Some((base_w, base_h, crop)),
+                        Some(Arc::new(infill::InfillCompositePlan {
+                            base_rgba,
+                            crop,
+                            quantized_low_mask: low_mask,
+                            dilate_blocks: infill::DEFAULT_DILATE_BLOCKS,
+                            feather_px: infill::DEFAULT_FEATHER_PX,
+                        })),
+                    ))
+                } else {
+                    let (canvas_w, canvas_h) = req_dims;
+                    if base_rgba.dimensions() != (canvas_w, canvas_h) {
+                        base_rgba = image::imageops::resize(
+                            &base_rgba,
+                            canvas_w,
+                            canvas_h,
+                            image::imageops::FilterType::Lanczos3,
+                        );
+                    }
+                    let mut img_buf = Vec::new();
+                    base_rgba
+                        .write_to(
+                            &mut std::io::Cursor::new(&mut img_buf),
+                            image::ImageFormat::Png,
+                        )
+                        .map_err(|e| {
+                            AppError::Other(format!("could not encode input image: {e}"))
+                        })?;
+
+                    let (low_mask, full_mask) =
+                        infill::quantize_mask_to_latent_grid(&mask_luma, canvas_w, canvas_h);
+                    if !infill::mask_has_selection(&low_mask) {
+                        return Err(AppError::InvalidWorkflow(
+                            "Inpainting mask is empty.".into(),
+                        ));
+                    }
+                    let mask_buf =
+                        infill::encode_binary_mask_png(&full_mask).map_err(AppError::Other)?;
+
+                    let composite_plan = keep_outside.then(|| {
+                        Arc::new(infill::InfillCompositePlan {
+                            base_rgba,
+                            crop: infill::FocusedCropPlan::full(canvas_w, canvas_h),
+                            quantized_low_mask: low_mask,
+                            dilate_blocks: infill::DEFAULT_DILATE_BLOCKS,
+                            feather_px: infill::DEFAULT_FEATHER_PX,
+                        })
+                    });
+
+                    Ok((
+                        engine.encode(&img_buf),
+                        engine.encode(&mask_buf),
+                        canvas_w,
+                        canvas_h,
+                        None,
+                        composite_plan,
+                    ))
+                }
+            })
+            .await
+            .map_err(|e| AppError::Other(format!("inpainting encoding task failed: {e}")))??;
+
+            let (img_b64, mask_b64, req_w, req_h, focused_info, composite_plan) = prepared;
+            let mut target = params.clone();
+            target.width = req_w;
+            target.height = req_h;
+            target.input_image = Some(img_b64);
+            target.mask_image = Some(mask_b64);
+            if let Some(nai) = target.novelai.as_mut() {
+                nai.action = "infill".into();
+                if let Some((base_w, base_h, crop)) = focused_info {
+                    infill::remap_characters_to_crop(&mut nai.characters, &crop, base_w, base_h);
+                    nai.add_original_image = false;
+                    log::info!(
+                        "NovelAI focused infill: crop ({},{},{}x{}) -> {}x{} on {}x{} base",
+                        crop.x,
+                        crop.y,
+                        crop.w,
+                        crop.h,
+                        crop.req_w,
+                        crop.req_h,
+                        base_w,
+                        base_h
+                    );
+                } else if keep_outside {
+                    nai.add_original_image = false;
+                }
+            }
+            return Ok((Some(target), composite_plan));
+        }
     }
 
     let (width, height) = request_dimensions(params.width, params.height)?;
@@ -933,7 +1126,7 @@ async fn resolve_upload_images(
             target.input_image = Some(encoded);
         }
     }
-    Ok(resolved)
+    Ok((resolved, None))
 }
 
 /// Copy the NovelAI block with every character prompt rewritten into NovelAI
@@ -1027,7 +1220,8 @@ async fn run_inner(
     // The img2img and inpainting tabs hand over ComfyUI upload names, not
     // pixels. NovelAI cannot read those, so they become the base64 PNGs it
     // takes before the payload exists, and before any Anlas are spent.
-    let with_uploads = resolve_upload_images(state, encoded.as_ref().unwrap_or(params)).await?;
+    let (with_uploads, infill_composite) =
+        resolve_upload_images(state, encoded.as_ref().unwrap_or(params)).await?;
     // What the request is actually built from: vibes encoded, upload names
     // resolved to pixels. The face pass builds its crop requests from the same
     // thing so it inherits the encoded vibes rather than re-paying for them.
@@ -1102,6 +1296,19 @@ async fn run_inner(
     }
 
     let mut images = images;
+    if let Some(plan) = infill_composite {
+        let mut composited = Vec::with_capacity(images.len());
+        for png in images {
+            let plan = Arc::clone(&plan);
+            let merged =
+                tokio::task::spawn_blocking(move || infill::apply_composite_to_png(&plan, &png))
+                    .await
+                    .map_err(|e| AppError::Other(format!("inpaint composite task failed: {e}")))?
+                    .map_err(AppError::Other)?;
+            composited.push(merged);
+        }
+        images = composited;
+    }
     if let Some(plan) = char_pr_plan {
         if let [png] = images.as_slice() {
             match char_pr::run_character_pr_pass(
@@ -1583,8 +1790,8 @@ mod tests {
         assert_eq!((out.width(), out.height()), (1216, 832));
     }
 
-    /// A mask is scaled without interpolation, so every pixel stays fully
-    /// black or fully white and the infill edge does not pick up a grey halo.
+    /// A mask is quantized to NovelAI's 8x8 latent grid and stays strictly
+    /// white (`255`) on black (`0`) so edges do not pick up grey halos.
     #[test]
     fn a_mask_stays_a_hard_white_on_black_selection() {
         let mut src = image::RgbaImage::from_pixel(64, 64, image::Rgba([0, 0, 0, 255]));
@@ -1601,6 +1808,25 @@ mod tests {
         assert!(out
             .pixels()
             .all(|p| p.0.iter().all(|c| *c == 0 || *c == 255)));
+    }
+
+    #[test]
+    fn encode_mask_quantizes_to_8x8_blocks_and_accepts_transparent_masks() {
+        // Curved/single-pixel stroke on transparent canvas (`alpha=0` outside).
+        let mut src = image::RgbaImage::from_pixel(128, 128, image::Rgba([0, 0, 0, 0]));
+        src.put_pixel(19, 27, image::Rgba([255, 50, 50, 255]));
+        let encoded = encode_upload_for_novelai(&png_bytes(&src), 128, 128, true).unwrap();
+        let out = decode_png(&encoded).to_rgb8();
+        for y in 0..128 {
+            for x in 0..128 {
+                let expected = if (16..24).contains(&x) && (24..32).contains(&y) {
+                    [255, 255, 255]
+                } else {
+                    [0, 0, 0]
+                };
+                assert_eq!(out.get_pixel(x, y).0, expected, "at {x},{y}");
+            }
+        }
     }
 
     /// A vibe carrying a token minted for this exact model and extraction
@@ -1882,7 +2108,7 @@ mod tests {
     }
 
     #[test]
-    fn novelai_outpaint_builds_padded_image_and_feathered_mask() {
+    fn novelai_outpaint_builds_padded_image_and_binary_quantized_mask() {
         use image::{DynamicImage, GenericImageView, ImageFormat, RgbaImage};
         let mut src = std::io::Cursor::new(Vec::new());
         DynamicImage::ImageRgba8(RgbaImage::from_pixel(
@@ -1892,9 +2118,11 @@ mod tests {
         ))
         .write_to(&mut src, ImageFormat::Png)
         .unwrap();
-        let (padded_b64, mask_b64, w, h) =
+        let (padded_rgba, padded_b64, low_mask, mask_b64, w, h) =
             build_outpaint_for_novelai(&src.into_inner(), 0, 0, 128, 128, 32).unwrap();
         assert_eq!((w, h), (512, 256));
+        assert_eq!(padded_rgba.dimensions(), (512, 256));
+        assert_eq!(low_mask.dimensions(), (64, 32));
         let engine = base64::engine::general_purpose::STANDARD;
         let padded = image::load_from_memory(&engine.decode(padded_b64).unwrap()).unwrap();
         let mask = image::load_from_memory(&engine.decode(mask_b64).unwrap()).unwrap();
@@ -1902,5 +2130,9 @@ mod tests {
         assert_eq!(mask.dimensions(), (512, 256));
         assert_eq!(mask.get_pixel(10, 128)[0], 255);
         assert_eq!(mask.get_pixel(256, 128)[0], 0);
+        assert!(mask
+            .to_rgb8()
+            .pixels()
+            .all(|p| p.0.iter().all(|c| *c == 0 || *c == 255)));
     }
 }

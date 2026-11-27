@@ -158,6 +158,7 @@ pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
         nai.local_negative_prompt = None;
         nai.face_detail.custom_prompt.clear();
         nai.multi_char_pr.enabled = false;
+        nai.focused_inpainting = false;
         nai.action = "generate".into();
     }
     p.seed = -1;

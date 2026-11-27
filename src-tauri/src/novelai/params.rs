@@ -389,6 +389,15 @@ pub struct NovelAiParams {
     pub strength: f64,
     #[serde(default)]
     pub noise: f64,
+    /// Inpainting/outpainting denoise strength (`0.01..=1.0`). NovelAI's site
+    /// defaults infill to `1.0` (full redraw inside the mask) and omits `img2img`
+    /// unless lowered below `1.0`.
+    #[serde(default = "default_inpaint_strength")]
+    pub inpaint_strength: f64,
+    /// Crop and upscale around the mask to ~1 MP (within Opus's free window)
+    /// before infilling, then blend back onto the original canvas.
+    #[serde(default)]
+    pub focused_inpainting: bool,
     /// Infill: keep the untouched region pixel-identical to the input.
     #[serde(default = "default_true")]
     pub add_original_image: bool,
@@ -537,6 +546,10 @@ fn default_reference_enabled() -> bool {
 
 fn default_img2img_strength() -> f64 {
     0.7
+}
+
+fn default_inpaint_strength() -> f64 {
+    1.0
 }
 
 fn default_detailer_engine() -> String {

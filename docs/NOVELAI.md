@@ -56,6 +56,7 @@ The client is Rust, not JavaScript. It lives in `src-tauri/src/novelai/`:
 | `client.rs` | Generation, streaming, subscription, vibe encoding, upscale and augmentation HTTP calls |
 | `mod.rs` | Orchestration: prompt ids, the event sink, `run()`, image delivery |
 | `detect.rs`, `face_detail.rs`, `face_pass.rs` | Local face detection, sequential crop repainting, geometry and compositing |
+| `infill.rs` | 8x8 latent mask quantization, Focused Inpainting crop/upscale/remap, and feathered compositing |
 | `local_refine.rs` | Private ComfyUI result collection before the NovelAI face stage |
 | `metadata.rs`, `reference_canvas.rs` | NovelAI metadata import and reference-image letterboxing |
 | `augment.rs` | Director Tools request preparation |
@@ -189,6 +190,18 @@ Vibe transfer does not go through this. Vibes are encoded server-side by
   `director_reference_*` arrays on V5 `infill`, cost estimates exclude the 5
   Anlas surcharge there, and the UI warns when references are attached. V4.5
   still supports Precise Reference during infill.
+- **Infill parity, Focused Inpainting, and compositing (`infill.rs`).**
+  `encode_upload_for_novelai()` and `resolve_upload_images()` snap masks to
+  NovelAI's 8x8 VAE latent grid (`quantize_mask_to_latent_grid`), scrub stealth
+  alpha LSBs (`254..=255`) from opaque images, send `inpaintImg2ImgStrength`
+  (default `1.0` via `inpaint_strength`) with `noise: 0.0` and nested
+  `img2img: { strength, color_correct: true }` when strength is below `1.0`,
+  and include `straight_alpha: true` on V5 models. Optional **Focused
+  inpainting** crops around the mask bbox and upscales to ~1 MP with remapped
+  character coordinates; **Keep the area outside the mask** uses client-side
+  dilated + finite-box-blurred feathered compositing (`composite_infill_patch`)
+  with outbound `add_original_image: false` so surrounding pixels remain
+  bit-identical without latent-grid seams.
 - **V5 Full Medium effort.** NovelAI requires High effort while Precise
   References are active. When active Precise References apply (i.e. non-infill),
   both the payload builder and UI force High effort (`nai-diffusion-5-full`,

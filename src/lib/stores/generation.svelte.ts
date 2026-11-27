@@ -210,6 +210,8 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     use_coords: false,
     strength: 0.7,
     noise: 0,
+    inpaint_strength: 1.0,
+    focused_inpainting: false,
     add_original_image: true,
     vibes: [],
     normalize_reference_strength: false,
@@ -3445,6 +3447,13 @@ class GenerationStore {
       // slider. Full strength is what those builds effectively sent.
       this.novelaiSettings = {
         ...merged,
+        inpaint_strength:
+          typeof merged.inpaint_strength === "number" &&
+          Number.isFinite(merged.inpaint_strength) &&
+          merged.inpaint_strength > 0
+            ? Math.min(1, Math.max(0.01, merged.inpaint_strength))
+            : 1.0,
+        focused_inpainting: merged.focused_inpainting ?? false,
         // Same shallow-merge problem one level down: a blob written before
         // a face-detail field existed would leave that field undefined.
         face_detail: {
