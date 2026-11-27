@@ -31,6 +31,7 @@
 
   const nai = $derived(generation.novelaiSettings);
   const novelAiModel = $derived(generation.novelAiModel);
+  const effectiveModel = $derived(generation.effectiveNovelAiModel);
 
   /**
    * Only the presets this model has are listed, and each dropdown shows the one
@@ -38,16 +39,16 @@
    * Focus come back when the user returns to a model that offers them.
    */
   const qualityChoices = $derived<QualityChoice[]>(
-    novelAiModel?.lightQuality ? ["standard", "light", "none"] : ["standard", "none"],
+    effectiveModel?.lightQuality ? ["standard", "light", "none"] : ["standard", "none"],
   );
   const qualityChoice = $derived<QualityChoice>(
     !nai.quality_toggle
       ? "none"
-      : effectiveNovelAiQualityPreset(novelAiModel, nai.quality_preset) === NAI_QUALITY_LIGHT
+      : effectiveNovelAiQualityPreset(effectiveModel, nai.quality_preset) === NAI_QUALITY_LIGHT
         ? "light"
         : "standard",
   );
-  const ucPresets = $derived(novelAiModel?.ucPresets ?? []);
+  const ucPresets = $derived(effectiveModel?.ucPresets ?? []);
   const mediumEffort = $derived(generation.novelAiMediumEffort);
   const effortForcedHigh = $derived(generation.novelAiEffortForcedByPreciseReference);
   // Medium sends Heavy whatever is stored, so the dropdown shows Heavy and the
@@ -55,7 +56,7 @@
   const ucPreset = $derived(
     mediumEffort
       ? NOVELAI_MEDIUM_EFFORT.ucPreset
-      : effectiveNovelAiUcPreset(novelAiModel, nai.uc_preset),
+      : effectiveNovelAiUcPreset(effectiveModel, nai.uc_preset),
   );
   const efforts = [NAI_EFFORT_MEDIUM, NAI_EFFORT_HIGH] as const;
   // Anything but "medium" (or forced High by Precise Reference) is High, as on the backend.

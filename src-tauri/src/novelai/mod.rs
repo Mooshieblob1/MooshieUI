@@ -241,8 +241,26 @@ fn resolve_model_id(params: &GenerationParams, nai: &params::NovelAiParams) -> S
 /// the two never disagree about whether the returned PNG carries alpha.
 fn transparency_requested(params: &GenerationParams) -> bool {
     params.novelai.as_ref().is_some_and(|nai| {
-        nai.transparent_background
-            && models::find(&resolve_model_id(params, nai)).is_some_and(|m| m.alpha)
+        if !nai.transparent_background {
+            return false;
+        }
+        let has_input = params
+            .input_image
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty());
+        let has_mask = params
+            .mask_image
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty());
+        let effective_action = if matches!(params.mode.as_str(), "inpainting" | "outpainting")
+            || (nai.action == "infill" && has_input && has_mask)
+        {
+            "infill"
+        } else {
+            nai.action.as_str()
+        };
+        models::find(&resolve_model_id(params, nai))
+            .is_some_and(|m| models::effective_for_action(m, effective_action).alpha)
     })
 }
 
@@ -724,11 +742,19 @@ fn encode_upload_for_novelai(
     } else {
         rgba
     };
-    let mut buf = Vec::new();
-    fitted
-        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
-        .map_err(|e| AppError::Other(format!("could not encode the image as PNG: {e}")))?;
+    let buf = infill::encode_infill_image_png(&fitted).map_err(AppError::Other)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+}
+
+struct OutpaintPrepared {
+    padded_rgba: image::RgbaImage,
+    padded_b64: String,
+    low_mask: image::GrayImage,
+    mask_b64: String,
+    snapped_w: u32,
+    snapped_h: u32,
+    dilate_blocks: u32,
+    feather_px: u32,
 }
 
 /// Build a padded RGBA image and 8x8-quantized binary mask matching ComfyUI's
@@ -740,7 +766,7 @@ fn build_outpaint_for_novelai(
     left: u32,
     right: u32,
     feather: u32,
-) -> Result<(image::RgbaImage, String, image::GrayImage, String, u32, u32), AppError> {
+) -> Result<OutpaintPrepared, AppError> {
     use image::{Luma, RgbaImage};
     let mut src = image::load_from_memory(bytes)
         .map_err(|e| AppError::Other(format!("could not decode the image: {e}")))?
@@ -805,15 +831,36 @@ fn build_outpaint_for_novelai(
 
     let mask_buf = infill::encode_binary_mask_png(&full_mask).map_err(AppError::Other)?;
 
+    // Ensure the two-pass box-blur feather radius never pulls composite weight below
+    // 1.0 over the edge-clamped padding zone itself (2*r <= overlap_snapped + LATENT_BLOCK).
+    let (dilate_blocks, feather_px) = if feather == 0 {
+        (0, 0)
+    } else {
+        let scale_x = f64::from(snapped_w) / f64::from(out_w.max(1));
+        let scale_y = f64::from(snapped_h) / f64::from(out_h.max(1));
+        let min_overlap = [
+            (left > 0 || right > 0).then_some((f64::from(overlap_x) * scale_x).floor() as u32),
+            (top > 0 || bottom > 0).then_some((f64::from(overlap_y) * scale_y).floor() as u32),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(0);
+        let max_safe_r = min_overlap.saturating_add(infill::LATENT_BLOCK) / 2;
+        (1, feather.clamp(2, 16).min(max_safe_r))
+    };
+
     let engine = base64::engine::general_purpose::STANDARD;
-    Ok((
+    Ok(OutpaintPrepared {
         padded_rgba,
-        engine.encode(&img_buf),
+        padded_b64: engine.encode(&img_buf),
         low_mask,
-        engine.encode(&mask_buf),
+        mask_b64: engine.encode(&mask_buf),
         snapped_w,
         snapped_h,
-    ))
+        dilate_blocks,
+        feather_px,
+    })
 }
 
 async fn load_image_field_bytes(
@@ -867,17 +914,17 @@ async fn resolve_upload_images(
         let left = params.outpaint_left;
         let right = params.outpaint_right;
         let feather = params.outpaint_feather;
-        let (padded_rgba, padded_b64, low_mask, mask_b64, snapped_w, snapped_h) =
-            tokio::task::spawn_blocking(move || {
-                build_outpaint_for_novelai(&bytes, top, bottom, left, right, feather)
-            })
-            .await
-            .map_err(|e| AppError::Other(format!("outpaint encoding task failed: {e}")))??;
+        let preserve_opaque_alpha = !transparency_requested(params);
+        let prepared = tokio::task::spawn_blocking(move || {
+            build_outpaint_for_novelai(&bytes, top, bottom, left, right, feather)
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("outpaint encoding task failed: {e}")))??;
         let mut target = params.clone();
-        target.width = snapped_w;
-        target.height = snapped_h;
-        target.input_image = Some(padded_b64);
-        target.mask_image = Some(mask_b64);
+        target.width = prepared.snapped_w;
+        target.height = prepared.snapped_h;
+        target.input_image = Some(prepared.padded_b64);
+        target.mask_image = Some(prepared.mask_b64);
         let keep_outside = target
             .novelai
             .as_ref()
@@ -890,15 +937,12 @@ async fn resolve_upload_images(
         }
         let composite_plan = keep_outside.then(|| {
             Arc::new(infill::InfillCompositePlan {
-                base_rgba: padded_rgba,
-                crop: infill::FocusedCropPlan::full(snapped_w, snapped_h),
-                quantized_low_mask: low_mask,
-                dilate_blocks: if feather == 0 { 0 } else { 1 },
-                feather_px: if feather == 0 {
-                    0
-                } else {
-                    feather.clamp(4, 32)
-                },
+                base_rgba: prepared.padded_rgba,
+                crop: infill::FocusedCropPlan::full(prepared.snapped_w, prepared.snapped_h),
+                quantized_low_mask: prepared.low_mask,
+                dilate_blocks: prepared.dilate_blocks,
+                feather_px: prepared.feather_px,
+                preserve_opaque_alpha,
             })
         });
         return Ok((Some(target), composite_plan));
@@ -929,6 +973,7 @@ async fn resolve_upload_images(
                 .novelai
                 .as_ref()
                 .is_some_and(|n| n.add_original_image);
+            let preserve_opaque_alpha = !transparency_requested(params);
             let req_dims = request_dimensions(params.width, params.height)?;
 
             let prepared = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
@@ -997,20 +1042,26 @@ async fn resolve_upload_images(
                             quantized_low_mask: low_mask,
                             dilate_blocks: infill::DEFAULT_DILATE_BLOCKS,
                             feather_px: infill::DEFAULT_FEATHER_PX,
+                            preserve_opaque_alpha,
                         })),
                     ))
                 } else {
+                    let (base_w, base_h) = base_rgba.dimensions();
                     let (canvas_w, canvas_h) = req_dims;
-                    if base_rgba.dimensions() != (canvas_w, canvas_h) {
-                        base_rgba = image::imageops::resize(
+                    let req_cow;
+                    let req_img: &image::RgbaImage = if (base_w, base_h) != (canvas_w, canvas_h) {
+                        req_cow = image::imageops::resize(
                             &base_rgba,
                             canvas_w,
                             canvas_h,
                             image::imageops::FilterType::Lanczos3,
                         );
-                    }
+                        &req_cow
+                    } else {
+                        &base_rgba
+                    };
                     let img_buf =
-                        infill::encode_infill_image_png(&base_rgba).map_err(AppError::Other)?;
+                        infill::encode_infill_image_png(req_img).map_err(AppError::Other)?;
 
                     let (low_mask, full_mask) =
                         infill::quantize_mask_to_latent_grid(&mask_luma, canvas_w, canvas_h);
@@ -1025,10 +1076,18 @@ async fn resolve_upload_images(
                     let composite_plan = keep_outside.then(|| {
                         Arc::new(infill::InfillCompositePlan {
                             base_rgba,
-                            crop: infill::FocusedCropPlan::full(canvas_w, canvas_h),
+                            crop: infill::FocusedCropPlan {
+                                x: 0,
+                                y: 0,
+                                w: base_w,
+                                h: base_h,
+                                req_w: canvas_w,
+                                req_h: canvas_h,
+                            },
                             quantized_low_mask: low_mask,
                             dilate_blocks: infill::DEFAULT_DILATE_BLOCKS,
                             feather_px: infill::DEFAULT_FEATHER_PX,
+                            preserve_opaque_alpha,
                         })
                     });
 
@@ -2108,14 +2167,13 @@ mod tests {
         ))
         .write_to(&mut src, ImageFormat::Png)
         .unwrap();
-        let (padded_rgba, padded_b64, low_mask, mask_b64, w, h) =
-            build_outpaint_for_novelai(&src.into_inner(), 0, 0, 128, 128, 32).unwrap();
-        assert_eq!((w, h), (512, 256));
-        assert_eq!(padded_rgba.dimensions(), (512, 256));
-        assert_eq!(low_mask.dimensions(), (64, 32));
+        let prep = build_outpaint_for_novelai(&src.into_inner(), 0, 0, 128, 128, 32).unwrap();
+        assert_eq!((prep.snapped_w, prep.snapped_h), (512, 256));
+        assert_eq!(prep.padded_rgba.dimensions(), (512, 256));
+        assert_eq!(prep.low_mask.dimensions(), (64, 32));
         let engine = base64::engine::general_purpose::STANDARD;
-        let padded = image::load_from_memory(&engine.decode(padded_b64).unwrap()).unwrap();
-        let mask = image::load_from_memory(&engine.decode(mask_b64).unwrap()).unwrap();
+        let padded = image::load_from_memory(&engine.decode(prep.padded_b64).unwrap()).unwrap();
+        let mask = image::load_from_memory(&engine.decode(prep.mask_b64).unwrap()).unwrap();
         assert_eq!(padded.dimensions(), (512, 256));
         assert_eq!(mask.dimensions(), (512, 256));
         assert_eq!(mask.get_pixel(10, 128)[0], 255);
@@ -2124,5 +2182,27 @@ mod tests {
             .to_rgb8()
             .pixels()
             .all(|p| p.0.iter().all(|c| *c == 0 || *c == 255)));
+
+        // Every pixel inside the newly padded regions keeps composite weight == 1.0
+        // so edge-clamped padding never bleeds into outpainted areas.
+        let crop = infill::FocusedCropPlan::full(prep.snapped_w, prep.snapped_h);
+        let weights = infill::build_feather_weights(
+            &prep.low_mask,
+            (prep.snapped_w, prep.snapped_h),
+            prep.dilate_blocks,
+            prep.feather_px,
+            &crop,
+            (prep.snapped_w, prep.snapped_h),
+        );
+        for y in 0..prep.snapped_h {
+            for x in 0..128 {
+                let w = weights[(y as usize) * (prep.snapped_w as usize) + (x as usize)];
+                assert!(w >= 1.0 - 1e-6, "left pad weight dipped to {w} at {x},{y}");
+            }
+            for x in 384..512 {
+                let w = weights[(y as usize) * (prep.snapped_w as usize) + (x as usize)];
+                assert!(w >= 1.0 - 1e-6, "right pad weight dipped to {w} at {x},{y}");
+            }
+        }
     }
 }

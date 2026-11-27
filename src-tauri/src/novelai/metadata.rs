@@ -140,6 +140,32 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
             }
         }
 
+        // Preserve inpainting strength for round-trip parity without touching
+        // `add_original_image`: both novelai.net and MooshieUI send `false`
+        // on the wire even when untouched pixels are preserved client-side.
+        let is_infill = comment
+            .get("request_type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|rt| rt.to_ascii_lowercase().contains("infill"))
+            || comment.contains_key("inpaintImg2ImgStrength");
+        if is_infill {
+            let strength = comment
+                .get("img2img")
+                .and_then(|v| v.get("strength"))
+                .and_then(|v| v.as_f64())
+                .or_else(|| {
+                    comment
+                        .get("inpaintImg2ImgStrength")
+                        .and_then(|v| v.as_f64())
+                });
+            if let Some(s) = strength.filter(|s| s.is_finite() && *s > 0.0) {
+                params.insert(
+                    "mooshie_novelai_inpaint_strength".into(),
+                    s.clamp(0.01, 1.0).to_string(),
+                );
+            }
+        }
+
         // Variety+ is not stored as a boolean: NovelAI records the sigma it
         // starts skipping CFG above, and the feature is off when that is null.
         if comment
@@ -720,6 +746,48 @@ mod tests {
         // A V3 image predates every model the app offers, so the panel keeps
         // whatever checkpoint is already selected rather than being cleared.
         assert_eq!(model_id_from_source("Stable Diffusion F1022D28"), None);
+    }
+
+    #[test]
+    fn native_infilling_reads_inpaint_strength_without_overwriting_add_original_image() {
+        let comment_partial = serde_json::json!({
+            "request_type": "NativeInfillingRequest",
+            "add_original_image": false,
+            "inpaintImg2ImgStrength": 0.65,
+            "img2img": { "strength": 0.65, "color_correct": true }
+        })
+        .to_string();
+        let params = parse_chunks(&chunks(&[
+            ("Software", "NovelAI"),
+            ("Comment", &comment_partial),
+        ]))
+        .expect("infill chunks");
+        assert_eq!(
+            params.get("mooshie_novelai_request_type").unwrap(),
+            "NativeInfillingRequest"
+        );
+        assert_eq!(
+            params.get("mooshie_novelai_inpaint_strength").unwrap(),
+            "0.65"
+        );
+        assert!(!params.contains_key("mooshie_novelai_add_original_image"));
+
+        let comment_top_only = serde_json::json!({
+            "request_type": "NativeInfillingRequest",
+            "add_original_image": false,
+            "inpaintImg2ImgStrength": 0.8,
+            "img2img": serde_json::Value::Null
+        })
+        .to_string();
+        let top_params = parse_chunks(&chunks(&[
+            ("Software", "NovelAI"),
+            ("Comment", &comment_top_only),
+        ]))
+        .expect("infill chunks");
+        assert_eq!(
+            top_params.get("mooshie_novelai_inpaint_strength").unwrap(),
+            "0.8"
+        );
     }
 }
 

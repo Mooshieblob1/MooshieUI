@@ -72,6 +72,7 @@ import {
   NOVELAI_MEDIUM_EFFORT,
   appendNovelAiCurateUc,
   findNovelAiModel,
+  effectiveNovelAiModelForAction,
   novelAiUsesMediumEffort,
   isNovelAiModel,
   snapNovelAiDimension,
@@ -1740,6 +1741,11 @@ class GenerationStore {
     return findNovelAiModel(this.checkpoint) ?? null;
   }
 
+  /** Effective capability flags after action-based model substitution (e.g. V5 Curated infill -> V4.5 Curated). */
+  get effectiveNovelAiModel() {
+    return effectiveNovelAiModelForAction(this.novelAiModel, this.isNovelAiInfill) ?? null;
+  }
+
   /** True when the current UI mode sends NovelAI `action: "infill"`. */
   get isNovelAiInfill(): boolean {
     return this._mode === "inpainting" || this._mode === "outpainting";
@@ -1812,7 +1818,7 @@ class GenerationStore {
    * gates the tag on the same flag, so a stale setting cannot leak through.
    */
   get supportsNovelAiTransparency(): boolean {
-    return this.novelAiModel?.alpha ?? false;
+    return this.effectiveNovelAiModel?.alpha ?? false;
   }
 
   /**

@@ -83,6 +83,10 @@ pub struct InfillCompositePlan {
     pub quantized_low_mask: GrayImage,
     pub dilate_blocks: u32,
     pub feather_px: u32,
+    /// Force `alpha = 255` when `base_rgba` is fully opaque so V5 `straight_alpha`
+    /// noise does not punch transparency holes into an opaque base image.
+    /// Must be `false` when `transparent_background` is intentionally active.
+    pub preserve_opaque_alpha: bool,
 }
 
 /// Extract a single-channel mask luminance image from a decoded PNG/WebP/JPEG.
@@ -558,6 +562,7 @@ pub fn composite_infill_patch(
     low_mask: &GrayImage,
     dilate_blocks: u32,
     feather_px: u32,
+    preserve_opaque_alpha: bool,
 ) -> RgbaImage {
     let mut out = base.clone();
     if crop.w == 0 || crop.h == 0 || base.width() == 0 || base.height() == 0 {
@@ -585,7 +590,7 @@ pub fn composite_infill_patch(
     let max_w = crop.w.min(base.width().saturating_sub(crop.x));
     let max_h = crop.h.min(base.height().saturating_sub(crop.y));
     let cw = crop.w as usize;
-    let base_opaque = base.pixels().all(|p| p.0[3] == 255);
+    let force_opaque = preserve_opaque_alpha && base.pixels().all(|p| p.0[3] == 255);
 
     for y in 0..max_h {
         for x in 0..max_w {
@@ -596,18 +601,18 @@ pub fn composite_infill_patch(
             let src = patch.get_pixel(x, y).0;
             let dst = out.get_pixel_mut(crop.x + x, crop.y + y);
             if alpha >= 1.0 - 1e-6 {
-                dst.0 = if base_opaque {
+                dst.0 = if force_opaque {
                     [src[0], src[1], src[2], 255]
                 } else {
                     src
                 };
             } else {
-                let channels = if base_opaque { 3 } else { 4 };
+                let channels = if force_opaque { 3 } else { 4 };
                 for (dst_c, src_c) in dst.0[..channels].iter_mut().zip(&src[..channels]) {
                     let blended = f32::from(*src_c) * alpha + f32::from(*dst_c) * (1.0 - alpha);
                     *dst_c = blended.round().clamp(0.0, 255.0) as u8;
                 }
-                if base_opaque {
+                if force_opaque {
                     dst.0[3] = 255;
                 }
             }
@@ -633,6 +638,7 @@ pub fn apply_composite_to_png(
         &plan.quantized_low_mask,
         plan.dilate_blocks,
         plan.feather_px,
+        plan.preserve_opaque_alpha,
     );
     let mut buf = Vec::new();
     composited
@@ -767,9 +773,23 @@ mod tests {
             &low,
             1,
             6,
+            true,
         );
         assert!(out.pixels().all(|p| p.0[3] == 255));
         assert_eq!(out.get_pixel(32, 32).0, [200, 150, 100, 255]);
+
+        // When preserve_opaque_alpha is false (explicit V5 transparent background),
+        // returned alpha passes through.
+        let transparent_out = composite_infill_patch(
+            &base,
+            &generated,
+            &FocusedCropPlan::full(64, 64),
+            &low,
+            1,
+            6,
+            false,
+        );
+        assert_eq!(transparent_out.get_pixel(32, 32).0, [200, 150, 100, 240]);
     }
 
     #[test]
@@ -821,7 +841,7 @@ mod tests {
                 low.put_pixel(bx, by, Luma([255]));
             }
         }
-        let out = composite_infill_patch(&base, &generated, &crop, &low, 2, 12);
+        let out = composite_infill_patch(&base, &generated, &crop, &low, 2, 12, true);
 
         // Outside crop is untouched.
         assert_eq!(out.get_pixel(10, 10).0, [20, 40, 60, 255]);
@@ -830,6 +850,36 @@ mod tests {
         assert_eq!(out.get_pixel(383, 383).0, [20, 40, 60, 255]);
         // Center of mask gets full generated pixels.
         assert_eq!(out.get_pixel(256, 256).0, [220, 180, 100, 255]);
+    }
+
+    #[test]
+    fn non_64_multiple_full_canvas_composite_preserves_original_dimensions() {
+        let base = RgbaImage::from_fn(200, 150, |x, y| {
+            image::Rgba([(x % 250) as u8, (y % 250) as u8, 90, 255])
+        });
+        // Snapped NovelAI canvas size would be 192x128 for 200x150 request_dimensions.
+        let generated = RgbaImage::from_pixel(192, 128, image::Rgba([240, 200, 160, 255]));
+        let mut low = GrayImage::new(24, 16);
+        for by in 6..10 {
+            for bx in 10..14 {
+                low.put_pixel(bx, by, Luma([255]));
+            }
+        }
+        let crop = FocusedCropPlan {
+            x: 0,
+            y: 0,
+            w: 200,
+            h: 150,
+            req_w: 192,
+            req_h: 128,
+        };
+        let out = composite_infill_patch(&base, &generated, &crop, &low, 1, 6, true);
+        assert_eq!(out.dimensions(), (200, 150));
+        // Far outside mask remains bit-identical to original 200x150 base.
+        assert_eq!(out.get_pixel(5, 5), base.get_pixel(5, 5));
+        assert_eq!(out.get_pixel(195, 145), base.get_pixel(195, 145));
+        // Inside mask receives generated patch pixels.
+        assert_eq!(out.get_pixel(100, 75).0, [240, 200, 160, 255]);
     }
 
     #[test]
@@ -857,6 +907,7 @@ mod tests {
             quantized_low_mask: low,
             dilate_blocks: 0,
             feather_px: 0,
+            preserve_opaque_alpha: true,
         };
         let out = apply_composite_to_png(&plan, &returned_bytes).unwrap();
         let decoder = png::Decoder::new(std::io::Cursor::new(&out));

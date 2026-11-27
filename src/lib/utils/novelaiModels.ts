@@ -204,6 +204,37 @@ export function findNovelAiModel(id: string): NovelAiModelInfo | undefined {
 }
 
 /**
+ * Effective capability flags for the active request action.
+ *
+ * Mirrors `models::effective_for_action`: while `nai-diffusion-5-curated`
+ * routes `infill` to `nai-diffusion-4-5-curated-inpainting`, the UI hides
+ * V5-only capabilities (Light quality, transparency, 22-character cap, Precise
+ * Reference) during inpainting and outpainting so the panel matches what is sent.
+ */
+export function effectiveNovelAiModelForAction(
+  model: NovelAiModelInfo | null | undefined,
+  isInfill: boolean,
+): NovelAiModelInfo | null | undefined {
+  if (!model || !isInfill) return model;
+  if (model.id === "nai-diffusion-5-curated" && !model.inpaintingId.startsWith("nai-diffusion-5-")) {
+    return {
+      ...model,
+      preciseReference: false,
+      preciseReferenceInpainting: false,
+      preciseReferenceFidelity: true,
+      preciseReferenceStrengthMax: 1,
+      outfitReferences: false,
+      vibeTransfer: false,
+      alpha: false,
+      autoText: false,
+      maxCharacters: 6,
+      lightQuality: false,
+    };
+  }
+  return model;
+}
+
+/**
  * The quality preset that applies on this model. Light only exists from V5 on;
  * older models fall back to Standard, as the backend does.
  */

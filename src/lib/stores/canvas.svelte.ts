@@ -103,6 +103,8 @@ class CanvasStore {
   originalInpaintInputImageName = $state<string | null>(null);
   originalInpaintWidth = $state<number | null>(null);
   originalInpaintHeight = $state<number | null>(null);
+  /** Clean uploaded input image handle before temporary Regular-paint compositing. */
+  cleanInpaintInputImageName = $state<string | null>(null);
   preparedInpaintPreviewUrl = $state<string | null>(null);
   preparedInpaintOwned = $state(false);
   inpaintSourceVersion = $state(0);
@@ -264,6 +266,7 @@ class CanvasStore {
     height: number;
     uploadedInputName: string | null;
   } | null) {
+    this.cleanInpaintInputImageName = null;
     this.clearPreparedInpaintOverride();
     this.clearPendingInpaintResult();
     this.clearInpaintBaseHistory();
@@ -295,6 +298,7 @@ class CanvasStore {
     uploadedInputName: string | null;
     owned: boolean;
   }) {
+    this.cleanInpaintInputImageName = null;
     // Swapping to an explicit new base discards any display-only pending result.
     this.clearPendingInpaintResult();
     // Snapshot the outgoing base and the mask applied to it so the user can undo
@@ -360,6 +364,7 @@ class CanvasStore {
     if (!this.pendingResultPreviewUrl || this.pendingResultWidth == null || this.pendingResultHeight == null) {
       return;
     }
+    this.cleanInpaintInputImageName = null;
 
     const outgoingMask = this.snapshotInpaintMask();
     this.inpaintBaseHistory = [
@@ -427,6 +432,7 @@ class CanvasStore {
     if (!this.originalInpaintInputImageName || this.originalInpaintWidth == null || this.originalInpaintHeight == null) {
       return;
     }
+    this.cleanInpaintInputImageName = null;
     this.clearPreparedInpaintOverride();
     this.clearPendingInpaintResult();
     this.clearInpaintBaseHistory();
@@ -438,6 +444,7 @@ class CanvasStore {
   }
 
   clearInpaintSession() {
+    this.cleanInpaintInputImageName = null;
     this.clearMask();
     this.clearPreparedInpaintOverride();
     this.clearPendingInpaintResult();
@@ -460,6 +467,7 @@ class CanvasStore {
   // was on it. The current (discarded) prepared preview is revoked.
   undoInpaintBase() {
     if (!this.inpaintBaseHistory.length) return;
+    this.cleanInpaintInputImageName = null;
 
     // Stepping back discards any un-applied result being previewed.
     this.clearPendingInpaintResult();
@@ -935,7 +943,7 @@ class CanvasStore {
     });
     const arrayBuffer = await blob.arrayBuffer();
     const bytes = Array.from(new Uint8Array(arrayBuffer));
-    return uploadImageBytes(bytes, filename);
+    return uploadImageBytes(bytes, filename, generation.isNovelAi);
   }
 
   async syncMaskToGeneration(maskCanvas: HTMLCanvasElement | null, uploadToComfy: boolean = true): Promise<boolean> {
@@ -1002,22 +1010,55 @@ class CanvasStore {
     let hasRaster = false;
     let hasMask = false;
 
-    // In inpainting mode, keep the currently selected input image as the baseline.
-    // This makes denoise behave as expected: only the masked area is reworked.
+    // In inpainting mode, keep the base input image and overlay any visible
+    // Regular paint strokes on top so painted color/shape guides reach the backend.
     if (isInpainting) {
-      if (generation.inputImage) {
-        hasRaster = true;
-      } else if (rasterCanvas) {
-        // Last resort only: if no source image exists, fall back to painted raster.
+      let hasRasterPaint = false;
+      if (rasterCanvas) {
         const ctx = rasterCanvas.getContext("2d")!;
         const data = ctx.getImageData(0, 0, rasterCanvas.width, rasterCanvas.height).data;
         for (let i = 3; i < data.length; i += 4) {
-          if (data[i] > 0) { hasRaster = true; break; }
+          if (data[i] > 0) { hasRasterPaint = true; break; }
         }
-        if (hasRaster) {
-          const result = await this.exportLayerAsImage(rasterCanvas, "canvas_input.png");
+      }
+
+      if (generation.inputImage) {
+        if (hasRasterPaint && rasterCanvas) {
+          if (!this.cleanInpaintInputImageName) {
+            this.cleanInpaintInputImageName = generation.inputImage;
+          }
+          const baseUrl = this.preparedInpaintPreviewUrl ?? this.referenceImageUrl;
+          let uploadCanvas = rasterCanvas;
+          if (baseUrl) {
+            try {
+              const baseImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = baseUrl;
+              });
+              const merged = document.createElement("canvas");
+              merged.width = this.canvasWidth;
+              merged.height = this.canvasHeight;
+              const mctx = merged.getContext("2d")!;
+              mctx.drawImage(baseImg, 0, 0, this.canvasWidth, this.canvasHeight);
+              mctx.drawImage(rasterCanvas, 0, 0);
+              uploadCanvas = merged;
+            } catch (err) {
+              console.warn("Could not composite base image under paint strokes:", err);
+            }
+          }
+          const result = await this.exportLayerAsImage(uploadCanvas, "canvas_inpaint_painted.png");
           generation.inputImage = result.name;
+        } else if (this.cleanInpaintInputImageName) {
+          generation.inputImage = this.cleanInpaintInputImageName;
+          this.cleanInpaintInputImageName = null;
         }
+        hasRaster = true;
+      } else if (hasRasterPaint && rasterCanvas) {
+        const result = await this.exportLayerAsImage(rasterCanvas, "canvas_input.png");
+        generation.inputImage = result.name;
+        hasRaster = true;
       }
     } else {
       // Non-inpaint modes use raster if present, otherwise staged image fallback.
@@ -1039,7 +1080,7 @@ class CanvasStore {
         const blob = await response.blob();
         const arrayBuffer = await blob.arrayBuffer();
         const bytes = Array.from(new Uint8Array(arrayBuffer));
-        const result = await uploadImageBytes(bytes, "staged_input.png");
+        const result = await uploadImageBytes(bytes, "staged_input.png", generation.isNovelAi);
         generation.inputImage = result.name;
         hasRaster = true;
       }

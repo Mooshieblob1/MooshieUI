@@ -1501,6 +1501,51 @@ impl AppState {
         Ok(upload_resp)
     }
 
+    /// Upload raw image bytes to ComfyUI, falling back to an in-memory NovelAI
+    /// upload buffer when `allow_local_fallback` is true and ComfyUI is offline.
+    pub async fn upload_image_from_bytes_with_fallback(
+        &self,
+        bytes: Vec<u8>,
+        filename: String,
+        allow_local_fallback: bool,
+    ) -> Result<UploadResponse, AppError> {
+        if !allow_local_fallback {
+            return self.upload_image_from_bytes(bytes, filename).await;
+        }
+        match self
+            .upload_image_from_bytes(bytes.clone(), filename.clone())
+            .await
+        {
+            Ok(resp) => Ok(resp),
+            Err(err) => {
+                log::info!(
+                    "ComfyUI upload unavailable for '{filename}' ({err}); storing in NovelAI local upload buffer"
+                );
+                Ok(self.store_local_upload(bytes))
+            }
+        }
+    }
+
+    /// Upload a file from disk to ComfyUI, falling back to an in-memory NovelAI
+    /// upload buffer when `allow_local_fallback` is true and ComfyUI is offline.
+    pub async fn upload_image_file_with_fallback(
+        &self,
+        file_path: &str,
+        allow_local_fallback: bool,
+    ) -> Result<UploadResponse, AppError> {
+        if !allow_local_fallback {
+            return self.upload_image_file(file_path).await;
+        }
+        let bytes = tokio::fs::read(file_path).await?;
+        let filename = std::path::Path::new(file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        self.upload_image_from_bytes_with_fallback(bytes, filename, true)
+            .await
+    }
+
     /// Downloads a file from a URL to the models/<category> directory,
     /// emitting `download:progress` events with byte-level progress.
     /// If `dest_dir_override` is provided, the file is written there instead
@@ -1799,6 +1844,13 @@ impl AppState {
         filename: &str,
         subfolder: &str,
     ) -> Result<Vec<u8>, AppError> {
+        if filename.starts_with(Self::LOCAL_UPLOAD_PREFIX) {
+            return self.get_local_upload(filename).ok_or_else(|| {
+                AppError::Other(format!(
+                    "Cached local upload '{filename}' expired or was not found; re-upload the image"
+                ))
+            });
+        }
         // Uploaded names come from user files and routinely carry spaces and
         // other characters that need escaping in a query string.
         let encode = |s: &str| {

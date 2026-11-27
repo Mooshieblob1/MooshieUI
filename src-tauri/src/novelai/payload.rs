@@ -43,6 +43,7 @@ pub fn build(
     model: &NovelAiModel,
 ) -> Result<Value, String> {
     let action = normalise_action(&nai.action, input);
+    let model = models::effective_for_action(model, &action);
     let has_active_refs = !active_director_references(nai, model, &action).is_empty();
     // Precise Reference requires High effort; ignore Medium when active references
     // apply so the user's stored effort setting does not need to be overwritten.
@@ -2182,5 +2183,62 @@ mod tests {
         assert!(v45_body["parameters"]
             .get("director_reference_images")
             .is_none());
+    }
+
+    #[test]
+    fn v5_curated_infill_uses_v45_curated_capabilities_and_presets() {
+        let v5_curated = models::find("nai-diffusion-5-curated").unwrap();
+        let mut n = nai();
+        n.model = "nai-diffusion-5-curated".into();
+        n.action = "infill".into();
+        n.quality_toggle = true;
+        n.quality_preset = QualityPreset::Light.index();
+        n.uc_preset = UcPreset::Heavy.index();
+        n.transparent_background = true;
+        n.characters = (0..8)
+            .map(|idx| NovelAiCharacter {
+                prompt: format!("char {idx}"),
+                enabled: true,
+                ..Default::default()
+            })
+            .collect();
+
+        let mut i = input();
+        i.positive_prompt = "sign saying \"hello\"".into();
+        i.input_image = Some("AAAA".into());
+        i.mask_image = Some("BBBB".into());
+
+        let infill_body = build(&i, &n, v5_curated).unwrap();
+        assert_eq!(infill_body["model"], "nai-diffusion-4-5-curated-inpainting");
+        let ip = &infill_body["parameters"];
+        assert_eq!(ip["params_version"], 3);
+        assert!(ip.get("straight_alpha").is_none());
+        assert_eq!(ip["characterPrompts"].as_array().unwrap().len(), 6);
+        let prompt_str = infill_body["input"].as_str().unwrap();
+        assert!(!prompt_str.contains("transparent background"));
+        assert!(!prompt_str.contains("\nText:"));
+        assert!(
+            prompt_str.ends_with("location, masterpiece, no text, -0.8::feet::, rating:general")
+        );
+        let uc_str = ip["negative_prompt"].as_str().unwrap();
+        assert!(uc_str.starts_with("blurry, lowres, upscaled"));
+        assert!(!uc_str.contains("nsfw,"));
+
+        // Plain txt2img on V5 Curated retains V5 capabilities and presets.
+        n.action = "generate".into();
+        let gen_body = build(&i, &n, v5_curated).unwrap();
+        assert_eq!(gen_body["model"], "nai-diffusion-5-curated");
+        let gp = &gen_body["parameters"];
+        assert_eq!(gp["params_version"], 4);
+        assert_eq!(gp["straight_alpha"], true);
+        assert_eq!(gp["characterPrompts"].as_array().unwrap().len(), 8);
+        assert!(gen_body["input"]
+            .as_str()
+            .unwrap()
+            .contains("2.1::transparent background::"));
+        assert!(gen_body["input"]
+            .as_str()
+            .unwrap()
+            .contains("\nText: hello"));
     }
 }

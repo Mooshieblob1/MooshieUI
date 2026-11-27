@@ -28,7 +28,9 @@
   import PreciseRefHoverTooltip from "./PreciseRefHoverTooltip.svelte";
 
   const characters = $derived(generation.novelaiSettings.characters);
-  const maxCharacters = $derived(novelAiMaxCharacters(generation.checkpoint));
+  const maxCharacters = $derived(
+    generation.effectiveNovelAiModel?.maxCharacters ?? novelAiMaxCharacters(generation.checkpoint),
+  );
   const atLimit = $derived(characters.length >= maxCharacters);
 
   /** Nothing to place until at least one character is enabled. */

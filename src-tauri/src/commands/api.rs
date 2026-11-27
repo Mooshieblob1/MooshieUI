@@ -361,8 +361,11 @@ pub async fn reorder_queue_item(
 pub async fn upload_image(
     state: State<'_, Arc<AppState>>,
     image_path: String,
+    allow_local_fallback: Option<bool>,
 ) -> Result<UploadResponse, AppError> {
-    state.upload_image_file(&image_path).await
+    state
+        .upload_image_file_with_fallback(&image_path, allow_local_fallback.unwrap_or(false))
+        .await
 }
 
 #[cfg(feature = "desktop")]
@@ -371,8 +374,15 @@ pub async fn upload_image_bytes(
     state: State<'_, Arc<AppState>>,
     image_bytes: Vec<u8>,
     filename: String,
+    allow_local_fallback: Option<bool>,
 ) -> Result<UploadResponse, AppError> {
-    state.upload_image_from_bytes(image_bytes, filename).await
+    state
+        .upload_image_from_bytes_with_fallback(
+            image_bytes,
+            filename,
+            allow_local_fallback.unwrap_or(false),
+        )
+        .await
 }
 
 #[cfg(feature = "desktop")]

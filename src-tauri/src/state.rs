@@ -789,9 +789,12 @@ pub struct AppState {
     /// across a redirect to the CDN). Reuses one client to keep connection
     /// pooling instead of building a fresh client per call.
     pub http_client_no_redirect: reqwest::Client,
-    /// Cached CivitAI proxy clients `(proxy_url, default_client, no_redirect_client)`.
+    /// Cached CivitAI proxy clients, `(proxy_url, default_client, no_redirect_client)`.
     civitai_proxy_client_cache:
         std::sync::Mutex<Option<(String, reqwest::Client, reqwest::Client)>>,
+    /// In-memory upload fallback buffer for NovelAI-only sessions where ComfyUI
+    /// is offline (`nai_upload_<id>.png`). Bounded FIFO so memory stays small.
+    pub local_uploads: std::sync::Mutex<std::collections::VecDeque<(String, Vec<u8>)>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub interrogator: Arc<RwLock<InterrogatorState>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
@@ -959,7 +962,44 @@ impl AppState {
             download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
             civitai_scan_cancel: std::sync::atomic::AtomicBool::new(false),
             civitai_proxy_client_cache: std::sync::Mutex::new(None),
+            local_uploads: std::sync::Mutex::new(std::collections::VecDeque::new()),
         }
+    }
+
+    /// Prefix used for in-memory uploads when ComfyUI is offline in NovelAI mode.
+    pub const LOCAL_UPLOAD_PREFIX: &str = "nai_upload_";
+
+    /// Maximum number of local fallback uploads retained in memory.
+    const LOCAL_UPLOAD_CAP: usize = 32;
+
+    /// Store raw uploaded image bytes in memory for NovelAI generation paths when
+    /// ComfyUI is unavailable, returning a synthetic `UploadResponse` handle.
+    pub fn store_local_upload(&self, bytes: Vec<u8>) -> crate::comfyui::types::UploadResponse {
+        let name = format!(
+            "{}{}.png",
+            Self::LOCAL_UPLOAD_PREFIX,
+            uuid::Uuid::new_v4().simple()
+        );
+        let mut uploads = self.local_uploads.lock().unwrap_or_else(|e| e.into_inner());
+        while uploads.len() >= Self::LOCAL_UPLOAD_CAP {
+            uploads.pop_front();
+        }
+        uploads.push_back((name.clone(), bytes));
+        crate::comfyui::types::UploadResponse {
+            name,
+            subfolder: String::new(),
+            r#type: "input".to_string(),
+        }
+    }
+
+    /// Retrieve previously stored local upload bytes by synthetic filename.
+    pub fn get_local_upload(&self, filename: &str) -> Option<Vec<u8>> {
+        let uploads = self.local_uploads.lock().unwrap_or_else(|e| e.into_inner());
+        uploads
+            .iter()
+            .rev()
+            .find(|(name, _)| name == filename)
+            .map(|(_, bytes)| bytes.clone())
     }
 
     /// Return a `reqwest::Client` configured with `AppConfig::civitai_proxy`
@@ -1752,5 +1792,31 @@ mod prompt_assistant_reconcile_tests {
         assert!(!reconcile_prompt_assistant_config_fields(&mut cfg, None));
         assert_eq!(cfg.prompt_assistant_model_id, None);
         assert!(!cfg.prompt_assistant_setup_done);
+    }
+}
+
+#[cfg(test)]
+mod local_upload_tests {
+    use super::AppState;
+    use crate::config::AppConfig;
+
+    #[test]
+    fn store_and_get_local_upload_round_trips_and_evicts_past_cap() {
+        let state = AppState::new(AppConfig::default());
+        let first = state.store_local_upload(vec![1, 2, 3]);
+        assert!(first.name.starts_with(AppState::LOCAL_UPLOAD_PREFIX));
+        assert_eq!(state.get_local_upload(&first.name), Some(vec![1, 2, 3]));
+
+        let mut names = vec![first.name.clone()];
+        for i in 0..32u8 {
+            names.push(state.store_local_upload(vec![i; 4]).name);
+        }
+        // First upload was evicted once capacity (32) was exceeded.
+        assert_eq!(state.get_local_upload(&names[0]), None);
+        // Latest upload remains present.
+        assert_eq!(
+            state.get_local_upload(names.last().unwrap()),
+            Some(vec![31u8; 4])
+        );
     }
 }

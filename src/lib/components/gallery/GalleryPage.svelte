@@ -209,7 +209,7 @@
   async function loadImageForMode(image: OutputImage, mode: "img2img" | "inpainting") {
     try {
       const prepared = await prepareOutputImageForEditMode(image, mode);
-      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename, generation.isNovelAi);
       generation.inputImage = response.name;
       canvas.clearMask();
       generation.mode = mode;
@@ -253,7 +253,7 @@
 
   async function upscaleImage(image: OutputImage) {
     try {
-      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png", generation.isNovelAi);
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       onSwitchToGenerate?.();

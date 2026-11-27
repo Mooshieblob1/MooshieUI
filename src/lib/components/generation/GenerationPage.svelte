@@ -48,6 +48,7 @@
   import { uploadImage, uploadImageBytes, getOutputImage, readClipboardImageSafe } from "../../utils/api.js";
   import { addOutputImageAsPreciseReference, uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import {
+    MAX_INPUT_PIXELS_INPAINT,
     normalizeGenerationInputBytes,
     prepareOutputImageForEditMode,
     type NormalizedInputImage,
@@ -583,12 +584,19 @@
 
   function syncInpaintBaseIfNeeded(normalized: NormalizedInputImage, uploadedInputName: string) {
     if (generation.mode !== "inpainting") return;
+    canvas.setInpaintDrawMode("mask");
     canvas.setInpaintOriginalSource({
       previewUrl: normalized.previewUrl,
       width: normalized.width,
       height: normalized.height,
       uploadedInputName,
     });
+  }
+
+  function inputMaxPixels(): number | undefined {
+    return generation.mode === "inpainting" || generation.mode === "outpainting"
+      ? MAX_INPUT_PIXELS_INPAINT
+      : undefined;
   }
 
   function resetStagedInputForManualReplacement() {
@@ -620,10 +628,10 @@
       try {
         const buf = await file.arrayBuffer();
         const bytes = Array.from(new Uint8Array(buf));
-        const normalized = await normalizeGenerationInputBytes(bytes, file.name);
+        const normalized = await normalizeGenerationInputBytes(bytes, file.name, inputMaxPixels());
         resetStagedInputForManualReplacement();
         applyNormalizedImagePreview(normalized);
-        const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+        const response = await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi);
         generation.inputImage = response.name;
         syncInpaintBaseIfNeeded(normalized, response.name);
       } catch (e) { console.error("Failed to upload image:", e); } finally { uploading = false; }
@@ -638,11 +646,11 @@
 
       const { readFile } = await import("@tauri-apps/plugin-fs");
       const bytes = Array.from(await readFile(selectedPath));
-      const normalized = await normalizeGenerationInputBytes(bytes, getFilenameFromPath(selectedPath));
+      const normalized = await normalizeGenerationInputBytes(bytes, getFilenameFromPath(selectedPath), inputMaxPixels());
       resetStagedInputForManualReplacement();
       applyNormalizedImagePreview(normalized);
 
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi);
       generation.inputImage = response.name;
       syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
@@ -674,7 +682,7 @@
         if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
         maskPreviewUrl = URL.createObjectURL(blob);
         canvas.setPersistedMaskPreview(maskPreviewUrl);
-        const response = await uploadImageBytes(Array.from(new Uint8Array(buf)), file.name);
+        const response = await uploadImageBytes(Array.from(new Uint8Array(buf)), file.name, generation.isNovelAi);
         generation.maskImage = response.name;
       } catch (e) { console.error("Failed to upload mask:", e); } finally { uploading = false; }
       return;
@@ -690,7 +698,7 @@
       maskPreviewUrl = URL.createObjectURL(blob);
       canvas.setPersistedMaskPreview(maskPreviewUrl);
 
-      const response = await uploadImage(selected);
+      const response = await uploadImage(selected, generation.isNovelAi);
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to upload mask:", e);
@@ -709,11 +717,11 @@
     try {
       const buffer = await file.arrayBuffer();
       const bytes = Array.from(new Uint8Array(buffer));
-      const normalized = await normalizeGenerationInputBytes(bytes, file.name || "dropped_image.png");
+      const normalized = await normalizeGenerationInputBytes(bytes, file.name || "dropped_image.png", inputMaxPixels());
       resetStagedInputForManualReplacement();
       applyNormalizedImagePreview(normalized);
 
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi);
       generation.inputImage = response.name;
       syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
@@ -739,7 +747,7 @@
       maskPreviewUrl = URL.createObjectURL(blob);
       canvas.setPersistedMaskPreview(maskPreviewUrl);
 
-      const response = await uploadImageBytes(bytes, file.name || "dropped_mask.png");
+      const response = await uploadImageBytes(bytes, file.name || "dropped_mask.png", generation.isNovelAi);
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped mask:", e);
@@ -758,11 +766,11 @@
       const bytes = file
         ? Array.from(new Uint8Array(await file.arrayBuffer()))
         : await readClipboardImageSafe();
-      const normalized = await normalizeGenerationInputBytes(bytes, file?.name || "pasted_image.png");
+      const normalized = await normalizeGenerationInputBytes(bytes, file?.name || "pasted_image.png", inputMaxPixels());
       resetStagedInputForManualReplacement();
       applyNormalizedImagePreview(normalized);
 
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi);
       generation.inputImage = response.name;
       syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
@@ -781,7 +789,7 @@
       maskPreviewUrl = URL.createObjectURL(blob);
       canvas.setPersistedMaskPreview(maskPreviewUrl);
 
-      const response = await uploadImageBytes(bytes, "pasted_mask.png");
+      const response = await uploadImageBytes(bytes, "pasted_mask.png", generation.isNovelAi);
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to paste mask:", e);
@@ -821,7 +829,7 @@
 
   async function refineImage(image: OutputImage) {
     try {
-      generation.inputImage = await uploadOutputImageForGenerationInput(image, "img2img_input.png");
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "img2img_input.png", generation.isNovelAi);
       generation.mode = "img2img";
       generation.upscaleEnabled = false;
       gallery.showToast(locale.t('gallery.toast.loaded_img2img'), "success");
@@ -834,7 +842,7 @@
 
   async function upscaleImage(image: OutputImage) {
     try {
-      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png", generation.isNovelAi);
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       gallery.showToast(locale.t('generation.toast.loaded_upscale'), "success");
@@ -850,12 +858,13 @@
       const prepared = await prepareOutputImageForEditMode(image, "inpainting");
       const normalized = prepared.normalized;
       if (!normalized) throw new Error("Expected normalized inpaint source");
-      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename, generation.isNovelAi);
       generation.inputImage = response.name;
       canvas.clearMask();
       canvas.clearStaging();
       generation.mode = "inpainting";
       progress.setLastOutputForMode("inpainting", null);
+      canvas.setInpaintDrawMode("mask");
       canvas.isCanvasMode = true;
       applyNormalizedImagePreview(normalized);
       canvas.setInpaintOriginalSource({
@@ -879,8 +888,8 @@
   async function outpaintImage(image: OutputImage) {
     try {
       const prepared = await prepareOutputImageForEditMode(image, "outpainting");
-      const normalized = await normalizeGenerationInputBytes(prepared.uploadBytes, prepared.uploadFilename);
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const normalized = await normalizeGenerationInputBytes(prepared.uploadBytes, prepared.uploadFilename, MAX_INPUT_PIXELS_INPAINT);
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi);
       resetStagedInputForManualReplacement();
       generation.inputImage = response.name;
       generation.mode = "outpainting";
@@ -1683,10 +1692,13 @@
     try {
       const { readFile } = await import("@tauri-apps/plugin-fs");
       const bytes = Array.from(await readFile(path));
-      const normalized = await normalizeGenerationInputBytes(bytes, filename);
+      const normalized = await normalizeGenerationInputBytes(bytes, filename, inputMaxPixels());
       resetStagedInputForManualReplacement();
       applyNormalizedImagePreview(normalized);
-      const response = await uploadImage(path);
+      const response =
+        normalized.bytes !== bytes
+          ? await uploadImageBytes(normalized.bytes, normalized.filename, generation.isNovelAi)
+          : await uploadImage(path, generation.isNovelAi);
       generation.inputImage = response.name;
       syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
@@ -1715,7 +1727,7 @@
       if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
       maskPreviewUrl = URL.createObjectURL(blob);
       canvas.setPersistedMaskPreview(maskPreviewUrl);
-      const response = await uploadImage(path);
+      const response = await uploadImage(path, generation.isNovelAi);
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped mask:", e);

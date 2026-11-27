@@ -517,19 +517,23 @@ export async function reorderQueueItem(
   return ipcInvoke("reorder_queue_item", { promptId, newPosition });
 }
 
-export async function uploadImage(imagePath: string): Promise<{
+export async function uploadImage(
+  imagePath: string,
+  allowLocalFallback = false,
+): Promise<{
   name: string;
   subfolder: string;
   type: string;
 }> {
-  return ipcInvoke("upload_image", { imagePath });
+  return ipcInvoke("upload_image", { imagePath, allowLocalFallback });
 }
 
 export async function uploadImageBytes(
   imageBytes: number[],
-  filename: string
+  filename: string,
+  allowLocalFallback = false,
 ): Promise<{ name: string; subfolder: string; type: string }> {
-  return ipcInvoke("upload_image_bytes", { imageBytes, filename });
+  return ipcInvoke("upload_image_bytes", { imageBytes, filename, allowLocalFallback });
 }
 
 export async function getOutputImage(

@@ -23,10 +23,11 @@
       const normalized = prepared.normalized;
       if (!normalized) return;
 
-      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename, generation.isNovelAi);
       generation.inputImage = response.name;
       generation.mode = "inpainting";
       progress.setLastOutputForMode("inpainting", null);
+      canvas.setInpaintDrawMode("mask");
       canvas.clearMask();
       canvas.clearStaging();
       if (canvas.hasResettableInpaintSource) {

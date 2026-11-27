@@ -142,6 +142,8 @@ const V5_QUALITY_LIGHT: &str = "very aesthetic, amazing quality, no text";
 /// V4.5 Full's own stack per docs.novelai.net/en/image/qualitytags: V5's plus
 /// a leading `location`.
 const V45_QUALITY: &str = "location, very aesthetic, masterpiece, no text";
+/// V4.5 Curated's own stack per docs.novelai.net/en/image/qualitytags.
+const V45_CURATED_QUALITY: &str = "location, masterpiece, no text, -0.8::feet::, rating:general";
 const V4_QUALITY: &str = "no text, best quality, very aesthetic, absurdres";
 
 const V5_HEAVY: &str = "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
@@ -150,6 +152,9 @@ const V5_HUMAN_FOCUS: &str = "lowres, artistic error, film grain, scan artifacts
 /// Identical on V5 and V4.5 Full.
 const FURRY_FOCUS: &str = "{worst quality}, distracting watermark, unfinished, bad quality, {widescreen}, upscale, {sequence}, {{grandfathered content}}, blurred foreground, chromatic aberration, sketch, everyone, [sketch background], simple, [flat colors], ych (character), outline, multiple scenes, [[horror (theme)]], comic";
 const V45_LIGHT: &str = "lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page";
+const V45_CURATED_HEAVY: &str = "blurry, lowres, upscaled, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, halftone, multiple views, logo, too many watermarks, negative space, blank page";
+const V45_CURATED_LIGHT: &str = "blurry, lowres, upscaled, artistic error, scan artifacts, jpeg artifacts, logo, too many watermarks, negative space, blank page";
+const V45_CURATED_HUMAN_FOCUS: &str = "blurry, lowres, upscaled, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, halftone, multiple views, logo, too many watermarks, negative space, blank page, @_@, mismatched pupils, glowing eyes, bad anatomy";
 const V4_HEAVY: &str = "blurry, lowres, error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, multiple views, logo, too many watermarks, white blank page, blank page";
 const V4_LIGHT: &str = "blurry, lowres, error, worst quality, bad quality, jpeg artifacts, very displeasing, white blank page, blank page";
 
@@ -172,6 +177,9 @@ pub fn quality_tags(
             Some((QualityPreset::Standard, V5_QUALITY))
         }
         ("nai-diffusion-4-5-full", _) => Some((QualityPreset::Standard, V45_QUALITY)),
+        ("nai-diffusion-4-5-curated-inpainting", _) => {
+            Some((QualityPreset::Standard, V45_CURATED_QUALITY))
+        }
         ("nai-diffusion-4-full", _) => Some((QualityPreset::Standard, V4_QUALITY)),
         _ => None,
     }
@@ -193,6 +201,12 @@ pub fn uc_preset(model: &NovelAiModel, preset: UcPreset) -> (UcPreset, Option<&'
         ("nai-diffusion-4-5-full", UcPreset::Light) => Some(V45_LIGHT),
         ("nai-diffusion-4-5-full", UcPreset::HumanFocus) => Some(V5_HUMAN_FOCUS),
         ("nai-diffusion-4-5-full", UcPreset::FurryFocus) => Some(FURRY_FOCUS),
+        ("nai-diffusion-4-5-curated-inpainting", UcPreset::Heavy) => Some(V45_CURATED_HEAVY),
+        ("nai-diffusion-4-5-curated-inpainting", UcPreset::Light) => Some(V45_CURATED_LIGHT),
+        ("nai-diffusion-4-5-curated-inpainting", UcPreset::HumanFocus) => {
+            Some(V45_CURATED_HUMAN_FOCUS)
+        }
+        ("nai-diffusion-4-5-curated-inpainting", UcPreset::FurryFocus) => Some(FURRY_FOCUS),
         ("nai-diffusion-4-full", UcPreset::Heavy | UcPreset::HumanFocus | UcPreset::FurryFocus) => {
             return (UcPreset::Heavy, Some(V4_HEAVY));
         }
@@ -205,7 +219,7 @@ pub fn uc_preset(model: &NovelAiModel, preset: UcPreset) -> (UcPreset, Option<&'
 /// Curated models are SFW by construction, so the client only adds the `nsfw`
 /// guard to the UC of the Full models.
 pub fn guards_nsfw(model: &NovelAiModel) -> bool {
-    model.id != "nai-diffusion-5-curated"
+    !model.id.contains("-curated")
 }
 
 #[cfg(test)]
@@ -378,5 +392,38 @@ mod tests {
         for m in MODELS {
             assert_eq!(guards_nsfw(m), !m.id.ends_with("-curated"), "{}", m.id);
         }
+        assert!(!guards_nsfw(
+            &crate::novelai::models::V45_CURATED_INPAINTING
+        ));
+    }
+
+    #[test]
+    fn v45_curated_inpainting_uses_official_curated_presets() {
+        let v45c = &crate::novelai::models::V45_CURATED_INPAINTING;
+        assert_eq!(
+            quality_tags(v45c, QualityPreset::Standard),
+            Some((QualityPreset::Standard, V45_CURATED_QUALITY))
+        );
+        // Light quality falls back to Standard on V4.5.
+        assert_eq!(
+            quality_tags(v45c, QualityPreset::Light),
+            Some((QualityPreset::Standard, V45_CURATED_QUALITY))
+        );
+        assert_eq!(
+            uc_preset(v45c, UcPreset::Heavy),
+            (UcPreset::Heavy, Some(V45_CURATED_HEAVY))
+        );
+        assert_eq!(
+            uc_preset(v45c, UcPreset::Light),
+            (UcPreset::Light, Some(V45_CURATED_LIGHT))
+        );
+        assert_eq!(
+            uc_preset(v45c, UcPreset::HumanFocus),
+            (UcPreset::HumanFocus, Some(V45_CURATED_HUMAN_FOCUS))
+        );
+        assert_eq!(
+            uc_preset(v45c, UcPreset::FurryFocus),
+            (UcPreset::FurryFocus, Some(FURRY_FOCUS))
+        );
     }
 }

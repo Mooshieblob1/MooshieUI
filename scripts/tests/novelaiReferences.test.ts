@@ -10,6 +10,7 @@ import {
   NAI_REF_OUTFIT,
   NAI_REF_STYLE,
   NOVELAI_MODELS,
+  effectiveNovelAiModelForAction,
   findNovelAiModel,
   novelAiActiveDirectorReferenceCount,
   novelAiActiveDirectorReferenceSummary,
@@ -179,4 +180,21 @@ test("estimateNovelAiCost adds 5 Anlas per active reference per image on V5", ()
     }),
     baseOnly * 2 + 2 * 2 * 5,
   );
+});
+
+test("effectiveNovelAiModelForAction narrows V5 Curated to V4.5 capabilities during infill", () => {
+  const v5Curated = findNovelAiModel("nai-diffusion-5-curated");
+  assert.ok(v5Curated);
+  assert.equal(effectiveNovelAiModelForAction(v5Curated, false), v5Curated);
+
+  const infillModel = effectiveNovelAiModelForAction(v5Curated, true);
+  assert.ok(infillModel);
+  assert.equal(infillModel.alpha, false);
+  assert.equal(infillModel.autoText, false);
+  assert.equal(infillModel.maxCharacters, 6);
+  assert.equal(infillModel.lightQuality, false);
+  assert.equal(infillModel.preciseReferenceInpainting, false);
+
+  const v5Full = findNovelAiModel("nai-diffusion-5-full");
+  assert.equal(effectiveNovelAiModelForAction(v5Full, true), v5Full);
 });

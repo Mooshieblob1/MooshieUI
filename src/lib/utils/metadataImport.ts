@@ -243,7 +243,8 @@ export function hasNovelAiCharacters(meta: Record<string, string>): boolean {
  * from whatever the panel is holding. The dialog warns about that.
  */
 export function isNovelAiImg2ImgMetadata(meta: Record<string, string>): boolean {
-  return (meta.mooshie_novelai_request_type ?? "").toLowerCase().includes("img2img");
+  const requestType = (meta.mooshie_novelai_request_type ?? "").toLowerCase();
+  return requestType.includes("img2img") || requestType.includes("infill");
 }
 
 function metaBool(value: string | undefined): boolean | undefined {
@@ -286,6 +287,11 @@ function applyNovelAiSettings(meta: Record<string, string>, withCharacters = tru
     if (value !== undefined) (patch as Record<string, unknown>)[field] = value;
   }
 
+  const inpaintStrength = metaNumber(meta.mooshie_novelai_inpaint_strength);
+  if (inpaintStrength !== undefined && inpaintStrength > 0) {
+    patch.inpaint_strength = Math.min(1, Math.max(0.01, inpaintStrength));
+  }
+
   const booleans: [string, keyof NovelAiSettings][] = [
     ["mooshie_novelai_dynamic_thresholding", "dynamic_thresholding"],
     ["mooshie_novelai_variety_plus", "variety_plus"],
@@ -293,6 +299,7 @@ function applyNovelAiSettings(meta: Record<string, string>, withCharacters = tru
     ["mooshie_novelai_use_coords", "use_coords"],
     ["mooshie_novelai_quality_toggle", "quality_toggle"],
     ["mooshie_novelai_legacy_uc", "legacy_uc"],
+    ["mooshie_novelai_focused_inpainting", "focused_inpainting"],
   ];
   for (const [key, field] of booleans) {
     const value = metaBool(meta[key]);

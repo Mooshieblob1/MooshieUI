@@ -200,8 +200,18 @@ Vibe transfer does not go through this. Vibes are encoded server-side by
   inpainting** crops around the mask bbox and upscales to ~1 MP with remapped
   character coordinates; **Keep the area outside the mask** uses client-side
   dilated + finite-box-blurred feathered compositing (`composite_infill_patch`)
-  with outbound `add_original_image: false` so surrounding pixels remain
-  bit-identical without latent-grid seams.
+  with outbound `add_original_image: false` so surrounding pixels (and exact
+  non-64-multiple source dimensions on full-canvas runs) remain bit-identical
+  without latent-grid seams. Canvas **Regular paint** strokes over an inpaint
+  base are composited into the uploaded input before mask application, and
+  NovelAI upload helpers carry an in-memory local fallback (`nai_upload_*`)
+  when ComfyUI is offline.
+- **V5 Curated infill fallback alignment.** While `nai-diffusion-5-curated`
+  routes `action: "infill"` to `nai-diffusion-4-5-curated-inpainting`,
+  `models::effective_for_action` and frontend `effectiveNovelAiModelForAction`
+  automatically apply V4.5 Curated's capabilities (`params_version: 3`,
+  6-character cap, no V5 `alpha`/`auto_text`, V4.5 Curated quality/UC presets,
+  and V4.5 Opus billing).
 - **V5 Full Medium effort.** NovelAI requires High effort while Precise
   References are active. When active Precise References apply (i.e. non-infill),
   both the payload builder and UI force High effort (`nai-diffusion-5-full`,
