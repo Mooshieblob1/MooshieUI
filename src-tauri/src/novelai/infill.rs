@@ -35,10 +35,10 @@ pub const DIMENSION_STEP: u32 = 64;
 pub const FOCUSED_TARGET_PIXELS: u64 = 1_048_576;
 
 /// Default outward dilation in 8x8 latent blocks for the client-side blend mask.
-pub const DEFAULT_DILATE_BLOCKS: u32 = 2;
+pub const DEFAULT_DILATE_BLOCKS: u32 = 1;
 
 /// Default two-pass box-blur feather radius (in request-canvas pixels).
-pub const DEFAULT_FEATHER_PX: u32 = 12;
+pub const DEFAULT_FEATHER_PX: u32 = 6;
 
 /// Crop region on the source image and the 64-px-snapped request size sent to NovelAI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +195,25 @@ pub fn encode_binary_mask_png(full_mask: &GrayImage) -> Result<Vec<u8>, String> 
     Ok(buf)
 }
 
+/// Encode an infill base image as 3-channel RGB PNG when every pixel is opaque,
+/// keeping genuine alpha channels as RGBA PNG.
+pub fn encode_infill_image_png(img: &RgbaImage) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    if img.pixels().all(|p| p.0[3] == 255) {
+        let (w, h) = img.dimensions();
+        let rgb = RgbImage::from_fn(w, h, |x, y| {
+            let p = img.get_pixel(x, y).0;
+            Rgb([p[0], p[1], p[2]])
+        });
+        rgb.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+            .map_err(|e| format!("could not encode infill image PNG: {e}"))?;
+    } else {
+        img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+            .map_err(|e| format!("could not encode infill image PNG: {e}"))?;
+    }
+    Ok(buf)
+}
+
 fn snap_down_64(px: u32) -> u32 {
     (px / DIMENSION_STEP).max(1) * DIMENSION_STEP
 }
@@ -237,10 +256,10 @@ pub fn plan_focused_crop(mask_luma: &GrayImage, img_w: u32, img_h: u32) -> Optio
     let cx = min_x + bw / 2;
     let cy = min_y + bh / 2;
 
-    let pad_x = (bw / 2).max(96);
-    let pad_y = (bh / 2).max(96);
-    let mut desired_w = (bw + 2 * pad_x).max(384).min(img_w);
-    let mut desired_h = (bh + 2 * pad_y).max(384).min(img_h);
+    let pad_x = bw.max(192);
+    let pad_y = bh.max(192);
+    let mut desired_w = (bw + 2 * pad_x).max(512).min(img_w);
+    let mut desired_h = (bh + 2 * pad_y).max(512).min(img_h);
 
     // Keep the crop aspect ratio at most 2:1 (when the image allows) so thin
     // brush strokes do not create ultra-skinny requests.
@@ -251,6 +270,15 @@ pub fn plan_focused_crop(mask_luma: &GrayImage, img_w: u32, img_h: u32) -> Optio
     let crop_h = desired_h.clamp(1, img_h);
     let crop_x = cx.saturating_sub(crop_w / 2).min(img_w - crop_w);
     let crop_y = cy.saturating_sub(crop_h / 2).min(img_h - crop_h);
+
+    if crop_w * 4 >= img_w * 3
+        && crop_h * 4 >= img_h * 3
+        && img_w.is_multiple_of(DIMENSION_STEP)
+        && img_h.is_multiple_of(DIMENSION_STEP)
+        && u64::from(img_w) * u64::from(img_h) <= FOCUSED_TARGET_PIXELS
+    {
+        return Some(FocusedCropPlan::full(img_w, img_h));
+    }
 
     let crop_area = u64::from(crop_w) * u64::from(crop_h);
     let (req_w, req_h) = if crop_x == 0
@@ -557,6 +585,7 @@ pub fn composite_infill_patch(
     let max_w = crop.w.min(base.width().saturating_sub(crop.x));
     let max_h = crop.h.min(base.height().saturating_sub(crop.y));
     let cw = crop.w as usize;
+    let base_opaque = base.pixels().all(|p| p.0[3] == 255);
 
     for y in 0..max_h {
         for x in 0..max_w {
@@ -567,11 +596,19 @@ pub fn composite_infill_patch(
             let src = patch.get_pixel(x, y).0;
             let dst = out.get_pixel_mut(crop.x + x, crop.y + y);
             if alpha >= 1.0 - 1e-6 {
-                dst.0 = src;
+                dst.0 = if base_opaque {
+                    [src[0], src[1], src[2], 255]
+                } else {
+                    src
+                };
             } else {
-                for (dst_c, src_c) in dst.0.iter_mut().zip(src.iter()) {
+                let channels = if base_opaque { 3 } else { 4 };
+                for (dst_c, src_c) in dst.0[..channels].iter_mut().zip(&src[..channels]) {
                     let blended = f32::from(*src_c) * alpha + f32::from(*dst_c) * (1.0 - alpha);
                     *dst_c = blended.round().clamp(0.0, 255.0) as u8;
+                }
+                if base_opaque {
+                    dst.0[3] = 255;
                 }
             }
         }
@@ -672,12 +709,23 @@ mod tests {
             }
         }
         let crop = plan_focused_crop(&small_mask, 1024, 1024).expect("non-empty mask");
+        assert!(crop.w >= 512 && crop.h >= 512);
         assert!(crop.w < 1024 && crop.h < 1024, "should zoom in: {crop:?}");
         assert!(crop.x <= 650 && crop.x + crop.w >= 750);
         assert!(crop.y <= 450 && crop.y + crop.h >= 550);
         assert_eq!(crop.req_w % 64, 0);
         assert_eq!(crop.req_h % 64, 0);
         assert!(u64::from(crop.req_w) * u64::from(crop.req_h) <= FOCUSED_TARGET_PIXELS);
+
+        // A 300x300 mask whose 3x context >= 75% falls back to full 1024x1024 canvas.
+        let mut wide_mask = GrayImage::new(1024, 1024);
+        for y in 362..662 {
+            for x in 362..662 {
+                wide_mask.put_pixel(x, y, Luma([255]));
+            }
+        }
+        let wide_crop = plan_focused_crop(&wide_mask, 1024, 1024).expect("wide mask");
+        assert!(wide_crop.is_full(1024, 1024));
 
         // Full-canvas mask on 1024x1024 stays 1024x1024 without rescaling.
         let full_mask = GrayImage::from_pixel(1024, 1024, Luma([255]));
@@ -687,6 +735,41 @@ mod tests {
         // Empty mask returns None.
         let empty = GrayImage::new(1024, 1024);
         assert!(plan_focused_crop(&empty, 1024, 1024).is_none());
+    }
+
+    #[test]
+    fn encode_infill_image_png_writes_rgb_for_opaque_and_rgba_for_transparent() {
+        let opaque = RgbaImage::from_pixel(8, 8, image::Rgba([40, 80, 120, 255]));
+        let opaque_bytes = encode_infill_image_png(&opaque).unwrap();
+        let opaque_dec = png::Decoder::new(std::io::Cursor::new(&opaque_bytes))
+            .read_info()
+            .unwrap();
+        assert_eq!(opaque_dec.info().color_type, png::ColorType::Rgb);
+
+        let mut transparent = opaque;
+        transparent.put_pixel(0, 0, image::Rgba([40, 80, 120, 128]));
+        let trans_bytes = encode_infill_image_png(&transparent).unwrap();
+        let trans_dec = png::Decoder::new(std::io::Cursor::new(&trans_bytes))
+            .read_info()
+            .unwrap();
+        assert_eq!(trans_dec.info().color_type, png::ColorType::Rgba);
+    }
+
+    #[test]
+    fn composite_infill_patch_keeps_opaque_base_alpha_255() {
+        let base = RgbaImage::from_pixel(64, 64, image::Rgba([10, 20, 30, 255]));
+        let generated = RgbaImage::from_pixel(64, 64, image::Rgba([200, 150, 100, 240]));
+        let low = GrayImage::from_pixel(8, 8, Luma([255]));
+        let out = composite_infill_patch(
+            &base,
+            &generated,
+            &FocusedCropPlan::full(64, 64),
+            &low,
+            1,
+            6,
+        );
+        assert!(out.pixels().all(|p| p.0[3] == 255));
+        assert_eq!(out.get_pixel(32, 32).0, [200, 150, 100, 255]);
     }
 
     #[test]
